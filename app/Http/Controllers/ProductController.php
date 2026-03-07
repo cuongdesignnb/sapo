@@ -1,0 +1,541 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+use App\Models\Category;
+use App\Models\Brand;
+use App\Models\Product;
+use App\Models\PriceBook;
+use App\Models\PriceBookProduct;
+
+class ProductController extends Controller
+{
+    public function apiSearch(Request $request)
+    {
+        $query = Product::query();
+
+        if ($request->filled('search')) {
+            $search = $request->input('search');
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('sku', 'like', "%{$search}%")
+                    ->orWhere('barcode', 'like', "%{$search}%");
+            });
+        }
+
+        $productIds = $request->input('product_ids', []);
+        if (is_string($productIds)) {
+            $productIds = array_filter(explode(',', $productIds));
+        }
+        if (!is_array($productIds)) {
+            $productIds = [];
+        }
+
+        if (!empty($productIds)) {
+            $query->whereIn('id', $productIds);
+        } else {
+            $query->limit(20);
+        }
+
+        $products = $query->get();
+        $priceBookId = $request->input('price_book_id');
+        $priceBookName = 'Bảng giá chung';
+        $bookPriceByProductId = collect();
+
+        if (!empty($priceBookId)) {
+            $priceBook = PriceBook::find($priceBookId);
+            if ($priceBook) {
+                $priceBookName = $priceBook->name;
+                $bookPriceByProductId = PriceBookProduct::where('price_book_id', $priceBook->id)
+                    ->whereIn('product_id', $products->pluck('id'))
+                    ->pluck('price', 'product_id');
+            }
+        }
+
+        $result = $products->map(function ($product) use ($bookPriceByProductId, $priceBookName, $priceBookId) {
+            $bookPrice = $bookPriceByProductId->get($product->id);
+            $sellingPrice = $bookPrice ?? $product->retail_price ?? $product->cost_price ?? 0;
+
+            return array_merge($product->toArray(), [
+                'selling_price' => (float) $sellingPrice,
+                'price_book_id' => $priceBookId,
+                'price_book_name' => $priceBookName,
+            ]);
+        });
+
+        return response()->json($result);
+    }
+
+    public function index(Request $request)
+    {
+        $query = Product::with(['category', 'brand']);
+
+        if ($request->filled('search')) {
+            $search = $request->input('search');
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('sku', 'like', "%{$search}%")
+                    ->orWhere('barcode', 'like', "%{$search}%");
+            });
+        }
+
+        $products = $query->orderBy('id', 'desc')->paginate(50)->withQueryString();
+
+        return Inertia::render('Welcome', [
+            'products' => $products,
+            'categories' => Category::all(),
+            'brands' => Brand::all(),
+            'filters' => $request->only('search')
+        ]);
+    }
+
+    public function create(Request $request, $type = 'standard')
+    {
+        // Allowed types
+        if (!in_array($type, ['standard', 'service', 'combo', 'manufactured'])) {
+            $type = 'standard';
+        }
+
+        return Inertia::render('Products/Create', [
+            'type' => $type,
+            'categories' => Category::all(),
+            'brands' => Brand::all(),
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $validatedData = $request->validate([
+            'type' => 'required|in:standard,service,combo,manufactured',
+            'name' => 'required|string|max:255',
+            'sku' => 'nullable|string|unique:products,sku',
+            'barcode' => 'nullable|string',
+            'category_id' => 'nullable|exists:categories,id',
+            'brand_id' => 'nullable|exists:brands,id',
+            'cost_price' => 'numeric|min:0',
+            'retail_price' => 'numeric|min:0',
+            'stock_quantity' => 'numeric|min:0',
+            'min_stock' => 'numeric|min:0',
+            'has_serial' => 'boolean',
+            'sell_directly' => 'boolean',
+            'allow_point_accumulation' => 'boolean',
+            'weight' => 'nullable|string',
+            'location' => 'nullable|string',
+            'base_unit_name' => 'nullable|string',
+            'units' => 'nullable|array',
+            'units.*.unit_name' => 'required|string',
+            'units.*.conversion_rate' => 'required|numeric|min:1',
+            'units.*.retail_price' => 'nullable|numeric',
+        ]);
+
+        if (empty($validatedData['sku'])) {
+            $validatedData['sku'] = 'SP' . date('ymd') . rand(100, 999);
+        }
+
+        if (empty($validatedData['barcode']) && \App\Models\Setting::get('product_barcode_auto', true)) {
+            $validatedData['barcode'] = $validatedData['sku'];
+        }
+
+        $product = Product::create($validatedData);
+
+        // Handle Units
+        if (!empty($validatedData['base_unit_name'])) {
+            $product->units()->create([
+                'unit_name' => $validatedData['base_unit_name'],
+                'conversion_rate' => 1,
+                'is_base_unit' => true,
+                'retail_price' => $product->retail_price,
+                'sku' => $product->sku,
+            ]);
+        }
+
+        if (!empty($validatedData['units'])) {
+            foreach ($validatedData['units'] as $unit) {
+                $product->units()->create([
+                    'unit_name' => $unit['unit_name'],
+                    'conversion_rate' => $unit['conversion_rate'],
+                    'retail_price' => $unit['retail_price'] ?? $product->retail_price * $unit['conversion_rate'],
+                    'is_base_unit' => false,
+                ]);
+            }
+        }
+
+        return redirect()->route('products.index')->with('success', 'Hàng hóa được tạo thành công!');
+    }
+
+    public function edit(Product $product)
+    {
+        return Inertia::render('Products/Edit', [
+            'product' => $product,
+            'categories' => Category::all(),
+            'brands' => Brand::all(),
+        ]);
+    }
+
+    public function update(Request $request, Product $product)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'sku' => 'nullable|string|unique:products,sku,' . $product->id,
+            'barcode' => 'nullable|string',
+            'category_id' => 'nullable|exists:categories,id',
+            'brand_id' => 'nullable|exists:brands,id',
+            'cost_price' => 'numeric|min:0',
+            'retail_price' => 'numeric|min:0',
+            'stock_quantity' => 'numeric|min:0',
+            'min_stock' => 'numeric|min:0',
+            'has_serial' => 'boolean',
+            'sell_directly' => 'boolean',
+            'allow_point_accumulation' => 'boolean',
+            'weight' => 'nullable|string',
+            'location' => 'nullable|string',
+        ]);
+
+        $product->update($validated);
+
+        return redirect()->route('products.index')->with('success', 'Cập nhật hàng hóa thành công!');
+    }
+
+    public function inventoryCard(Product $product)
+    {
+        $transactions = collect();
+        $costPrice = (float) ($product->cost_price ?? 0);
+
+        // 1. Nhập hàng (Purchases)
+        $purchases = \App\Models\PurchaseItem::with(['purchase', 'purchase.supplier'])
+            ->where('product_id', $product->id)
+            ->get()
+            ->map(function ($item) {
+                return [
+                    'date' => $item->purchase->created_at,
+                    'code' => $item->purchase->code,
+                    'doc_type' => 'purchase',
+                    'doc_id' => $item->purchase->id,
+                    'type' => 'Nhập hàng',
+                    'partner' => $item->purchase->supplier->name ?? 'NCC',
+                    'sell_price' => (float) ($item->price ?? 0),
+                    'cost_price' => (float) ($item->price ?? 0),
+                    'change' => $item->quantity,
+                    'method' => 'Cộng kho',
+                ];
+            });
+        $transactions = $transactions->concat($purchases);
+
+        // 2. Bán hàng (Invoices)
+        $sales = \App\Models\InvoiceItem::with(['invoice', 'invoice.customer'])
+            ->where('product_id', $product->id)
+            ->get()
+            ->map(function ($item) use ($costPrice) {
+                return [
+                    'date' => $item->invoice->created_at,
+                    'code' => $item->invoice->code,
+                    'doc_type' => 'invoice',
+                    'doc_id' => $item->invoice->id,
+                    'type' => 'Bán hàng',
+                    'partner' => $item->invoice->customer->name ?? 'Khách lẻ',
+                    'sell_price' => (float) ($item->price ?? 0),
+                    'cost_price' => $costPrice,
+                    'change' => -$item->quantity,
+                    'method' => 'Trừ kho',
+                ];
+            });
+        $transactions = $transactions->concat($sales);
+
+        // 3. Trả hàng (Returns)
+        $returns = \App\Models\ReturnItem::with(['orderReturn', 'orderReturn.customer'])
+            ->where('product_id', $product->id)
+            ->get()
+            ->map(function ($item) use ($costPrice) {
+                return [
+                    'date' => $item->orderReturn->created_at,
+                    'code' => $item->orderReturn->code,
+                    'doc_type' => 'return',
+                    'doc_id' => $item->orderReturn->id,
+                    'type' => 'Khách trả hàng',
+                    'partner' => $item->orderReturn->customer->name ?? 'Khách lẻ',
+                    'sell_price' => 0,
+                    'cost_price' => $costPrice,
+                    'change' => $item->quantity,
+                    'method' => 'Cộng kho',
+                ];
+            });
+        $transactions = $transactions->concat($returns);
+
+        // 4. Kiểm kho (Stock Takes)
+        $stockTakes = \App\Models\StockTakeItem::with('stockTake')
+            ->where('product_id', $product->id)
+            ->get()
+            ->map(function ($item) use ($costPrice) {
+                $diff = $item->actual_quantity - $item->current_quantity;
+                return [
+                    'date' => $item->stockTake->created_at,
+                    'code' => $item->stockTake->code,
+                    'doc_type' => 'stock_take',
+                    'doc_id' => $item->stockTake->id,
+                    'type' => 'Kiểm hàng',
+                    'partner' => 'Hệ thống',
+                    'sell_price' => 0,
+                    'cost_price' => $costPrice,
+                    'change' => $diff,
+                    'method' => $diff >= 0 ? 'Cộng kho' : 'Trừ kho',
+                ];
+            });
+        $transactions = $transactions->concat($stockTakes);
+
+        // 5. Xuất hủy (Damage)
+        $damages = \App\Models\DamageItem::with('damage')
+            ->where('product_id', $product->id)
+            ->get()
+            ->map(function ($item) use ($costPrice) {
+                return [
+                    'date' => $item->damage->created_at,
+                    'code' => $item->damage->code,
+                    'doc_type' => 'damage',
+                    'doc_id' => $item->damage->id,
+                    'type' => 'Xuất hủy',
+                    'partner' => 'Hệ thống',
+                    'sell_price' => 0,
+                    'cost_price' => $costPrice,
+                    'change' => -$item->quantity,
+                    'method' => 'Trừ kho',
+                ];
+            });
+        $transactions = $transactions->concat($damages);
+
+        // 6. Chuyển kho (Transfers)
+        $transfers = \App\Models\StockTransferItem::with(['stockTransfer', 'stockTransfer.toBranch'])
+            ->where('product_id', $product->id)
+            ->get()
+            ->map(function ($item) use ($costPrice) {
+                return [
+                    'date' => $item->stockTransfer->created_at,
+                    'code' => $item->stockTransfer->code,
+                    'doc_type' => 'transfer',
+                    'doc_id' => $item->stockTransfer->id,
+                    'type' => 'Chuyển kho',
+                    'partner' => $item->stockTransfer->toBranch->name ?? 'Kho khác',
+                    'sell_price' => 0,
+                    'cost_price' => $costPrice,
+                    'change' => -$item->quantity,
+                    'method' => 'Trừ kho',
+                ];
+            });
+        $transactions = $transactions->concat($transfers);
+
+        // Sort by date ASC and compute running balance
+        $sorted = $transactions->sortBy('date')->values();
+        $balance = 0;
+        $result = $sorted->map(function ($tx) use (&$balance) {
+            $balance += $tx['change'];
+            $tx['balance'] = $balance;
+            return $tx;
+        });
+
+        return response()->json($result->sortByDesc('date')->values());
+    }
+
+    public function serials(Product $product, Request $request)
+    {
+        $query = $product->serials();
+
+        if ($request->filled('status') && $request->status !== 'all') {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('search')) {
+            $query->where('serial_number', 'LIKE', '%' . $request->search . '%');
+        }
+
+        return response()->json($query->orderBy('created_at', 'desc')->get());
+    }
+
+    /**
+     * GET /products/{product}/warranties
+     */
+    public function warranties(Product $product)
+    {
+        $warranties = \App\Models\Warranty::where('product_id', $product->id)
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function ($w) {
+                return [
+                    'id' => $w->id,
+                    'invoice_code' => $w->invoice_code,
+                    'customer_name' => $w->customer_name,
+                    'serial_imei' => $w->serial_imei,
+                    'warranty_period' => $w->warranty_period,
+                    'purchase_date' => $w->purchase_date?->format('d/m/Y'),
+                    'warranty_end_date' => $w->warranty_end_date?->format('d/m/Y'),
+                    'status' => $w->warranty_end_date && $w->warranty_end_date->isFuture() ? 'active' : 'expired',
+                    'maintenance_note' => $w->maintenance_note,
+                ];
+            });
+
+        return response()->json($warranties);
+    }
+
+    /**
+     * GET /products/document-detail?type=invoice&id=123
+     * Popup chi tiết chứng từ từ thẻ kho
+     */
+    public function documentDetail(Request $request)
+    {
+        $type = $request->input('type');
+        $id = $request->input('id');
+
+        if (!$type || !$id) {
+            return response()->json(['error' => 'Missing type or id'], 400);
+        }
+
+        switch ($type) {
+            case 'invoice':
+                $doc = \App\Models\Invoice::with(['items.product', 'customer'])->find($id);
+                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                return response()->json([
+                    'type' => 'invoice',
+                    'title' => 'Hóa đơn',
+                    'code' => $doc->code,
+                    'status' => $doc->status ?? 'Hoàn thành',
+                    'partner_name' => $doc->customer->name ?? 'Khách lẻ',
+                    'created_by' => $doc->created_by_name ?? '',
+                    'seller' => $doc->seller_name ?? '',
+                    'sales_channel' => $doc->sales_channel ?? 'Bán trực tiếp',
+                    'price_book' => $doc->price_book_name ?? 'Bảng giá chung',
+                    'date' => $doc->created_at?->format('d/m/Y H:i'),
+                    'note' => $doc->note,
+                    'items' => $doc->items->map(fn($i) => [
+                        'product_code' => $i->product->sku ?? '',
+                        'product_name' => $i->product->name ?? '',
+                        'has_serial' => $i->product->has_serial ?? false,
+                        'quantity' => $i->quantity,
+                        'price' => (float) $i->price,
+                        'discount' => (float) ($i->discount ?? 0),
+                        'sell_price' => (float) ($i->price - ($i->discount ?? 0)),
+                        'subtotal' => (float) $i->subtotal,
+                    ]),
+                    'subtotal' => (float) $doc->subtotal,
+                    'discount' => (float) ($doc->discount ?? 0),
+                    'total' => (float) $doc->total,
+                    'customer_paid' => (float) ($doc->customer_paid ?? 0),
+                ]);
+
+            case 'purchase':
+                $doc = \App\Models\Purchase::with(['items.product', 'supplier', 'user'])->find($id);
+                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                return response()->json([
+                    'type' => 'purchase',
+                    'title' => 'Phiếu nhập hàng',
+                    'code' => $doc->code,
+                    'status' => $doc->status ?? 'Hoàn thành',
+                    'partner_name' => $doc->supplier->name ?? 'NCC',
+                    'created_by' => $doc->user->name ?? '',
+                    'seller' => '',
+                    'sales_channel' => '',
+                    'price_book' => '',
+                    'date' => $doc->created_at?->format('d/m/Y H:i'),
+                    'note' => $doc->note,
+                    'items' => $doc->items->map(fn($i) => [
+                        'product_code' => $i->product_code ?? ($i->product->sku ?? ''),
+                        'product_name' => $i->product_name ?? ($i->product->name ?? ''),
+                        'has_serial' => $i->product->has_serial ?? false,
+                        'quantity' => $i->quantity,
+                        'price' => (float) $i->price,
+                        'discount' => (float) ($i->discount ?? 0),
+                        'sell_price' => (float) ($i->price - ($i->discount ?? 0)),
+                        'subtotal' => (float) $i->subtotal,
+                    ]),
+                    'subtotal' => (float) $doc->total_amount,
+                    'discount' => (float) ($doc->discount ?? 0),
+                    'total' => (float) ($doc->total_amount - ($doc->discount ?? 0)),
+                    'customer_paid' => (float) ($doc->paid_amount ?? 0),
+                ]);
+
+            case 'return':
+                $doc = \App\Models\OrderReturn::with(['items.product', 'customer'])->find($id);
+                if (!$doc) return response()->json(['error' => 'Not found'], 404);
+                return response()->json([
+                    'type' => 'return',
+                    'title' => 'Phiếu trả hàng',
+                    'code' => $doc->code,
+                    'status' => $doc->status ?? 'Hoàn thành',
+                    'partner_name' => $doc->customer->name ?? 'Khách lẻ',
+                    'created_by' => '',
+                    'seller' => '',
+                    'sales_channel' => '',
+                    'price_book' => '',
+                    'date' => $doc->created_at?->format('d/m/Y H:i'),
+                    'note' => $doc->note ?? '',
+                    'items' => $doc->items->map(fn($i) => [
+                        'product_code' => $i->product->sku ?? '',
+                        'product_name' => $i->product->name ?? '',
+                        'has_serial' => $i->product->has_serial ?? false,
+                        'quantity' => $i->quantity,
+                        'price' => (float) ($i->price ?? 0),
+                        'discount' => 0,
+                        'sell_price' => (float) ($i->price ?? 0),
+                        'subtotal' => (float) ($i->subtotal ?? 0),
+                    ]),
+                    'subtotal' => (float) ($doc->total ?? 0),
+                    'discount' => 0,
+                    'total' => (float) ($doc->total ?? 0),
+                    'customer_paid' => 0,
+                ]);
+
+            default:
+                return response()->json(['error' => 'Unknown document type'], 400);
+        }
+    }
+
+    public function destroy(Product $product)
+    {
+        $product->delete();
+
+        return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
+    }
+    public function export(Request $request)
+    {
+        $products = Product::with(['category', 'brand'])
+            ->when($request->search, fn($q, $s) => $q->where('name', 'LIKE', "%{$s}%")->orWhere('sku', 'LIKE', "%{$s}%"))
+            ->orderBy('id', 'desc')->get();
+
+        return \App\Services\CsvService::export(
+            ['Mã hàng', 'Tên hàng', 'Loại', 'Nhóm hàng', 'Thương hiệu', 'Giá vốn', 'Giá bán', 'Tồn kho', 'Định mức tồn ít nhất', 'Định mức tồn nhiều nhất', 'Trọng lượng', 'Vị trí', 'Mô tả'],
+            $products->map(fn($p) => [$p->sku, $p->name, $p->type, $p->category?->name, $p->brand?->name, $p->cost_price, $p->retail_price, $p->stock_quantity, $p->min_stock, $p->max_stock, $p->weight, $p->location, $p->description]),
+            'hang_hoa.csv'
+        );
+    }
+
+    public function import(Request $request)
+    {
+        [$headers, $rows] = \App\Services\CsvService::parse($request);
+        $count = 0;
+        foreach ($rows as $row) {
+            if (count($row) < 2 || empty(trim($row[1] ?? ''))) continue;
+            $categoryName = trim($row[3] ?? '');
+            $brandName = trim($row[4] ?? '');
+            $categoryId = $categoryName ? \App\Models\Category::firstOrCreate(['name' => $categoryName])->id : null;
+            $brandId = $brandName ? \App\Models\Brand::firstOrCreate(['name' => $brandName])->id : null;
+
+            Product::updateOrCreate(
+                ['sku' => trim($row[0])],
+                array_filter([
+                    'name' => trim($row[1]),
+                    'type' => trim($row[2] ?? '') ?: 'product',
+                    'category_id' => $categoryId,
+                    'brand_id' => $brandId,
+                    'cost_price' => (float) ($row[5] ?? 0),
+                    'retail_price' => (float) ($row[6] ?? 0),
+                    'stock_quantity' => (int) ($row[7] ?? 0),
+                    'min_stock' => (int) ($row[8] ?? 0),
+                    'max_stock' => (int) ($row[9] ?? 0),
+                    'weight' => trim($row[10] ?? ''),
+                    'location' => trim($row[11] ?? ''),
+                    'description' => trim($row[12] ?? ''),
+                ], fn($v) => $v !== '' && $v !== null)
+            );
+            $count++;
+        }
+        return back()->with('success', "Đã nhập {$count} sản phẩm từ file.");
+    }}

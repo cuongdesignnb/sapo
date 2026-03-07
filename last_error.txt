@@ -1,0 +1,19 @@
+
+Warning: PHP Startup: Unable to load dynamic library 'oci8_12c' (tried: C:\php\ext\oci8_12c (The specified module could not be found), C:\php\ext\php_oci8_12c.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: PHP Startup: Unable to load dynamic library 'oci8_19' (tried: C:\php\ext\oci8_19 (The specified module could not be found), C:\php\ext\php_oci8_19.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: PHP Startup: Unable to load dynamic library 'pdo_firebird' (tried: C:\php\ext\pdo_firebird (The specified module could not be found), C:\php\ext\php_pdo_firebird.dll (The specified module could not be found)) in Unknown on line 0
+
+Warning: PHP Startup: Unable to load dynamic library 'pdo_oci' (tried: C:\php\ext\pdo_oci (The specified module could not be found), C:\php\ext\php_pdo_oci.dll (The specified module could not be found)) in Unknown on line 0
+ustProxies->handle(Object(Illuminate/Http/Request), Object(Closure))
+#45 D:/Kiot/kiotviet-clone/vendor/laravel/framework/src/Illuminate/Foundation/Http/Middleware/InvokeDeferredCallbacks.php(22): Illuminate/Pipeline/Pipeline->Illuminate/Pipeline/{closure}(Object(Illuminate/Http/Request))
+#46 D:/Kiot/kiotviet-clone/vendor/laravel/framework/src/Illuminate/Pipeline/Pipeline.php(209): Illuminate/Foundation/Http/Middleware/InvokeDeferredCallbacks->handle(Object(Illuminate/Http/Request), Object(Closure))
+#47 D:/Kiot/kiotviet-clone/vendor/laravel/framework/src/Illuminate/Pipeline/Pipeline.php(127): Illuminate/Pipeline/Pipeline->Illuminate/Pipeline/{closure}(Object(Illuminate/Http/Request))
+#48 D:/Kiot/kiotviet-clone/vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php(176): Illuminate/Pipeline/Pipeline->then(Object(Closure))
+#49 D:/Kiot/kiotviet-clone/vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php(145): Illuminate/Foundation/Http/Kernel->sendRequestThroughRouter(Object(Illuminate/Http/Request))
+#50 D:/Kiot/kiotviet-clone/vendor/laravel/framework/src/Illuminate/Foundation/Application.php(1220): Illuminate/Foundation/Http/Kernel->handle(Object(Illuminate/Http/Request))
+#51 D:/Kiot/kiotviet-clone/public/index.php(17): Illuminate/Foundation/Application->handleRequest(Object(Illuminate/Http/Request))
+#52 D:/Kiot/kiotviet-clone/vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php(23): require_once('D://Kiot//kiotvie...')
+#53 {main}
+"} 

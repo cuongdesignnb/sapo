@@ -1,0 +1,802 @@
+{
+  "_OrderReturnDetail-C6iizvdS.js": {
+    "file": "assets/OrderReturnDetail-C6iizvdS.js",
+    "name": "OrderReturnDetail",
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_orderReturnApi-BzQzq_yy.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "_PurchaseReceiptCreate-BT-4pyTD.js": {
+    "file": "assets/PurchaseReceiptCreate-BT-4pyTD.js",
+    "name": "PurchaseReceiptCreate",
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_purchaseReceiptApi-C6q9sJ3Q.js",
+      "_purchaseOrderApi-CKbqxEfM.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "_supplierApi-BMkDJd6b.js",
+      "_productApi-BLq2w32k.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "__plugin-vue_export-helper-DlAUqK2U.js": {
+    "file": "assets/_plugin-vue_export-helper-DlAUqK2U.js",
+    "name": "_plugin-vue_export-helper"
+  },
+  "_authInterceptor-CfpQKU9t.js": {
+    "file": "assets/authInterceptor-CfpQKU9t.js",
+    "name": "authInterceptor"
+  },
+  "_employeeApi-9nylCbHy.js": {
+    "file": "assets/employeeApi-9nylCbHy.js",
+    "name": "employeeApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_index-Dq7h7Pqt.js": {
+    "file": "assets/index-Dq7h7Pqt.js",
+    "name": "index"
+  },
+  "_orderApi-DEoUzQBG.js": {
+    "file": "assets/orderApi-DEoUzQBG.js",
+    "name": "orderApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ]
+  },
+  "_orderReturnApi-BzQzq_yy.js": {
+    "file": "assets/orderReturnApi-BzQzq_yy.js",
+    "name": "orderReturnApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_pinia-B541wSQN.js": {
+    "file": "assets/pinia-B541wSQN.js",
+    "name": "pinia",
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js"
+    ]
+  },
+  "_productApi-BLq2w32k.js": {
+    "file": "assets/productApi-BLq2w32k.js",
+    "name": "productApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ]
+  },
+  "_purchaseOrderApi-CKbqxEfM.js": {
+    "file": "assets/purchaseOrderApi-CKbqxEfM.js",
+    "name": "purchaseOrderApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_purchaseReceiptApi-C6q9sJ3Q.js": {
+    "file": "assets/purchaseReceiptApi-C6q9sJ3Q.js",
+    "name": "purchaseReceiptApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_purchaseReturnOrderApi-DD44FMY6.js": {
+    "file": "assets/purchaseReturnOrderApi-DD44FMY6.js",
+    "name": "purchaseReturnOrderApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_purchaseReturnReceiptApi-OJvqTSB6.js": {
+    "file": "assets/purchaseReturnReceiptApi-OJvqTSB6.js",
+    "name": "purchaseReturnReceiptApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_runtime-dom.esm-bundler-4y3kXs3O.js": {
+    "file": "assets/runtime-dom.esm-bundler-4y3kXs3O.js",
+    "name": "runtime-dom.esm-bundler"
+  },
+  "_shippingApi-BCucAPsN.js": {
+    "file": "assets/shippingApi-BCucAPsN.js",
+    "name": "shippingApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_shippingProviderApi-BzQQf9hX.js": {
+    "file": "assets/shippingProviderApi-BzQQf9hX.js",
+    "name": "shippingProviderApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_supplierApi-BMkDJd6b.js": {
+    "file": "assets/supplierApi-BMkDJd6b.js",
+    "name": "supplierApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "_warehouseApi-B9yQtIhY.js": {
+    "file": "assets/warehouseApi-B9yQtIhY.js",
+    "name": "warehouseApi",
+    "imports": [
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/css/app.css": {
+    "file": "assets/app-B-ZErOB4.css",
+    "src": "resources/css/app.css",
+    "isEntry": true
+  },
+  "resources/js/app.js": {
+    "file": "assets/app-ByVxQHmQ.js",
+    "name": "app",
+    "src": "resources/js/app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "resources/js/attendance-app.js": {
+    "file": "assets/attendance-app-C6LgKrkx.js",
+    "name": "attendance-app",
+    "src": "resources/js/attendance-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_employeeApi-9nylCbHy.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/cash-ledger-app.js": {
+    "file": "assets/cash-ledger-app-Bxeyc4yy.js",
+    "name": "cash-ledger-app",
+    "src": "resources/js/cash-ledger-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_index-Dq7h7Pqt.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ],
+    "css": [
+      "assets/cash-ledger-app-DoSPk5GI.css"
+    ]
+  },
+  "resources/js/cash-payments-app.js": {
+    "file": "assets/cash-payments-app-Cp9XciBK.js",
+    "name": "cash-payments-app",
+    "src": "resources/js/cash-payments-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_index-Dq7h7Pqt.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "resources/js/cash-receipts-app.js": {
+    "file": "assets/cash-receipts-app-ajQ1OYxC.js",
+    "name": "cash-receipts-app",
+    "src": "resources/js/cash-receipts-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_index-Dq7h7Pqt.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "resources/js/categories-app.js": {
+    "file": "assets/categories-app-BJg6qXl9.js",
+    "name": "categories-app",
+    "src": "resources/js/categories-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/commissions-app.js": {
+    "file": "assets/commissions-app-nYuwztEG.js",
+    "name": "commissions-app",
+    "src": "resources/js/commissions-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_employeeApi-9nylCbHy.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/customer-debts-app.js": {
+    "file": "assets/customer-debts-app-BvAfbnUP.js",
+    "name": "customer-debts-app",
+    "src": "resources/js/customer-debts-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_index-Dq7h7Pqt.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "resources/js/customer-groups-app.js": {
+    "file": "assets/customer-groups-app-BWIxKhWi.js",
+    "name": "customer-groups-app",
+    "src": "resources/js/customer-groups-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_index-Dq7h7Pqt.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ],
+    "css": [
+      "assets/customer-groups-app-SUCGb-9L.css"
+    ]
+  },
+  "resources/js/customers-app.js": {
+    "file": "assets/customers-app-BxrNcqls.js",
+    "name": "customers-app",
+    "src": "resources/js/customers-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_index-Dq7h7Pqt.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ],
+    "css": [
+      "assets/customers-app-peW0f2_i.css"
+    ]
+  },
+  "resources/js/dashboard-app.js": {
+    "file": "assets/dashboard-app-CK5cO7-4.js",
+    "name": "dashboard-app",
+    "src": "resources/js/dashboard-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_index-Dq7h7Pqt.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "resources/js/employee-attendance-devices-app.js": {
+    "file": "assets/employee-attendance-devices-app-ByUDFjVk.js",
+    "name": "employee-attendance-devices-app",
+    "src": "resources/js/employee-attendance-devices-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_employeeApi-9nylCbHy.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/employee-detail-app.js": {
+    "file": "assets/employee-detail-app-5Zmrmdct.js",
+    "name": "employee-detail-app",
+    "src": "resources/js/employee-detail-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_employeeApi-9nylCbHy.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/employee-schedules-app.js": {
+    "file": "assets/employee-schedules-app-C73en47l.js",
+    "name": "employee-schedules-app",
+    "src": "resources/js/employee-schedules-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_employeeApi-9nylCbHy.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/employee-settings-app.js": {
+    "file": "assets/employee-settings-app-BUjpWlFN.js",
+    "name": "employee-settings-app",
+    "src": "resources/js/employee-settings-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_employeeApi-9nylCbHy.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/employees-app.js": {
+    "file": "assets/employees-app-6UhGzM0N.js",
+    "name": "employees-app",
+    "src": "resources/js/employees-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_employeeApi-9nylCbHy.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/login-app.js": {
+    "file": "assets/login-app-PwVffKVH.js",
+    "name": "login-app",
+    "src": "resources/js/login-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js"
+    ]
+  },
+  "resources/js/order-detail-app.js": {
+    "file": "assets/order-detail-app-DnwK-Fah.js",
+    "name": "order-detail-app",
+    "src": "resources/js/order-detail-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_orderApi-DEoUzQBG.js",
+      "_orderReturnApi-BzQzq_yy.js",
+      "_shippingProviderApi-BzQQf9hX.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ]
+  },
+  "resources/js/order-edit-app.js": {
+    "file": "assets/order-edit-app-COH5ffLp.js",
+    "name": "order-edit-app",
+    "src": "resources/js/order-edit-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_orderApi-DEoUzQBG.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ]
+  },
+  "resources/js/order-return-detail-app.js": {
+    "file": "assets/order-return-detail-app-__Kfv36E.js",
+    "name": "order-return-detail-app",
+    "src": "resources/js/order-return-detail-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_orderReturnApi-BzQzq_yy.js",
+      "_OrderReturnDetail-C6iizvdS.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/order-returns-app.js": {
+    "file": "assets/order-returns-app-D89i_4ER.js",
+    "name": "order-returns-app",
+    "src": "resources/js/order-returns-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_orderReturnApi-BzQzq_yy.js",
+      "_OrderReturnDetail-C6iizvdS.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/orders-app.js": {
+    "file": "assets/orders-app-Ce-BWP_J.js",
+    "name": "orders-app",
+    "src": "resources/js/orders-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_orderApi-DEoUzQBG.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ],
+    "css": [
+      "assets/orders-app-BfnZPNCN.css"
+    ]
+  },
+  "resources/js/payment-app.js": {
+    "file": "assets/payment-app--QlxPZNe.js",
+    "name": "payment-app",
+    "src": "resources/js/payment-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ],
+    "css": [
+      "assets/payment-app-D6nLxxSM.css"
+    ]
+  },
+  "resources/js/payroll-app.js": {
+    "file": "assets/payroll-app-C1iloUEi.js",
+    "name": "payroll-app",
+    "src": "resources/js/payroll-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_employeeApi-9nylCbHy.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/pos-app.js": {
+    "file": "assets/pos-app-BbbQ1sBp.js",
+    "name": "pos-app",
+    "src": "resources/js/pos-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ],
+    "css": [
+      "assets/pos-app-QTkL7jkM.css"
+    ]
+  },
+  "resources/js/products-app.js": {
+    "file": "assets/products-app-D_vkpAuX.js",
+    "name": "products-app",
+    "src": "resources/js/products-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_productApi-BLq2w32k.js",
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_warehouseApi-B9yQtIhY.js"
+    ]
+  },
+  "resources/js/purchase-order-create-app.js": {
+    "file": "assets/purchase-order-create-app-BxGafxOc.js",
+    "name": "purchase-order-create-app",
+    "src": "resources/js/purchase-order-create-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseOrderApi-CKbqxEfM.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "_productApi-BLq2w32k.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ]
+  },
+  "resources/js/purchase-order-detail-app.js": {
+    "file": "assets/purchase-order-detail-app-CtpWQlZj.js",
+    "name": "purchase-order-detail-app",
+    "src": "resources/js/purchase-order-detail-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseOrderApi-CKbqxEfM.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-order-edit-app.js": {
+    "file": "assets/purchase-order-edit-app-CEIXqTnu.js",
+    "name": "purchase-order-edit-app",
+    "src": "resources/js/purchase-order-edit-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseOrderApi-CKbqxEfM.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "_productApi-BLq2w32k.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ]
+  },
+  "resources/js/purchase-orders-app.js": {
+    "file": "assets/purchase-orders-app-DizJYKAZ.js",
+    "name": "purchase-orders-app",
+    "src": "resources/js/purchase-orders-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseOrderApi-CKbqxEfM.js",
+      "_supplierApi-BMkDJd6b.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-receipt-create-app.js": {
+    "file": "assets/purchase-receipt-create-app-DFKH1lBI.js",
+    "name": "purchase-receipt-create-app",
+    "src": "resources/js/purchase-receipt-create-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_PurchaseReceiptCreate-BT-4pyTD.js",
+      "_purchaseReceiptApi-C6q9sJ3Q.js",
+      "_index-Dq7h7Pqt.js",
+      "_purchaseOrderApi-CKbqxEfM.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "_supplierApi-BMkDJd6b.js",
+      "_productApi-BLq2w32k.js",
+      "_authInterceptor-CfpQKU9t.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "resources/js/purchase-receipt-detail-app.js": {
+    "file": "assets/purchase-receipt-detail-app-C--bUDXh.js",
+    "name": "purchase-receipt-detail-app",
+    "src": "resources/js/purchase-receipt-detail-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReceiptApi-C6q9sJ3Q.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-receipt-edit-app.js": {
+    "file": "assets/purchase-receipt-edit-app-r5H7oxr1.js",
+    "name": "purchase-receipt-edit-app",
+    "src": "resources/js/purchase-receipt-edit-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_PurchaseReceiptCreate-BT-4pyTD.js",
+      "_purchaseReceiptApi-C6q9sJ3Q.js",
+      "_index-Dq7h7Pqt.js",
+      "_purchaseOrderApi-CKbqxEfM.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "_supplierApi-BMkDJd6b.js",
+      "_productApi-BLq2w32k.js",
+      "_authInterceptor-CfpQKU9t.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js"
+    ]
+  },
+  "resources/js/purchase-receipts-app.js": {
+    "file": "assets/purchase-receipts-app-sBrmdFyt.js",
+    "name": "purchase-receipts-app",
+    "src": "resources/js/purchase-receipts-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReceiptApi-C6q9sJ3Q.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-return-order-create-app.js": {
+    "file": "assets/purchase-return-order-create-app-BVcgbMD4.js",
+    "name": "purchase-return-order-create-app",
+    "src": "resources/js/purchase-return-order-create-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReturnOrderApi-DD44FMY6.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ],
+    "css": [
+      "assets/purchase-return-order-create-app-CkzO-dVy.css"
+    ]
+  },
+  "resources/js/purchase-return-order-detail-app.js": {
+    "file": "assets/purchase-return-order-detail-app-Hoajf2a9.js",
+    "name": "purchase-return-order-detail-app",
+    "src": "resources/js/purchase-return-order-detail-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReturnOrderApi-DD44FMY6.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-return-order-edit-app.js": {
+    "file": "assets/purchase-return-order-edit-app-DPA8VnRR.js",
+    "name": "purchase-return-order-edit-app",
+    "src": "resources/js/purchase-return-order-edit-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReturnOrderApi-DD44FMY6.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ],
+    "css": [
+      "assets/purchase-return-order-edit-app-DcezO7t1.css"
+    ]
+  },
+  "resources/js/purchase-return-orders-app.js": {
+    "file": "assets/purchase-return-orders-app-BIMMRUwr.js",
+    "name": "purchase-return-orders-app",
+    "src": "resources/js/purchase-return-orders-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReturnOrderApi-DD44FMY6.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-return-receipt-create-app.js": {
+    "file": "assets/purchase-return-receipt-create-app-BjaXFqbZ.js",
+    "name": "purchase-return-receipt-create-app",
+    "src": "resources/js/purchase-return-receipt-create-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReturnReceiptApi-OJvqTSB6.js",
+      "_purchaseReturnOrderApi-DD44FMY6.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-return-receipt-detail-app.js": {
+    "file": "assets/purchase-return-receipt-detail-app-BZVF7xnD.js",
+    "name": "purchase-return-receipt-detail-app",
+    "src": "resources/js/purchase-return-receipt-detail-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReturnReceiptApi-OJvqTSB6.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/purchase-return-receipts-app.js": {
+    "file": "assets/purchase-return-receipts-app-B_YUwUxj.js",
+    "name": "purchase-return-receipts-app",
+    "src": "resources/js/purchase-return-receipts-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_purchaseReturnReceiptApi-OJvqTSB6.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/shipping-app.js": {
+    "file": "assets/shipping-app-gsywDXQ4.js",
+    "name": "shipping-app",
+    "src": "resources/js/shipping-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_shippingApi-BCucAPsN.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/shipping-form-app.js": {
+    "file": "assets/shipping-form-app-CkM8e-2Z.js",
+    "name": "shipping-form-app",
+    "src": "resources/js/shipping-form-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_orderApi-DEoUzQBG.js",
+      "_shippingApi-BCucAPsN.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js",
+      "_authInterceptor-CfpQKU9t.js"
+    ],
+    "css": [
+      "assets/shipping-form-app-DEpf11I5.css"
+    ]
+  },
+  "resources/js/shipping-providers-app.js": {
+    "file": "assets/shipping-providers-app-YkXez5PW.js",
+    "name": "shipping-providers-app",
+    "src": "resources/js/shipping-providers-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_shippingProviderApi-BzQQf9hX.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/suppliers-app.js": {
+    "file": "assets/suppliers-app-DziSM0hf.js",
+    "name": "suppliers-app",
+    "src": "resources/js/suppliers-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_supplierApi-BMkDJd6b.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ],
+    "css": [
+      "assets/suppliers-app-BkjG9ofj.css"
+    ]
+  },
+  "resources/js/units-app.js": {
+    "file": "assets/units-app-CYd5HDXA.js",
+    "name": "units-app",
+    "src": "resources/js/units-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ]
+  },
+  "resources/js/warehouse-app.js": {
+    "file": "assets/warehouse-app-C5nzThov.js",
+    "name": "warehouse-app",
+    "src": "resources/js/warehouse-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ],
+    "css": [
+      "assets/warehouse-app-wikfwbue.css"
+    ]
+  },
+  "resources/js/warehouse-selector-app.js": {
+    "file": "assets/warehouse-selector-app-BLUxYK6_.js",
+    "name": "warehouse-selector-app",
+    "src": "resources/js/warehouse-selector-app.js",
+    "isEntry": true,
+    "imports": [
+      "_runtime-dom.esm-bundler-4y3kXs3O.js",
+      "_pinia-B541wSQN.js",
+      "_warehouseApi-B9yQtIhY.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_index-Dq7h7Pqt.js"
+    ],
+    "css": [
+      "assets/warehouse-selector-app-CSgdPqg2.css"
+    ]
+  }
+}

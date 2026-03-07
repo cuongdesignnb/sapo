@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Order Returns</title>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+</head>
+<body>
+    <h1>Debug Order Returns API</h1>
+    <button onclick="testAPI()">Test API</button>
+    <div id="result"></div>
+
+    <script>
+        async function testAPI() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing...';
+            
+            // Check tokens first
+            const sessionToken = sessionStorage.getItem('api_token');
+            const metaToken = document.querySelector('meta[name="api-token"]')?.getAttribute('content');
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            
+            console.log('Session Token:', sessionToken);
+            console.log('Meta Token:', metaToken);
+            console.log('CSRF Token:', csrfToken);
+            
+            try {
+                // Test both routes
+                console.log('Testing /api/test-order-returns...');
+                const testResponse = await fetch('/api/test-order-returns', {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                const testData = await testResponse.text();
+                console.log('Test response:', testData);
+                
+                console.log('Testing /api/order-returns...');
+                const headers = {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                };
+                
+                if (csrfToken) {
+                    headers['X-CSRF-TOKEN'] = csrfToken;
+                }
+                
+                const token = sessionToken || metaToken;
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                
+                const response = await fetch('/api/order-returns', {
+                    method: 'GET',
+                    headers: headers
+                });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                
+                const data = await response.text();
+                console.log('Response data:', data);
+                
+                resultDiv.innerHTML = `
+                    <h3>Tokens:</h3>
+                    <p>Session Token: ${sessionToken ? 'EXISTS' : 'MISSING'}</p>
+                    <p>Meta Token: ${metaToken ? 'EXISTS' : 'MISSING'}</p>
+                    <p>CSRF Token: ${csrfToken ? 'EXISTS' : 'MISSING'}</p>
+                    
+                    <h3>Test Route (/api/test-order-returns):</h3>
+                    <p>Status: ${testResponse.status}</p>
+                    <p>Response: <pre>${testData}</pre></p>
+                    
+                    <h3>Main Route (/api/order-returns):</h3>
+                    <p>Status: ${response.status}</p>
+                    <p>Response: <pre>${data}</pre></p>
+                `;
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>

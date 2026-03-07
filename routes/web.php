@@ -1,0 +1,317 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\SupplierController;
+
+Route::get('/run-migrations', function () {
+    return \Illuminate\Support\Facades\Schema::getColumnListing('invoices');
+});
+
+Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
+
+Route::get('/check-schema', function () {
+    return response()->json(\Illuminate\Support\Facades\Schema::getColumnListing('invoices'));
+});
+
+Route::get('/products', [ProductController::class, 'index'])->name('products.index');
+Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
+Route::post('/customers', [CustomerController::class, 'store'])->name('customers.store');
+Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
+Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->name('customers.destroy');
+Route::get('/customers/{customer}/sales-history', [CustomerController::class, 'salesHistory']);
+Route::get('/customers/{customer}/debt-history', [CustomerController::class, 'debtHistory']);
+Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index');
+Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store');
+
+use App\Http\Controllers\PurchaseController;
+Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
+Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
+Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
+Route::get('/products/create/{type?}', [ProductController::class, 'create'])->name('products.create');
+Route::get('/products/document-detail', [ProductController::class, 'documentDetail'])->name('products.document-detail');
+Route::post('/products', [ProductController::class, 'store'])->name('products.store');
+Route::get('/products/{product}/edit', [ProductController::class, 'edit'])->name('products.edit');
+Route::get('/products/{product}/inventory-card', [ProductController::class, 'inventoryCard'])->name('products.inventory-card');
+Route::get('/products/{product}/serials', [ProductController::class, 'serials'])->name('products.serials');
+Route::get('/products/{product}/warranties', [ProductController::class, 'warranties'])->name('products.warranties');
+Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
+Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');
+
+use App\Http\Controllers\PriceSettingController;
+Route::get('/price-settings/export', [PriceSettingController::class, 'export'])->name('price-settings.export');
+Route::post('/price-settings/import', [PriceSettingController::class, 'import'])->name('price-settings.import');
+Route::post('/price-settings/apply-formula', [PriceSettingController::class, 'applyFormula'])->name('price-settings.apply-formula');
+Route::get('/price-settings', [PriceSettingController::class, 'index'])->name('price-settings.index');
+Route::put('/price-settings/{product}', [PriceSettingController::class, 'update'])->name('price-settings.update');
+Route::post('/price-settings/price-books', [PriceSettingController::class, 'storePriceBook'])->name('price-books.store');
+Route::put('/price-settings/price-books/{priceBook}', [PriceSettingController::class, 'updatePriceBook'])->name('price-books.update');
+Route::delete('/price-settings/price-books/{priceBook}', [PriceSettingController::class, 'destroyPriceBook'])->name('price-books.destroy');
+Route::put('/price-settings/price-books/{priceBook}/products/{product}', [PriceSettingController::class, 'updateBookPrice'])->name('price-books.update-price');
+
+use App\Http\Controllers\WarrantyController;
+Route::get('/warranties', [WarrantyController::class, 'index'])->name('warranties.index');
+Route::put('/warranties/{warranty}', [WarrantyController::class, 'update'])->name('warranties.update');
+
+use App\Http\Controllers\StockTransferController;
+Route::get('/stock-transfers', [StockTransferController::class, 'index'])->name('stock-transfers.index');
+Route::get('/stock-transfers/create', [StockTransferController::class, 'create'])->name('stock-transfers.create');
+Route::post('/stock-transfers', [StockTransferController::class, 'store'])->name('stock-transfers.store');
+
+use App\Http\Controllers\StockTakeController;
+Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index');
+Route::get('/stock-takes/create', [StockTakeController::class, 'create'])->name('stock-takes.create');
+Route::post('/stock-takes', [StockTakeController::class, 'store'])->name('stock-takes.store');
+
+use App\Http\Controllers\DamageController;
+Route::get('/damages', [DamageController::class, 'index'])->name('damages.index');
+Route::get('/damages/create', [DamageController::class, 'create'])->name('damages.create');
+Route::post('/damages', [DamageController::class, 'store'])->name('damages.store');
+
+use App\Http\Controllers\PurchaseOrderController;
+Route::get('/purchase-orders', [PurchaseOrderController::class, 'index'])->name('purchase-orders.index');
+Route::get('/purchase-orders/create', [PurchaseOrderController::class, 'create'])->name('purchase-orders.create');
+Route::post('/purchase-orders', [PurchaseOrderController::class, 'store'])->name('purchase-orders.store');
+
+use App\Http\Controllers\PosController;
+use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\CashFlowController;
+
+use App\Http\Controllers\OrderReturnController;
+
+Route::get('/run-migrate', function () {
+    try {
+        \Illuminate\Support\Facades\Schema::dropIfExists('return_items');
+        \Illuminate\Support\Facades\Schema::dropIfExists('returns');
+
+        \Illuminate\Support\Facades\Schema::create('returns', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->string('code')->unique();
+            $table->foreignId('invoice_id')->nullable()->constrained('invoices')->nullOnDelete();
+            $table->foreignId('customer_id')->nullable()->constrained('customers')->nullOnDelete();
+            $table->foreignId('branch_id')->nullable()->constrained('branches')->nullOnDelete();
+            $table->string('status')->default('Đã trả'); // Đã trả, Đã hủy
+            $table->decimal('subtotal', 15, 2)->default(0); // Tổng tiền hàng trả
+            $table->decimal('discount', 15, 2)->default(0); // Giảm giá phiếu trả
+            $table->decimal('fee', 15, 2)->default(0); // Phí trả hàng
+            $table->decimal('total', 15, 2)->default(0); // Cần trả khách (Tổng)
+            $table->decimal('paid_to_customer', 15, 2)->default(0); // Đã trả khách
+            $table->text('note')->nullable();
+
+            $table->string('created_by_name')->nullable();
+            $table->string('seller_name')->nullable();
+            $table->string('sales_channel')->nullable();
+            $table->string('price_book_name')->nullable();
+
+            $table->timestamps();
+        });
+
+        \Illuminate\Support\Facades\Schema::create('return_items', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->foreignId('return_id')->constrained('returns')->cascadeOnDelete();
+            $table->foreignId('product_id')->constrained('products');
+            $table->integer('quantity')->default(1);
+            $table->decimal('price', 15, 2)->default(0); // Giá trả hàng
+            $table->decimal('discount', 15, 2)->default(0); // Giảm giá
+            $table->decimal('import_price', 15, 2)->default(0); // Giá nhập lại
+            $table->timestamps();
+        });
+
+        return 'Migrated Returns Tables directly.';
+    } catch (\Exception $e) {
+        return 'Error: ' . $e->getMessage();
+    }
+});
+
+Route::get('/run-migrate-2', function () {
+    try {
+        \Illuminate\Support\Facades\Schema::dropIfExists('return_items');
+        \Illuminate\Support\Facades\Schema::dropIfExists('returns');
+
+        \Illuminate\Support\Facades\Schema::create('returns', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->string('code')->unique();
+            $table->foreignId('invoice_id')->nullable()->constrained('invoices')->nullOnDelete();
+            $table->foreignId('customer_id')->nullable()->constrained('customers')->nullOnDelete();
+            $table->foreignId('branch_id')->nullable()->constrained('branches')->nullOnDelete();
+            $table->string('status')->default('Đã trả');
+            $table->decimal('subtotal', 15, 2)->default(0);
+            $table->decimal('discount', 15, 2)->default(0);
+            $table->decimal('fee', 15, 2)->default(0);
+            $table->decimal('total', 15, 2)->default(0);
+            $table->decimal('paid_to_customer', 15, 2)->default(0);
+            $table->text('note')->nullable();
+            $table->string('created_by_name')->nullable();
+            $table->string('seller_name')->nullable();
+            $table->string('sales_channel')->nullable();
+            $table->string('price_book_name')->nullable();
+            $table->timestamps();
+        });
+
+        \Illuminate\Support\Facades\Schema::create('return_items', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->foreignId('return_id')->constrained('returns')->cascadeOnDelete();
+            $table->foreignId('product_id')->constrained('products');
+            $table->integer('quantity')->default(1);
+            $table->decimal('price', 15, 2)->default(0);
+            $table->decimal('discount', 15, 2)->default(0);
+            $table->decimal('import_price', 15, 2)->default(0);
+            $table->timestamps();
+        });
+
+        return 'Migrated Returns Tables 2 directly.';
+    } catch (\Exception $e) {
+        return 'Error: ' . $e->getMessage();
+    }
+});
+
+Route::get('/invoices', [InvoiceController::class, 'index'])->name('invoices.index');
+Route::get('/api/invoices/search', [InvoiceController::class, 'apiSearch'])->name('api.invoices.search');
+Route::post('/invoices', [InvoiceController::class, 'store'])->name('invoices.store');
+
+Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index');
+Route::post('/returns', [OrderReturnController::class, 'store'])->name('returns.store');
+Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+Route::get('/orders/create', [OrderController::class, 'create'])->name('orders.create');
+Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
+Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update');
+Route::get('/cash-flows', [App\Http\Controllers\CashFlowController::class, 'index'])->name('cash_flows.index');
+Route::post('/cash-flows', [App\Http\Controllers\CashFlowController::class, 'store'])->name('cash_flows.store');
+Route::put('/cash-flows/{cash_flow}', [App\Http\Controllers\CashFlowController::class, 'update'])->name('cash_flows.update');
+Route::delete('/cash-flows/{cash_flow}', [App\Http\Controllers\CashFlowController::class, 'destroy'])->name('cash_flows.destroy');
+Route::get('/cash-flows/{cash_flow}/print', [App\Http\Controllers\CashFlowController::class, 'print'])->name('cash_flows.print');
+Route::post('/cash-flows/subject', [App\Http\Controllers\CashFlowController::class, 'storeSubject'])->name('cash_flows.subject');
+
+Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
+Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
+Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
+
+// Product search API (shared by Orders, POS, etc.)
+Route::get('/api/products/search', [ProductController::class, 'apiSearch'])->name('api.products.search');
+
+// Customer debt management
+Route::post('/customers/{customer}/debt-payment', [CustomerController::class, 'debtPayment']);
+Route::post('/customers/{customer}/debt-adjust', [CustomerController::class, 'debtAdjust']);
+
+// Print routes
+Route::get('/invoices/{invoice}/print', [InvoiceController::class, 'print'])->name('invoices.print');
+Route::get('/invoices/{invoice}/payment-history', [InvoiceController::class, 'paymentHistory'])->name('invoices.payment-history');
+Route::get('/orders/{order}/print', [OrderController::class, 'print'])->name('orders.print');
+Route::get('/returns/{return}/print', [\App\Http\Controllers\OrderReturnController::class, 'print'])->name('returns.print');
+Route::get('/purchases/{purchase}/print', [\App\Http\Controllers\PurchaseController::class, 'print'])->name('purchases.print');
+Route::get('/purchase-orders/{purchase_order}/print', [\App\Http\Controllers\PurchaseOrderController::class, 'print'])->name('purchase_orders.print');
+Route::get('/stock-takes/{stock_take}/print', [\App\Http\Controllers\StockTakeController::class, 'print'])->name('stock_takes.print');
+Route::get('/stock-transfers/{stock_transfer}/print', [\App\Http\Controllers\StockTransferController::class, 'print'])->name('stock_transfers.print');
+Route::get('/damages/{damage}/print', [\App\Http\Controllers\DamageController::class, 'print'])->name('damages.print');
+Route::get('/warranties/{warranty}/print', [\App\Http\Controllers\WarrantyController::class, 'print'])->name('warranties.print');
+Route::get('/paysheets/{paysheet}/print', [\App\Http\Controllers\PaysheetController::class, 'print'])->name('paysheets.print');
+Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy');
+
+use App\Http\Controllers\SettingController;
+Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
+Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
+
+// Category CRUD from Settings
+Route::post('/settings/categories', [SettingController::class, 'storeCategory'])->name('settings.categories.store');
+Route::put('/settings/categories/{category}', [SettingController::class, 'updateCategory'])->name('settings.categories.update');
+Route::delete('/settings/categories/{category}', [SettingController::class, 'destroyCategory'])->name('settings.categories.destroy');
+
+// Brand CRUD from Settings
+Route::post('/settings/brands', [SettingController::class, 'storeBrand'])->name('settings.brands.store');
+Route::put('/settings/brands/{brand}', [SettingController::class, 'updateBrand'])->name('settings.brands.update');
+Route::delete('/settings/brands/{brand}', [SettingController::class, 'destroyBrand'])->name('settings.brands.destroy');
+
+// Unit CRUD from Settings
+Route::post('/settings/units', [SettingController::class, 'storeUnit'])->name('settings.units.store');
+Route::put('/settings/units/{unit}', [SettingController::class, 'updateUnit'])->name('settings.units.update');
+Route::delete('/settings/units/{unit}', [SettingController::class, 'destroyUnit'])->name('settings.units.destroy');
+
+// Attribute CRUD from Settings
+Route::post('/settings/attributes', [SettingController::class, 'storeAttribute'])->name('settings.attributes.store');
+Route::put('/settings/attributes/{attribute}', [SettingController::class, 'updateAttribute'])->name('settings.attributes.update');
+Route::delete('/settings/attributes/{attribute}', [SettingController::class, 'destroyAttribute'])->name('settings.attributes.destroy');
+
+// Location CRUD from Settings
+Route::post('/settings/locations', [SettingController::class, 'storeLocation'])->name('settings.locations.store');
+Route::put('/settings/locations/{location}', [SettingController::class, 'updateLocation'])->name('settings.locations.update');
+Route::delete('/settings/locations/{location}', [SettingController::class, 'destroyLocation'])->name('settings.locations.destroy');
+
+// OtherFee CRUD from Settings
+Route::post('/settings/other-fees', [SettingController::class, 'storeOtherFee'])->name('settings.other-fees.store');
+Route::put('/settings/other-fees/{otherFee}', [SettingController::class, 'updateOtherFee'])->name('settings.other-fees.update');
+Route::delete('/settings/other-fees/{otherFee}', [SettingController::class, 'destroyOtherFee'])->name('settings.other-fees.destroy');
+
+// BankAccount CRUD from Settings
+Route::post('/settings/bank-accounts', [SettingController::class, 'storeBankAccount'])->name('settings.bank-accounts.store');
+Route::put('/settings/bank-accounts/{bankAccount}', [SettingController::class, 'updateBankAccount'])->name('settings.bank-accounts.update');
+Route::delete('/settings/bank-accounts/{bankAccount}', [SettingController::class, 'destroyBankAccount'])->name('settings.bank-accounts.destroy');
+
+// Employee Routes
+Route::get('/employees/settings', [App\Http\Controllers\EmployeeController::class, 'settings'])->name('employees.settings');
+Route::get('/employees', [App\Http\Controllers\EmployeeController::class, 'index'])->name('employees.index');
+Route::post('/employees/bulk', [App\Http\Controllers\EmployeeController::class, 'bulkStore'])->name('employees.bulk-store');
+Route::post('/employees', [App\Http\Controllers\EmployeeController::class, 'store'])->name('employees.store');
+Route::put('/employees/{employee}', [App\Http\Controllers\EmployeeController::class, 'update'])->name('employees.update');
+Route::delete('/employees/{employee}', [App\Http\Controllers\EmployeeController::class, 'destroy'])->name('employees.destroy');
+
+// Employee Sub-features
+Route::get('/employees/schedules', function () {
+    $employees = \App\Models\Employee::where('is_active', true)->orderBy('name')->get();
+    $shifts = \App\Models\Shift::where('status', 'active')->orderBy('name')->get();
+    return inertia('Employees/Schedules', [
+        'employees' => $employees,
+        'shifts' => $shifts,
+    ]);
+})->name('employees.schedules');
+
+Route::get('/employees/attendance/settings', [App\Http\Controllers\EmployeeController::class, 'attendanceSettings'])->name('employees.attendance-settings');
+Route::post('/employees/attendance/settings/preferences', [App\Http\Controllers\EmployeeController::class, 'saveAttendanceSettings'])->name('employees.attendance-settings.save');
+Route::get('/employees/attendance/settings/shifts', [App\Http\Controllers\EmployeeController::class, 'attendanceShiftList'])->name('employees.attendance-settings.shifts');
+Route::get('/employees/attendance/settings/devices', [App\Http\Controllers\EmployeeController::class, 'attendanceDevices'])->name('employees.attendance-settings.devices');
+Route::get('/employees/payroll/settings', [App\Http\Controllers\EmployeeController::class, 'payrollSettings'])->name('employees.payroll-settings');
+Route::get('/employees/workday/settings', [App\Http\Controllers\EmployeeController::class, 'workdaySettings'])->name('employees.workday-settings');
+Route::get('/employees/workday/settings/holidays', [App\Http\Controllers\EmployeeController::class, 'holidayManagement'])->name('employees.workday-settings.holidays');
+
+Route::get('/employees/attendance', function () {
+    return inertia('Employees/Attendance');
+})->name('employees.attendance');
+
+Route::get('/employees/paysheets', function () {
+    $branches = \App\Models\Branch::orderBy('name')->get(['id', 'name']);
+    $employees = \App\Models\Employee::where('is_active', true)->orderBy('name')->get(['id', 'code', 'name']);
+    return inertia('Employees/Paysheets', [
+        'branches' => $branches,
+        'employees' => $employees,
+    ]);
+})->name('employees.paysheets');
+
+// ===== Export / Import routes =====
+Route::get('/customers/export', [App\Http\Controllers\CustomerController::class, 'export'])->name('customers.export');
+Route::post('/customers/import', [App\Http\Controllers\CustomerController::class, 'import'])->name('customers.import');
+
+Route::get('/suppliers/export', [App\Http\Controllers\SupplierController::class, 'export'])->name('suppliers.export');
+Route::post('/suppliers/import', [App\Http\Controllers\SupplierController::class, 'import'])->name('suppliers.import');
+
+Route::get('/employees/export', [App\Http\Controllers\EmployeeController::class, 'export'])->name('employees.export');
+Route::post('/employees/import', [App\Http\Controllers\EmployeeController::class, 'import'])->name('employees.import');
+
+Route::get('/products/export', [App\Http\Controllers\ProductController::class, 'export'])->name('products.export');
+Route::post('/products/import', [App\Http\Controllers\ProductController::class, 'import'])->name('products.import');
+
+Route::get('/invoices/export', [App\Http\Controllers\InvoiceController::class, 'export'])->name('invoices.export');
+Route::get('/orders/export', [App\Http\Controllers\OrderController::class, 'export'])->name('orders.export');
+Route::get('/returns/export', [App\Http\Controllers\OrderReturnController::class, 'export'])->name('returns.export');
+
+Route::get('/cash-flows/export', [App\Http\Controllers\CashFlowController::class, 'export'])->name('cash_flows.export');
+Route::post('/cash-flows/import', [App\Http\Controllers\CashFlowController::class, 'import'])->name('cash_flows.import');
+
+Route::get('/purchases/export', [App\Http\Controllers\PurchaseController::class, 'export'])->name('purchases.export');
+Route::get('/purchase-orders/export', [App\Http\Controllers\PurchaseOrderController::class, 'export'])->name('purchase-orders.export');
+Route::get('/stock-takes/export', [App\Http\Controllers\StockTakeController::class, 'export'])->name('stock-takes.export');
+Route::get('/stock-transfers/export', [App\Http\Controllers\StockTransferController::class, 'export'])->name('stock-transfers.export');
+Route::get('/damages/export', [App\Http\Controllers\DamageController::class, 'export'])->name('damages.export');
+Route::get('/warranties/export', [App\Http\Controllers\WarrantyController::class, 'export'])->name('warranties.export');
+Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class, 'export'])->name('paysheets.export');
