@@ -5,6 +5,30 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\SupplierController;
+use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\PurchaseController;
+use App\Http\Controllers\PriceSettingController;
+use App\Http\Controllers\WarrantyController;
+use App\Http\Controllers\StockTransferController;
+use App\Http\Controllers\StockTakeController;
+use App\Http\Controllers\DamageController;
+use App\Http\Controllers\PurchaseOrderController;
+use App\Http\Controllers\PosController;
+use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\CashFlowController;
+use App\Http\Controllers\OrderReturnController;
+use App\Http\Controllers\SettingController;
+
+// Auth routes (guest)
+Route::middleware('guest')->group(function () {
+    Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
+    Route::post('/login', [LoginController::class, 'login']);
+});
+Route::post('/logout', [LoginController::class, 'logout'])->name('logout')->middleware('auth');
+
+// All app routes require authentication
+Route::middleware('auth')->group(function () {
 
 Route::get('/run-migrations', function () {
     return \Illuminate\Support\Facades\Schema::getColumnListing('invoices');
@@ -26,7 +50,6 @@ Route::get('/customers/{customer}/debt-history', [CustomerController::class, 'de
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index');
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store');
 
-use App\Http\Controllers\PurchaseController;
 Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
 Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
@@ -40,7 +63,6 @@ Route::get('/products/{product}/warranties', [ProductController::class, 'warrant
 Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
 Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');
 
-use App\Http\Controllers\PriceSettingController;
 Route::get('/price-settings/export', [PriceSettingController::class, 'export'])->name('price-settings.export');
 Route::post('/price-settings/import', [PriceSettingController::class, 'import'])->name('price-settings.import');
 Route::post('/price-settings/apply-formula', [PriceSettingController::class, 'applyFormula'])->name('price-settings.apply-formula');
@@ -51,36 +73,24 @@ Route::put('/price-settings/price-books/{priceBook}', [PriceSettingController::c
 Route::delete('/price-settings/price-books/{priceBook}', [PriceSettingController::class, 'destroyPriceBook'])->name('price-books.destroy');
 Route::put('/price-settings/price-books/{priceBook}/products/{product}', [PriceSettingController::class, 'updateBookPrice'])->name('price-books.update-price');
 
-use App\Http\Controllers\WarrantyController;
 Route::get('/warranties', [WarrantyController::class, 'index'])->name('warranties.index');
 Route::put('/warranties/{warranty}', [WarrantyController::class, 'update'])->name('warranties.update');
 
-use App\Http\Controllers\StockTransferController;
 Route::get('/stock-transfers', [StockTransferController::class, 'index'])->name('stock-transfers.index');
 Route::get('/stock-transfers/create', [StockTransferController::class, 'create'])->name('stock-transfers.create');
 Route::post('/stock-transfers', [StockTransferController::class, 'store'])->name('stock-transfers.store');
 
-use App\Http\Controllers\StockTakeController;
 Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index');
 Route::get('/stock-takes/create', [StockTakeController::class, 'create'])->name('stock-takes.create');
 Route::post('/stock-takes', [StockTakeController::class, 'store'])->name('stock-takes.store');
 
-use App\Http\Controllers\DamageController;
 Route::get('/damages', [DamageController::class, 'index'])->name('damages.index');
 Route::get('/damages/create', [DamageController::class, 'create'])->name('damages.create');
 Route::post('/damages', [DamageController::class, 'store'])->name('damages.store');
 
-use App\Http\Controllers\PurchaseOrderController;
 Route::get('/purchase-orders', [PurchaseOrderController::class, 'index'])->name('purchase-orders.index');
 Route::get('/purchase-orders/create', [PurchaseOrderController::class, 'create'])->name('purchase-orders.create');
 Route::post('/purchase-orders', [PurchaseOrderController::class, 'store'])->name('purchase-orders.store');
-
-use App\Http\Controllers\PosController;
-use App\Http\Controllers\InvoiceController;
-use App\Http\Controllers\OrderController;
-use App\Http\Controllers\CashFlowController;
-
-use App\Http\Controllers\OrderReturnController;
 
 Route::get('/run-migrate', function () {
     try {
@@ -210,7 +220,6 @@ Route::get('/warranties/{warranty}/print', [\App\Http\Controllers\WarrantyContro
 Route::get('/paysheets/{paysheet}/print', [\App\Http\Controllers\PaysheetController::class, 'print'])->name('paysheets.print');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy');
 
-use App\Http\Controllers\SettingController;
 Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
 Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
 
@@ -315,3 +324,5 @@ Route::get('/stock-transfers/export', [App\Http\Controllers\StockTransferControl
 Route::get('/damages/export', [App\Http\Controllers\DamageController::class, 'export'])->name('damages.export');
 Route::get('/warranties/export', [App\Http\Controllers\WarrantyController::class, 'export'])->name('warranties.export');
 Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class, 'export'])->name('paysheets.export');
+
+}); // end auth middleware
