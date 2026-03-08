@@ -1,16 +1,23 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
+import axios from 'axios';
 
 const props = defineProps({
     products: Array,
     suppliers: Array,
+    categories: Array,
+    brands: Array,
     purchaseCode: String,
     purchaseOrderInfo: Object
 });
 
+// Local mutable copy of products list (to add newly created products)
+const allProducts = ref([...(props.products || [])]);
+
 const searchQuery = ref('');
 const showSuggestions = ref(false);
+const showCreateDropdown = ref(false);
 const items = ref([]);
 
 const selectedSupplierId = ref('');
@@ -31,7 +38,7 @@ onMounted(() => {
 const filteredProducts = computed(() => {
     if (!searchQuery.value) return [];
     const query = searchQuery.value.toLowerCase();
-    return props.products.filter(p => 
+    return allProducts.value.filter(p => 
         p.name.toLowerCase().includes(query) || 
         p.sku.toLowerCase().includes(query)
     ).slice(0, 10);
@@ -65,7 +72,7 @@ const selectProduct = (product) => {
 };
 
 const hideSuggestions = () => {
-    setTimeout(() => { showSuggestions.value = false; }, 200);
+    setTimeout(() => { showSuggestions.value = false; showCreateDropdown.value = false; }, 200);
 };
 
 const removeItem = (index) => {
@@ -141,6 +148,73 @@ const save = async () => {
 
 const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
+// === Quick Create Product Modal ===
+const showCreateProductModal = ref(false);
+const creatingProduct = ref(false);
+const createProductErrors = ref({});
+const newProduct = ref({
+    name: '',
+    sku: '',
+    barcode: '',
+    category_id: '',
+    brand_id: '',
+    cost_price: 0,
+    retail_price: 0,
+    has_serial: false,
+});
+
+const openCreateProductModal = () => {
+    newProduct.value = {
+        name: '',
+        sku: '',
+        barcode: '',
+        category_id: '',
+        brand_id: '',
+        cost_price: 0,
+        retail_price: 0,
+        has_serial: false,
+    };
+    createProductErrors.value = {};
+    showCreateProductModal.value = true;
+};
+
+const closeCreateProductModal = () => {
+    showCreateProductModal.value = false;
+};
+
+const submitCreateProduct = async () => {
+    if (!newProduct.value.name) {
+        createProductErrors.value = { name: 'Tên hàng hóa là bắt buộc' };
+        return;
+    }
+    creatingProduct.value = true;
+    createProductErrors.value = {};
+    try {
+        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        const res = await axios.post('/products/quick-store', newProduct.value, {
+            headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' }
+        });
+        if (res.data.success && res.data.product) {
+            const created = res.data.product;
+            allProducts.value.push(created);
+            // Auto-add to purchase items
+            selectProduct(created);
+            closeCreateProductModal();
+        }
+    } catch (e) {
+        if (e.response?.status === 422 && e.response.data?.errors) {
+            createProductErrors.value = {};
+            for (const [key, msgs] of Object.entries(e.response.data.errors)) {
+                createProductErrors.value[key] = Array.isArray(msgs) ? msgs[0] : msgs;
+            }
+        } else {
+            alert('Có lỗi xảy ra khi tạo sản phẩm.');
+        }
+    } finally {
+        creatingProduct.value = false;
+    }
+};
+
 </script>
 
 <template>
@@ -175,7 +249,15 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                         </div>
                     </div>
                     <div class="absolute inset-y-0 right-0 pr-2 flex items-center gap-1.5 text-gray-400">
-                        <button class="hover:text-green-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
+                        <div class="relative">
+                            <button @click="showCreateDropdown = !showCreateDropdown" class="hover:text-green-600" title="Tạo hàng hóa mới">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                            </button>
+                            <div v-if="showCreateDropdown" class="absolute right-0 top-full mt-2 bg-white border border-gray-200 rounded shadow-lg z-50 w-44 py-1">
+                                <button @click="openCreateProductModal(); showCreateDropdown = false" class="w-full text-left px-4 py-2 text-[13px] text-gray-700 hover:bg-gray-100">Hàng hóa</button>
+                                <button @click="openCreateProductModal(); showCreateDropdown = false" class="w-full text-left px-4 py-2 text-[13px] text-gray-700 hover:bg-gray-100">Hàng sản xuất</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -349,6 +431,90 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                         <Link href="/purchases" class="text-gray-500 hover:text-gray-800 text-[13px] underline">Hủy bỏ</Link>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Quick Create Product Modal -->
+        <div v-if="showCreateProductModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="closeCreateProductModal">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                <!-- Modal Header -->
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white z-10">
+                    <h2 class="text-lg font-bold text-gray-800">Tạo hàng hóa mới</h2>
+                    <button @click="closeCreateProductModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+
+                <!-- Modal Body -->
+                <form @submit.prevent="submitCreateProduct" class="p-6">
+                    <div class="grid grid-cols-2 gap-x-6 gap-y-4">
+                        <!-- Tên hàng -->
+                        <div class="col-span-2">
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Tên hàng <span class="text-red-500">*</span></label>
+                            <input type="text" v-model="newProduct.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập tên hàng hóa">
+                            <span v-if="createProductErrors.name" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.name }}</span>
+                        </div>
+
+                        <!-- Mã hàng -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã hàng</label>
+                            <input type="text" v-model="newProduct.sku" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Tự động">
+                            <span v-if="createProductErrors.sku" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.sku }}</span>
+                        </div>
+
+                        <!-- Mã vạch -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã vạch</label>
+                            <input type="text" v-model="newProduct.barcode" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập mã vạch">
+                        </div>
+
+                        <!-- Nhóm hàng -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm hàng</label>
+                            <select v-model="newProduct.category_id" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                                <option value="">-- Chọn nhóm hàng --</option>
+                                <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                            </select>
+                        </div>
+
+                        <!-- Thương hiệu -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Thương hiệu</label>
+                            <select v-model="newProduct.brand_id" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
+                                <option value="">-- Chọn thương hiệu --</option>
+                                <option v-for="brand in brands" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
+                            </select>
+                        </div>
+
+                        <!-- Giá vốn -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn (giá nhập)</label>
+                            <input type="number" v-model.number="newProduct.cost_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
+                        </div>
+
+                        <!-- Giá bán -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
+                            <input type="number" v-model.number="newProduct.retail_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
+                        </div>
+
+                        <!-- Serial/IMEI -->
+                        <div class="col-span-2">
+                            <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
+                                <input type="checkbox" v-model="newProduct.has_serial" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
+                                Quản lý theo Serial/IMEI
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Modal Footer -->
+                    <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+                        <button type="button" @click="closeCreateProductModal" class="px-5 py-2.5 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50">Bỏ qua</button>
+                        <button type="submit" :disabled="creatingProduct" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2">
+                            <svg v-if="creatingProduct" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            {{ creatingProduct ? 'Đang lưu...' : 'Lưu' }}
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

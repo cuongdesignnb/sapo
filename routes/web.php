@@ -56,6 +56,7 @@ Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases
 Route::get('/products/create/{type?}', [ProductController::class, 'create'])->name('products.create');
 Route::get('/products/document-detail', [ProductController::class, 'documentDetail'])->name('products.document-detail');
 Route::post('/products', [ProductController::class, 'store'])->name('products.store');
+Route::post('/products/quick-store', [ProductController::class, 'quickStore'])->name('products.quick-store');
 Route::get('/products/{product}/edit', [ProductController::class, 'edit'])->name('products.edit');
 Route::get('/products/{product}/inventory-card', [ProductController::class, 'inventoryCard'])->name('products.inventory-card');
 Route::get('/products/{product}/serials', [ProductController::class, 'serials'])->name('products.serials');

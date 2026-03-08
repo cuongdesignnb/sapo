@@ -165,6 +165,44 @@ class ProductController extends Controller
         return redirect()->route('products.index')->with('success', 'Hàng hóa được tạo thành công!');
     }
 
+    /**
+     * Quick store a product via AJAX (used from Purchase Create page).
+     */
+    public function quickStore(Request $request)
+    {
+        $validatedData = $request->validate([
+            'name' => 'required|string|max:255',
+            'sku' => 'nullable|string|unique:products,sku',
+            'barcode' => 'nullable|string',
+            'category_id' => 'nullable|exists:categories,id',
+            'brand_id' => 'nullable|exists:brands,id',
+            'cost_price' => 'numeric|min:0',
+            'retail_price' => 'numeric|min:0',
+            'has_serial' => 'boolean',
+        ]);
+
+        $validatedData['type'] = 'standard';
+        $validatedData['stock_quantity'] = 0;
+        $validatedData['min_stock'] = 0;
+        $validatedData['sell_directly'] = true;
+        $validatedData['is_active'] = true;
+
+        if (empty($validatedData['sku'])) {
+            $validatedData['sku'] = 'SP' . date('ymd') . rand(100, 999);
+        }
+
+        if (empty($validatedData['barcode']) && \App\Models\Setting::get('product_barcode_auto', true)) {
+            $validatedData['barcode'] = $validatedData['sku'];
+        }
+
+        $product = Product::create($validatedData);
+
+        return response()->json([
+            'success' => true,
+            'product' => $product,
+        ]);
+    }
+
     public function edit(Product $product)
     {
         return Inertia::render('Products/Edit', [
