@@ -166,6 +166,7 @@ const newProduct = ref({
     brand_id: '',
     cost_price: 0,
     retail_price: 0,
+    technician_price: 0,
     has_serial: false,
 });
 
@@ -178,6 +179,7 @@ const openCreateProductModal = () => {
         brand_id: '',
         cost_price: 0,
         retail_price: 0,
+        technician_price: 0,
         has_serial: false,
     };
     createProductErrors.value = {};
@@ -508,6 +510,18 @@ const submitCreateProduct = async () => {
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
                             <input type="number" v-model.number="newProduct.retail_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
+                        </div>
+
+                        <!-- Giá bán lẻ -->
+                        <div v-if="showRetailPrice">
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán lẻ</label>
+                            <input type="number" v-model.number="newProduct.retail_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
+                        </div>
+
+                        <!-- Giá bán thợ -->
+                        <div v-if="showTechnicianPrice">
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
+                            <input type="number" v-model.number="newProduct.technician_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
                         </div>
 
                         <!-- Serial/IMEI -->

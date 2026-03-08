@@ -98,10 +98,14 @@ class ProductController extends Controller
             $type = 'standard';
         }
 
+        $priceBooks = PriceBook::where('is_active', true)->get();
+
         return Inertia::render('Products/Create', [
             'type' => $type,
             'categories' => Category::all(),
             'brands' => Brand::all(),
+            'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
+            'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
         ]);
     }
 
@@ -116,6 +120,7 @@ class ProductController extends Controller
             'brand_id' => 'nullable|exists:brands,id',
             'cost_price' => 'numeric|min:0',
             'retail_price' => 'numeric|min:0',
+            'technician_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'numeric|min:0',
             'min_stock' => 'numeric|min:0',
             'has_serial' => 'boolean',
@@ -138,7 +143,22 @@ class ProductController extends Controller
             $validatedData['barcode'] = $validatedData['sku'];
         }
 
+        $technicianPrice = $validatedData['technician_price'] ?? 0;
+        unset($validatedData['technician_price']);
+
         $product = Product::create($validatedData);
+
+        // Save technician_price to active price books if provided
+        if ($technicianPrice > 0) {
+            $activeBooks = PriceBook::where('is_active', true)
+                ->where('enable_technician_price', true)->get();
+            foreach ($activeBooks as $book) {
+                PriceBookProduct::updateOrCreate(
+                    ['price_book_id' => $book->id, 'product_id' => $product->id],
+                    ['technician_price' => $technicianPrice, 'price' => $product->retail_price ?? 0]
+                );
+            }
+        }
 
         // Handle Units
         if (!empty($validatedData['base_unit_name'])) {
@@ -178,6 +198,7 @@ class ProductController extends Controller
             'brand_id' => 'nullable|exists:brands,id',
             'cost_price' => 'numeric|min:0',
             'retail_price' => 'numeric|min:0',
+            'technician_price' => 'nullable|numeric|min:0',
             'has_serial' => 'boolean',
         ]);
 
@@ -195,7 +216,22 @@ class ProductController extends Controller
             $validatedData['barcode'] = $validatedData['sku'];
         }
 
+        $technicianPriceQuick = $validatedData['technician_price'] ?? 0;
+        unset($validatedData['technician_price']);
+
         $product = Product::create($validatedData);
+
+        // Save technician_price to active price books if provided
+        if ($technicianPriceQuick > 0) {
+            $activeBooks = PriceBook::where('is_active', true)
+                ->where('enable_technician_price', true)->get();
+            foreach ($activeBooks as $book) {
+                PriceBookProduct::updateOrCreate(
+                    ['price_book_id' => $book->id, 'product_id' => $product->id],
+                    ['technician_price' => $technicianPriceQuick, 'price' => $product->retail_price ?? 0]
+                );
+            }
+        }
 
         return response()->json([
             'success' => true,
