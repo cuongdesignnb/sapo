@@ -86,7 +86,7 @@ class PurchaseController extends Controller
         return Inertia::render('Purchases/Create', [
             'suppliers' => $suppliers,
             'products' => $products,
-            'categories' => \App\Models\Category::all(),
+            'categories' => \App\Models\Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => \App\Models\Brand::all(),
             'purchaseCode' => 'PN' . date('YmdHis'),
             'purchaseOrderInfo' => $purchaseOrderInfo,

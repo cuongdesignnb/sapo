@@ -85,7 +85,7 @@ class ProductController extends Controller
 
         return Inertia::render('Welcome', [
             'products' => $products,
-            'categories' => Category::all(),
+            'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
             'filters' => $request->only('search')
         ]);
@@ -102,7 +102,7 @@ class ProductController extends Controller
 
         return Inertia::render('Products/Create', [
             'type' => $type,
-            'categories' => Category::all(),
+            'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
@@ -254,7 +254,7 @@ class ProductController extends Controller
 
         return Inertia::render('Products/Edit', [
             'product' => $product,
-            'categories' => Category::all(),
+            'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $showTechnician,

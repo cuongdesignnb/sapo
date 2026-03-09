@@ -25,8 +25,10 @@ class SettingController extends Controller
             $formattedSettings[$setting->key] = Setting::get($setting->key);
         }
 
-        // Categories with product count
-        $categories = Category::withCount('products')->orderBy('name')->get();
+        // Categories with product count (tree structure)
+        $categories = Category::withCount('products')->with(['children' => function($q) {
+            $q->withCount('products')->orderBy('name');
+        }])->whereNull('parent_id')->orderBy('name')->get();
 
         $brands = Brand::withCount('products')->orderBy('name')->get();
         $units = Unit::orderBy('name')->get();
@@ -91,6 +93,7 @@ class SettingController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
+            'parent_id' => 'nullable|exists:categories,id',
         ]);
 
         $category = Category::create($validated);

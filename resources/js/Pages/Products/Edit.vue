@@ -1,6 +1,6 @@
 <script setup>
 import { Head, useForm, Link } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 
@@ -36,8 +36,22 @@ const form = useForm({
 const localCategories = ref([...(props.categories || [])]);
 const localBrands = ref([...(props.brands || [])]);
 
+// Flatten tree categories for <select> display
+const flattenTree = (nodes, prefix = '') => {
+    let result = [];
+    for (const node of nodes) {
+        result.push({ id: node.id, name: prefix + node.name, parent_id: node.parent_id });
+        if (node.children && node.children.length) {
+            result = result.concat(flattenTree(node.children, prefix + '── '));
+        }
+    }
+    return result;
+};
+const flatCategories = computed(() => flattenTree(localCategories.value));
+
 const showNewCategory = ref(false);
 const newCategoryName = ref('');
+const newCategoryParentId = ref('');
 const creatingCategory = ref(false);
 const showNewBrand = ref(false);
 const newBrandName = ref('');
@@ -47,11 +61,26 @@ const quickCreateCategory = async () => {
     if (!newCategoryName.value.trim()) return;
     creatingCategory.value = true;
     try {
-        const res = await axios.post('/categories/quick-store', { name: newCategoryName.value.trim() });
+        const payload = { name: newCategoryName.value.trim() };
+        if (newCategoryParentId.value) payload.parent_id = newCategoryParentId.value;
+        const res = await axios.post('/categories/quick-store', payload);
         if (res.data.success) {
-            localCategories.value.push(res.data.category);
-            form.category_id = res.data.category.id;
+            const cat = res.data.category;
+            if (cat.parent_id) {
+                const addChild = (nodes) => {
+                    for (const n of nodes) {
+                        if (n.id === cat.parent_id) { if (!n.children) n.children = []; n.children.push({ ...cat, children: [] }); return true; }
+                        if (n.children && addChild(n.children)) return true;
+                    }
+                    return false;
+                };
+                addChild(localCategories.value);
+            } else {
+                localCategories.value.push({ ...cat, children: [] });
+            }
+            form.category_id = cat.id;
             newCategoryName.value = '';
+            newCategoryParentId.value = '';
             showNewCategory.value = false;
         }
     } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo nhóm hàng'); }
@@ -157,13 +186,19 @@ const submit = () => {
                                         <div class="flex gap-1">
                                             <select v-model="form.category_id" class="flex-1 border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm text-gray-800 bg-white">
                                                 <option value="">--- Chọn nhóm hàng ---</option>
-                                                <option v-for="category in localCategories" :key="category.id" :value="category.id">{{ category.name }}</option>
+                                                <option v-for="cat in flatCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                                             </select>
                                             <button type="button" @click="showNewCategory = !showNewCategory" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm nhóm hàng">+</button>
                                         </div>
-                                        <div v-if="showNewCategory" class="mt-1 flex gap-1">
-                                            <input type="text" v-model="newCategoryName" @keyup.enter="quickCreateCategory" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
-                                            <button type="button" @click="quickCreateCategory" :disabled="creatingCategory" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
+                                        <div v-if="showNewCategory" class="mt-1 space-y-1 bg-blue-50 border border-blue-200 rounded p-2">
+                                            <select v-model="newCategoryParentId" class="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white outline-none focus:ring-1 focus:ring-blue-500">
+                                                <option value="">-- Nhóm cha (không chọn = nhóm gốc) --</option>
+                                                <option v-for="cat in flatCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                                            </select>
+                                            <div class="flex gap-1">
+                                                <input type="text" v-model="newCategoryName" @keyup.enter="quickCreateCategory" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                                <button type="button" @click="quickCreateCategory" :disabled="creatingCategory" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div>
