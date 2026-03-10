@@ -14,19 +14,26 @@
             <input v-model="searchQuery" type="text" placeholder="Tìm kiếm nhân viên" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-md w-48 outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
           </div>
 
-          <!-- View mode -->
+          <!-- View mode (shift/employee) -->
           <select v-model="viewMode" class="text-sm border border-gray-300 rounded-md px-3 py-1.5 outline-none focus:ring-1 focus:ring-blue-500">
             <option value="shift">Xem theo ca</option>
             <option value="employee">Xem theo nhân viên</option>
           </select>
 
-          <!-- Week nav -->
+          <!-- Period mode (week/month) -->
+          <select v-model="periodMode" class="text-sm border border-gray-300 rounded-md px-3 py-1.5 outline-none focus:ring-1 focus:ring-blue-500">
+            <option value="week">Theo tuần</option>
+            <option value="month">Theo tháng</option>
+          </select>
+
+          <!-- Period nav -->
           <div class="flex items-center gap-1">
-            <button @click="changeWeek(-1)" class="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50"><svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
-            <div class="text-sm font-medium text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded">
-              Tuần {{ weekNumber }} - Th. {{ weekMonth }} {{ weekYear }}
+            <button @click="changePeriod(-1)" class="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50"><svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
+            <div class="text-sm font-medium text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded whitespace-nowrap">
+              <template v-if="periodMode === 'week'">Tuần {{ weekNumber }} - Th. {{ weekMonth }} {{ weekYear }}</template>
+              <template v-else>Tháng {{ currentMonthDisplay }} / {{ currentYearDisplay }}</template>
             </div>
-            <button @click="changeWeek(1)" class="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50"><svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
+            <button @click="changePeriod(1)" class="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50"><svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
           </div>
 
           <!-- Duyệt chấm công -->
@@ -51,10 +58,17 @@
             <thead class="sticky top-0 z-10">
               <tr class="border-b border-gray-200 bg-gray-50">
                 <th class="px-4 py-2.5 text-left text-xs font-medium text-gray-500 sticky left-0 bg-gray-50 z-20 min-w-[180px] border-r border-gray-200">
-                  Ca làm việc
+                  {{ viewMode === 'shift' ? 'Ca làm việc' : 'Nhân viên' }}
                 </th>
-                <th v-for="day in weekDays" :key="day.date" class="px-3 py-2.5 text-center text-xs font-medium text-gray-500 min-w-[200px] border-r border-gray-200 last:border-r-0">
-                  <div>{{ day.dayName }} <span class="font-semibold text-gray-700">{{ day.dayNum }}</span></div>
+                <th v-for="day in displayDays" :key="day.date"
+                  class="py-2.5 text-center text-xs font-medium text-gray-500 border-r border-gray-200 last:border-r-0"
+                  :class="periodMode === 'month' ? 'px-1 min-w-[48px]' : 'px-3 min-w-[200px]'"
+                >
+                  <div v-if="periodMode === 'week'">{{ day.dayName }} <span class="font-semibold text-gray-700">{{ day.dayNum }}</span></div>
+                  <div v-else>
+                    <div class="text-[10px] leading-tight" :class="day.isWeekend ? 'text-red-400' : 'text-gray-400'">{{ day.dayNameShort }}</div>
+                    <div class="font-semibold text-gray-700 text-[11px]">{{ day.dayNum }}</div>
+                  </div>
                 </th>
               </tr>
             </thead>
@@ -62,31 +76,40 @@
               <!-- Xem theo Ca -->
               <template v-if="viewMode === 'shift'">
                 <template v-if="shiftGroups.length === 0">
-                  <tr><td :colspan="8" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công trong tuần này.</td></tr>
+                  <tr><td :colspan="displayDays.length + 1" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
                 </template>
                 <tr v-for="shiftGroup in filteredShiftGroups" :key="shiftGroup.shiftKey" class="border-b border-gray-200">
-                  <!-- Cột Ca -->
                   <td class="px-4 py-3 align-top sticky left-0 bg-white z-10 border-r border-gray-200">
                     <div class="font-semibold text-sm text-gray-800">{{ shiftGroup.shiftName }}</div>
                     <div class="text-xs text-gray-500">{{ shiftGroup.shiftTime }}</div>
                   </td>
-                  <!-- Các cột Ngày -->
-                  <td v-for="day in weekDays" :key="day.date" class="px-2 py-2 align-top border-r border-gray-200 last:border-r-0">
-                    <div class="flex flex-col gap-1.5">
+                  <td v-for="day in displayDays" :key="day.date"
+                    class="py-2 align-top border-r border-gray-200 last:border-r-0"
+                    :class="periodMode === 'month' ? 'px-0.5' : 'px-2'"
+                  >
+                    <div class="flex flex-col gap-1">
                       <template v-for="item in getShiftDayItems(shiftGroup, day.date)" :key="item.schedule.id">
                         <div
                           @click="openModal(item.schedule)"
-                          class="rounded px-2 py-1.5 text-xs cursor-pointer hover:shadow transition"
-                          :class="getCardClasses(item.record)"
+                          class="rounded cursor-pointer hover:shadow transition"
+                          :class="[getCardClasses(item.record), periodMode === 'month' ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-1.5 text-xs']"
                         >
-                          <div class="font-semibold text-[12px]">{{ item.employeeName }}</div>
-                          <div class="text-[11px] mt-0.5" :class="getTimeTextClass(item.record)">
-                            {{ formatCheckTime(item.record?.check_in_at) }} - {{ formatCheckTime(item.record?.check_out_at) }}
-                          </div>
-                          <div v-if="getOtInfo(item.record)" class="text-[10px] mt-0.5" :class="getOtTextClass(item.record)">
-                            {{ getOtInfo(item.record) }}
-                          </div>
-                          <div v-if="!item.record" class="text-[10px] text-gray-400 italic mt-0.5">Chưa chấm công</div>
+                          <template v-if="periodMode === 'month'">
+                            <div class="font-semibold truncate" :title="item.employeeName">{{ item.employeeName.split(' ').pop() }}</div>
+                            <div class="text-[8px] mt-0.5" :class="getTimeTextClass(item.record)">
+                              {{ formatCheckTimeShort(item.record?.check_in_at) }}
+                            </div>
+                          </template>
+                          <template v-else>
+                            <div class="font-semibold text-[12px]">{{ item.employeeName }}</div>
+                            <div class="text-[11px] mt-0.5" :class="getTimeTextClass(item.record)">
+                              {{ formatCheckTime(item.record?.check_in_at) }} - {{ formatCheckTime(item.record?.check_out_at) }}
+                            </div>
+                            <div v-if="getOtInfo(item.record)" class="text-[10px] mt-0.5" :class="getOtTextClass(item.record)">
+                              {{ getOtInfo(item.record) }}
+                            </div>
+                            <div v-if="!item.record" class="text-[10px] text-gray-400 italic mt-0.5">Chưa chấm công</div>
+                          </template>
                         </div>
                       </template>
                     </div>
@@ -97,31 +120,42 @@
               <!-- Xem theo Nhân viên -->
               <template v-else>
                 <template v-if="filteredEmployeeGroups.length === 0">
-                  <tr><td :colspan="8" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công trong tuần này.</td></tr>
+                  <tr><td :colspan="displayDays.length + 1" class="px-6 py-10 text-center text-gray-400">Chưa có dữ liệu chấm công.</td></tr>
                 </template>
                 <tr v-for="empRow in filteredEmployeeGroups" :key="empRow.employee.id" class="border-b border-gray-200 hover:bg-gray-50">
                   <td class="px-4 py-3 align-top sticky left-0 bg-white z-10 border-r border-gray-200">
                     <div class="font-semibold text-sm text-gray-800">{{ empRow.employee.name }}</div>
                     <div class="text-xs text-gray-500">{{ empRow.employee.code }}</div>
                   </td>
-                  <td v-for="day in weekDays" :key="day.date" class="px-2 py-2 align-top border-r border-gray-200 last:border-r-0">
-                    <div class="flex flex-col gap-1.5">
+                  <td v-for="day in displayDays" :key="day.date"
+                    class="py-2 align-top border-r border-gray-200 last:border-r-0"
+                    :class="periodMode === 'month' ? 'px-0.5' : 'px-2'"
+                  >
+                    <div class="flex flex-col gap-1">
                       <template v-if="empRow.days[day.date]?.length">
                         <div
                           v-for="schedule in empRow.days[day.date]"
                           :key="schedule.id"
                           @click="openModal(schedule)"
-                          class="rounded px-2 py-1.5 text-xs cursor-pointer hover:shadow transition"
-                          :class="getCardClasses(schedule.timekeeping_record)"
+                          class="rounded cursor-pointer hover:shadow transition"
+                          :class="[getCardClasses(schedule.timekeeping_record), periodMode === 'month' ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-1.5 text-xs']"
                         >
-                          <div class="font-semibold text-[12px]">{{ schedule.shift?.name || 'Ca tự do' }}</div>
-                          <div class="text-[11px] mt-0.5" :class="getTimeTextClass(schedule.timekeeping_record)">
-                            {{ formatCheckTime(schedule.timekeeping_record?.check_in_at) }} - {{ formatCheckTime(schedule.timekeeping_record?.check_out_at) }}
-                          </div>
-                          <div v-if="getOtInfo(schedule.timekeeping_record)" class="text-[10px] mt-0.5" :class="getOtTextClass(schedule.timekeeping_record)">
-                            {{ getOtInfo(schedule.timekeeping_record) }}
-                          </div>
-                          <div v-if="!schedule.timekeeping_record" class="text-[10px] text-gray-400 italic mt-0.5">Chưa chấm công</div>
+                          <template v-if="periodMode === 'month'">
+                            <div class="font-semibold truncate" :title="schedule.shift?.name || 'Ca tự do'">{{ (schedule.shift?.name || 'Tự do').substring(0,4) }}</div>
+                            <div class="text-[8px] mt-0.5" :class="getTimeTextClass(schedule.timekeeping_record)">
+                              {{ formatCheckTimeShort(schedule.timekeeping_record?.check_in_at) }}
+                            </div>
+                          </template>
+                          <template v-else>
+                            <div class="font-semibold text-[12px]">{{ schedule.shift?.name || 'Ca tự do' }}</div>
+                            <div class="text-[11px] mt-0.5" :class="getTimeTextClass(schedule.timekeeping_record)">
+                              {{ formatCheckTime(schedule.timekeeping_record?.check_in_at) }} - {{ formatCheckTime(schedule.timekeeping_record?.check_out_at) }}
+                            </div>
+                            <div v-if="getOtInfo(schedule.timekeeping_record)" class="text-[10px] mt-0.5" :class="getOtTextClass(schedule.timekeeping_record)">
+                              {{ getOtInfo(schedule.timekeeping_record) }}
+                            </div>
+                            <div v-if="!schedule.timekeeping_record" class="text-[10px] text-gray-400 italic mt-0.5">Chưa chấm công</div>
+                          </template>
                         </div>
                       </template>
                     </div>
@@ -235,7 +269,7 @@
 <script setup>
 import { Head } from '@inertiajs/vue3'
 import AppLayout from '@/Layouts/AppLayout.vue'
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
 import axios from 'axios'
 
 const schedules = ref([])
@@ -243,12 +277,21 @@ const loading = ref(false)
 const currentDate = ref(new Date())
 const searchQuery = ref('')
 const viewMode = ref('shift')
+const periodMode = ref('week')
 
 const attendanceTypes = [
     { value: 'work', label: 'Đi làm', icon: '🟢', activeClass: 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' },
     { value: 'leave_paid', label: 'Nghỉ phép', icon: '🟡', activeClass: 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500' },
     { value: 'leave_unpaid', label: 'Nghỉ không lương', icon: '🔴', activeClass: 'border-red-500 bg-red-50 text-red-700 ring-1 ring-red-500' },
 ]
+
+// === Helper: format date to YYYY-MM-DD ===
+const toDateStr = (d) => {
+    const y = d.getFullYear()
+    const m = (d.getMonth() + 1).toString().padStart(2, '0')
+    const day = d.getDate().toString().padStart(2, '0')
+    return `${y}-${m}-${day}`
+}
 
 // === Week calculations ===
 const currentWeekStart = computed(() => {
@@ -257,50 +300,104 @@ const currentWeekStart = computed(() => {
     const diff = d.getDate() - day + (day === 0 ? -6 : 1)
     return new Date(d.setDate(diff))
 })
-const weekStart = computed(() => new Date(currentWeekStart.value).toISOString().split('T')[0])
+const weekStart = computed(() => toDateStr(new Date(currentWeekStart.value)))
 const weekEnd = computed(() => {
     const d = new Date(currentWeekStart.value); d.setDate(d.getDate() + 6)
-    return d.toISOString().split('T')[0]
+    return toDateStr(d)
 })
 const weekNumber = computed(() => {
     const d = new Date(currentDate.value)
     const yearStart = new Date(d.getFullYear(),0,1)
     return Math.ceil((((d - yearStart) / 86400000) + yearStart.getDay()+1)/7)
 })
-const weekMonth = computed(() => {
-    const d = new Date(currentWeekStart.value)
-    return d.getMonth() + 1
-})
+const weekMonth = computed(() => new Date(currentWeekStart.value).getMonth() + 1)
 const weekYear = computed(() => new Date(currentWeekStart.value).getFullYear())
 
 const weekDays = computed(() => {
     const days = []
     const start = new Date(currentWeekStart.value)
     const names = ['Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy', 'Chủ nhật']
+    const shortNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
     for (let i = 0; i < 7; i++) {
         const d = new Date(start); d.setDate(start.getDate() + i)
         days.push({
-            date: d.toISOString().split('T')[0],
+            date: toDateStr(d),
             dayName: names[i],
-            dayNum: d.getDate().toString().padStart(2, '0')
+            dayNameShort: shortNames[i],
+            dayNum: d.getDate().toString().padStart(2, '0'),
+            isWeekend: i >= 5
         })
     }
     return days
 })
 
+// === Month calculations ===
+const currentMonthDisplay = computed(() => {
+    const d = new Date(currentDate.value)
+    return d.getMonth() + 1
+})
+const currentYearDisplay = computed(() => new Date(currentDate.value).getFullYear())
+
+const monthStart = computed(() => {
+    const d = new Date(currentDate.value)
+    return toDateStr(new Date(d.getFullYear(), d.getMonth(), 1))
+})
+const monthEnd = computed(() => {
+    const d = new Date(currentDate.value)
+    return toDateStr(new Date(d.getFullYear(), d.getMonth() + 1, 0))
+})
+
+const monthDays = computed(() => {
+    const days = []
+    const d = new Date(currentDate.value)
+    const year = d.getFullYear()
+    const month = d.getMonth()
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const shortNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+    for (let i = 1; i <= daysInMonth; i++) {
+        const dt = new Date(year, month, i)
+        const dow = dt.getDay()
+        days.push({
+            date: toDateStr(dt),
+            dayName: shortNames[dow],
+            dayNameShort: shortNames[dow],
+            dayNum: i.toString().padStart(2, '0'),
+            isWeekend: dow === 0 || dow === 6
+        })
+    }
+    return days
+})
+
+// === Unified display days (week or month) ===
+const displayDays = computed(() => periodMode.value === 'month' ? monthDays.value : weekDays.value)
+
+// === Period range for API ===
+const periodFrom = computed(() => periodMode.value === 'month' ? monthStart.value : weekStart.value)
+const periodTo = computed(() => periodMode.value === 'month' ? monthEnd.value : weekEnd.value)
+
 // === Data fetching ===
 const fetchSchedules = async () => {
     loading.value = true
     try {
-        const res = await axios.get('/api/employee-schedules', { params: { from: weekStart.value, to: weekEnd.value } })
+        const res = await axios.get('/api/employee-schedules', { params: { from: periodFrom.value, to: periodTo.value } })
         if (res.data?.success) schedules.value = res.data.data
     } catch (e) { console.error('Lỗi khi tải dữ liệu:', e) }
     finally { loading.value = false }
 }
-const changeWeek = (offset) => {
-    const d = new Date(currentDate.value); d.setDate(d.getDate() + offset * 7)
-    currentDate.value = d; fetchSchedules()
+
+const changePeriod = (offset) => {
+    const d = new Date(currentDate.value)
+    if (periodMode.value === 'month') {
+        d.setMonth(d.getMonth() + offset)
+    } else {
+        d.setDate(d.getDate() + offset * 7)
+    }
+    currentDate.value = d
+    fetchSchedules()
 }
+
+// Re-fetch when switching period mode
+watch(periodMode, () => { fetchSchedules() })
 
 // === Grouping by Shift (KiotViet style) ===
 const shiftGroups = computed(() => {
@@ -384,9 +481,8 @@ const getTimeTextClass = (record) => {
 
 const getOtTextClass = (record) => {
     if (!record) return ''
-    const parts = []
-    if (record.late_minutes > 0 || record.early_minutes > 0) parts.push('text-purple-600')
-    return parts.length ? parts.join(' ') : 'text-blue-600'
+    if (record.late_minutes > 0 || record.early_minutes > 0) return 'text-purple-600'
+    return 'text-blue-600'
 }
 
 // === Format helpers ===
@@ -394,6 +490,12 @@ const formatCheckTime = (dateTimeStr) => {
     if (!dateTimeStr) return '--'
     const d = new Date(dateTimeStr)
     return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
+}
+
+const formatCheckTimeShort = (dateTimeStr) => {
+    if (!dateTimeStr) return '--'
+    const d = new Date(dateTimeStr)
+    return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`
 }
 
 const formatDateVietnamese = (dateStr) => {
@@ -412,8 +514,6 @@ const getOtInfo = (record) => {
     if (record.ot_minutes > 0) {
         const h = Math.floor(record.ot_minutes / 60)
         const m = record.ot_minutes % 60
-        const tcH = Math.floor(record.ot_minutes / 60) // Làm thêm TC = tổng cộng
-        const scH = Math.floor(record.ot_minutes / 60)  // Làm thêm SC = sau ca
         let otText = 'Làm thêm '
         if (record.ot_minutes >= 60) {
             otText += `${h}h ${m > 0 ? m + 'p' : ''}`
@@ -428,10 +528,11 @@ const getOtInfo = (record) => {
 // === Recalculate ===
 const isRecalculating = ref(false)
 const recalculate = async () => {
-    if (!confirm('Duyệt chấm công sẽ tự động tính toán lại dữ liệu chấm công cho tuần này. Bạn chắc chắn?')) return
+    const label = periodMode.value === 'month' ? 'tháng này' : 'tuần này'
+    if (!confirm(`Duyệt chấm công sẽ tự động tính toán lại dữ liệu chấm công cho ${label}. Bạn chắc chắn?`)) return
     isRecalculating.value = true
     try {
-        await axios.post('/api/timekeeping-records/recalculate', { from: weekStart.value, to: weekEnd.value })
+        await axios.post('/api/timekeeping-records/recalculate', { from: periodFrom.value, to: periodTo.value })
         await fetchSchedules()
         alert('Duyệt chấm công hoàn tất!')
     } catch(e) { alert('Có lỗi xảy ra khi duyệt công!'); console.error(e) }
