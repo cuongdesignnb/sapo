@@ -25,4 +25,9 @@ class Order extends Model
     {
         return $this->belongsTo(Branch::class);
     }
+
+    public function creator()
+    {
+        return $this->belongsTo(Employee::class, 'created_by');
+    }
 }

@@ -14,6 +14,8 @@ class Payslip extends Model
         'paysheet_id',
         'employee_id',
         'base_salary',
+        'bonus',
+        'commission',
         'allowances',
         'deductions',
         'ot_pay',
@@ -29,6 +31,8 @@ class Payslip extends Model
 
     protected $casts = [
         'base_salary' => 'integer',
+        'bonus' => 'integer',
+        'commission' => 'integer',
         'allowances' => 'integer',
         'deductions' => 'integer',
         'ot_pay' => 'integer',

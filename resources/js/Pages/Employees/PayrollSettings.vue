@@ -31,6 +31,7 @@ const showPaydayModal = ref(false);
 const showTemplatesModal = ref(false);
 const showTemplateEditor = ref(false);
 const toast = reactive({ show: false, type: 'success', message: '' });
+const commissionTables = ref([]);
 
 const payroll = reactive({
     pay_cycle: props.payrollSetting?.pay_cycle ?? 'monthly',
@@ -49,68 +50,132 @@ const paydayForm = reactive({
     pay_day: Number(props.payrollSetting?.pay_day ?? 5),
 });
 
+// ========== Template Form ==========
 const emptyTemplate = () => ({
     id: null,
     name: '',
-    type: 'fixed',
-    base_salary: 0,
-    description: '',
+    has_bonus: true,
+    has_commission: true,
+    has_allowance: true,
+    has_deduction: true,
+    bonus_type: 'personal_revenue',
+    bonus_calculation: 'total_revenue',
+    bonuses: [{ role_type: 'sales', revenue_from: 0, bonus_value: 0, bonus_is_percentage: true }],
+    commissions: [{ role_type: 'sales', revenue_from: 0, commission_table_id: null, commission_value: 0, commission_is_percentage: false }],
+    allowances: [{ name: '', allowance_type: 'fixed_per_day', amount: 0 }],
+    deductions: [{ name: '', deduction_category: 'late', calculation_type: 'per_occurrence', amount: 0 }],
 });
 
-const normalizeTemplate = (template) => ({
-    id: template.id,
-    name: template.name ?? '',
-    type: template.type ?? 'fixed',
-    base_salary: Number(template.base_salary ?? 0),
-    description: template.description ?? '',
-    created_at: template.created_at ?? null,
+const normalizeTemplate = (t) => ({
+    id: t.id,
+    name: t.name ?? '',
+    has_bonus: Boolean(t.has_bonus),
+    has_commission: Boolean(t.has_commission),
+    has_allowance: Boolean(t.has_allowance),
+    has_deduction: Boolean(t.has_deduction),
+    bonus_type: t.bonus_type ?? 'personal_revenue',
+    bonus_calculation: t.bonus_calculation ?? 'total_revenue',
+    bonuses: (t.bonuses ?? []).map(b => ({
+        role_type: b.role_type,
+        revenue_from: Number(b.revenue_from),
+        bonus_value: Number(b.bonus_value),
+        bonus_is_percentage: Boolean(b.bonus_is_percentage),
+    })),
+    commissions: (t.commissions ?? []).map(c => ({
+        role_type: c.role_type,
+        revenue_from: Number(c.revenue_from),
+        commission_table_id: c.commission_table_id,
+        commission_value: Number(c.commission_value ?? 0),
+        commission_is_percentage: Boolean(c.commission_is_percentage),
+    })),
+    allowances: (t.allowances ?? []).map(a => ({
+        name: a.name,
+        allowance_type: a.allowance_type,
+        amount: Number(a.amount),
+    })),
+    deductions: (t.deductions ?? []).map(d => ({
+        name: d.name,
+        deduction_category: d.deduction_category,
+        calculation_type: d.calculation_type,
+        amount: Number(d.amount),
+    })),
+    employee_count: t.employee_count ?? 0,
+    created_at: t.created_at ?? null,
 });
 
 const templates = ref((props.salaryTemplates ?? []).map(normalizeTemplate));
 const templateForm = reactive(emptyTemplate());
 
+const roleTypes = [
+    { value: 'sales', label: 'Tư vấn bán hàng' },
+    { value: 'cashier', label: 'Thu ngân' },
+    { value: 'technician', label: 'Kỹ thuật viên' },
+    { value: 'manager', label: 'Quản lý' },
+    { value: 'other', label: 'Khác' },
+];
+
+const bonusTypeOptions = [
+    { value: 'personal_revenue', label: 'Theo doanh thu cá nhân' },
+    { value: 'branch_revenue', label: 'Theo doanh thu chi nhánh' },
+];
+
+const bonusCalculationOptions = [
+    { value: 'total_revenue', label: 'Tính theo mức tổng doanh thu' },
+    { value: 'progressive', label: 'Tính lũy tiến' },
+];
+
+const allowanceTypeOptions = [
+    { value: 'fixed_per_day', label: 'Phụ cấp cố định theo ngày' },
+    { value: 'fixed_per_month', label: 'Phụ cấp cố định theo tháng' },
+    { value: 'percentage', label: 'Theo % lương cơ bản' },
+];
+
+const allowanceNames = [
+    { value: 'Ăn trưa', label: 'Ăn trưa' },
+    { value: 'Đi lại', label: 'Đi lại' },
+    { value: 'Điện thoại', label: 'Điện thoại' },
+    { value: 'Nhà ở', label: 'Nhà ở' },
+    { value: 'Xăng xe', label: 'Xăng xe' },
+    { value: 'Chuyên cần', label: 'Chuyên cần' },
+];
+
+const deductionCategoryOptions = [
+    { value: 'late', label: 'Đi muộn' },
+    { value: 'early_leave', label: 'Về sớm' },
+    { value: 'absence', label: 'Vắng mặt' },
+    { value: 'violation', label: 'Vi phạm nội quy' },
+];
+
+const deductionCalcOptions = [
+    { value: 'per_occurrence', label: 'Theo số lần' },
+    { value: 'per_minute', label: 'Theo số phút' },
+    { value: 'fixed_per_month', label: 'Cố định/tháng' },
+];
+
+// ========== Toast ==========
 const setToast = (message, type = 'success') => {
     toast.show = true;
     toast.type = type;
     toast.message = message;
-
     window.clearTimeout(setToast.timeoutId);
-    setToast.timeoutId = window.setTimeout(() => {
-        toast.show = false;
-    }, 2500);
+    setToast.timeoutId = window.setTimeout(() => { toast.show = false; }, 2500);
 };
 
 const formatMoney = (value) => Number(value || 0).toLocaleString('vi-VN');
 
-const templateTypeLabel = (type) => {
-    if (type === 'hourly') {
-        return 'Theo giờ';
-    }
-
-    if (type === 'monthly_commission') {
-        return 'Lương tháng + hoa hồng';
-    }
-
-    return 'Cố định';
-};
-
+// ========== Payroll Settings Sidebar Rows ==========
 const cycleSummary = computed(() => {
     if (payroll.pay_cycle === 'biweekly') {
         return `Kỳ lương 2 tuần, trả lương vào ngày ${payroll.pay_day} hằng tháng.`;
     }
-
     const startLabel = payroll.start_in_prev_month
         ? `từ ngày ${payroll.start_day} tháng trước`
         : `từ ngày ${payroll.start_day} trong tháng`;
-
     return `${startLabel} đến ngày ${payroll.end_day} hằng tháng, trả lương vào ngày ${payroll.pay_day}.`;
 });
 
 const templateSummary = computed(() => {
-    if (!templates.value.length) {
-        return 'Chưa có mẫu lương nào được thiết lập.';
-    }
-
+    if (!templates.value.length) return 'Chưa có mẫu lương nào được thiết lập.';
     return `Đang có ${templates.value.length} mẫu lương sẵn sàng để áp dụng cho nhân viên.`;
 });
 
@@ -144,18 +209,16 @@ const payrollRows = computed(() => [
     },
     {
         key: 'templates',
-        title: 'Danh sách mẫu lương',
-        description: templateSummary.value,
+        title: 'Thiết lập Mẫu lương',
+        description: 'Thưởng, Hoa hồng, Phụ cấp, Giảm trừ',
         kind: 'action',
-        action: () => {
-            showTemplatesModal.value = true;
-        },
+        action: () => { showTemplatesModal.value = true; },
     },
 ]);
 
+// ========== Payroll Settings Persistence ==========
 const persistPayrollSettings = async () => {
     saving.value = true;
-
     try {
         await axios.post('/api/payroll-settings', {
             pay_cycle: payroll.pay_cycle,
@@ -167,7 +230,6 @@ const persistPayrollSettings = async () => {
             auto_generate_enabled: Boolean(payroll.auto_generate_enabled),
             status: 'active',
         });
-
         setToast('Đã lưu thiết lập tính lương.');
     } catch (error) {
         setToast(error?.response?.data?.message || 'Không thể lưu thiết lập tính lương.', 'error');
@@ -180,12 +242,7 @@ const persistPayrollSettings = async () => {
 const togglePayrollField = async (field) => {
     const previous = payroll[field];
     payroll[field] = !previous;
-
-    try {
-        await persistPayrollSettings();
-    } catch (error) {
-        payroll[field] = previous;
-    }
+    try { await persistPayrollSettings(); } catch { payroll[field] = previous; }
 };
 
 const savePaydayModal = async () => {
@@ -198,39 +255,76 @@ const savePaydayModal = async () => {
     showPaydayModal.value = false;
 };
 
-const resetTemplateForm = () => {
-    Object.assign(templateForm, emptyTemplate());
+// ========== Template CRUD ==========
+const loadCommissionTables = async () => {
+    try {
+        const res = await axios.get('/api/salary-templates/commission-tables');
+        commissionTables.value = res.data?.data ?? [];
+    } catch { /* ignore */ }
 };
+
+const resetTemplateForm = () => { Object.assign(templateForm, emptyTemplate()); };
 
 const openTemplateEditor = (template = null) => {
     resetTemplateForm();
-
     if (template) {
-        Object.assign(templateForm, normalizeTemplate(template));
+        Object.assign(templateForm, {
+            id: template.id,
+            name: template.name,
+            has_bonus: template.has_bonus,
+            has_commission: template.has_commission,
+            has_allowance: template.has_allowance,
+            has_deduction: template.has_deduction,
+            bonus_type: template.bonus_type,
+            bonus_calculation: template.bonus_calculation,
+            bonuses: template.bonuses?.length
+                ? template.bonuses.map(b => ({ ...b }))
+                : [{ role_type: 'sales', revenue_from: 0, bonus_value: 0, bonus_is_percentage: true }],
+            commissions: template.commissions?.length
+                ? template.commissions.map(c => ({ ...c }))
+                : [{ role_type: 'sales', revenue_from: 0, commission_table_id: null, commission_value: 0, commission_is_percentage: false }],
+            allowances: template.allowances?.length
+                ? template.allowances.map(a => ({ ...a }))
+                : [{ name: '', allowance_type: 'fixed_per_day', amount: 0 }],
+            deductions: template.deductions?.length
+                ? template.deductions.map(d => ({ ...d }))
+                : [{ name: '', deduction_category: 'late', calculation_type: 'per_occurrence', amount: 0 }],
+        });
     }
-
+    loadCommissionTables();
     showTemplateEditor.value = true;
 };
 
-const closeTemplateEditor = () => {
-    showTemplateEditor.value = false;
-    resetTemplateForm();
-};
+const closeTemplateEditor = () => { showTemplateEditor.value = false; resetTemplateForm(); };
+
+const addBonus = () => templateForm.bonuses.push({ role_type: 'sales', revenue_from: 0, bonus_value: 0, bonus_is_percentage: true });
+const removeBonus = (i) => templateForm.bonuses.splice(i, 1);
+const addCommission = () => templateForm.commissions.push({ role_type: 'sales', revenue_from: 0, commission_table_id: null, commission_value: 0, commission_is_percentage: false });
+const removeCommission = (i) => templateForm.commissions.splice(i, 1);
+const addAllowance = () => templateForm.allowances.push({ name: '', allowance_type: 'fixed_per_day', amount: 0 });
+const removeAllowance = (i) => templateForm.allowances.splice(i, 1);
+const addDeduction = () => templateForm.deductions.push({ name: '', deduction_category: 'late', calculation_type: 'per_occurrence', amount: 0 });
+const removeDeduction = (i) => templateForm.deductions.splice(i, 1);
 
 const saveTemplate = async () => {
     if (!templateForm.name.trim()) {
         setToast('Tên mẫu lương là bắt buộc.', 'error');
         return;
     }
-
     templateSaving.value = true;
-
     try {
         const payload = {
             name: templateForm.name.trim(),
-            type: templateForm.type,
-            base_salary: Number(templateForm.base_salary || 0),
-            description: templateForm.description?.trim() || null,
+            has_bonus: templateForm.has_bonus,
+            has_commission: templateForm.has_commission,
+            has_allowance: templateForm.has_allowance,
+            has_deduction: templateForm.has_deduction,
+            bonus_type: templateForm.bonus_type,
+            bonus_calculation: templateForm.bonus_calculation,
+            bonuses: templateForm.has_bonus ? templateForm.bonuses : [],
+            commissions: templateForm.has_commission ? templateForm.commissions : [],
+            allowances: templateForm.has_allowance ? templateForm.allowances.filter(a => a.name) : [],
+            deductions: templateForm.has_deduction ? templateForm.deductions.filter(d => d.deduction_category) : [],
         };
 
         const response = templateForm.id
@@ -239,13 +333,11 @@ const saveTemplate = async () => {
 
         const nextTemplate = normalizeTemplate(response.data?.data ?? payload);
         const currentIndex = templates.value.findIndex((item) => item.id === nextTemplate.id);
-
         if (currentIndex >= 0) {
             templates.value.splice(currentIndex, 1, nextTemplate);
         } else {
             templates.value.unshift(nextTemplate);
         }
-
         templates.value.sort((left, right) => right.id - left.id);
         setToast(response.data?.message || 'Đã lưu mẫu lương.');
         closeTemplateEditor();
@@ -257,12 +349,8 @@ const saveTemplate = async () => {
 };
 
 const removeTemplate = async (template) => {
-    if (!window.confirm(`Xóa mẫu lương "${template.name}"?`)) {
-        return;
-    }
-
+    if (!window.confirm(`Xóa mẫu lương "${template.name}"?`)) return;
     deletingTemplateId.value = template.id;
-
     try {
         await axios.delete(`/api/salary-templates/${template.id}`);
         templates.value = templates.value.filter((item) => item.id !== template.id);
@@ -292,64 +380,36 @@ const removeTemplate = async (template) => {
                             Cấu hình ngày tính lương, tự động tạo bảng lương và danh sách mẫu lương áp dụng cho nhân viên.
                         </p>
                     </div>
-
-                    <Link
-                        href="/employees/paysheets"
-                        class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-                    >
+                    <Link href="/employees/paysheets" class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50">
                         Mở bảng lương
                     </Link>
                 </div>
 
                 <div class="divide-y divide-gray-100">
-                    <div
-                        v-for="row in payrollRows"
-                        :key="row.key"
-                        class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
+                    <div v-for="row in payrollRows" :key="row.key" class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                             <div class="font-medium text-gray-900">{{ row.title }}</div>
                             <div class="mt-1 text-sm text-gray-500">{{ row.description }}</div>
                         </div>
-
-                        <button
-                            v-if="row.kind === 'action'"
-                            type="button"
-                            class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-                            @click="row.action()"
-                        >
+                        <button v-if="row.kind === 'action'" type="button" class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50" @click="row.action()">
                             Chi tiết
                         </button>
-
-                        <button
-                            v-else
-                            type="button"
-                            class="inline-flex h-7 w-12 items-center rounded-full transition"
-                            :class="payroll[row.field] ? 'bg-blue-600' : 'bg-gray-300'"
-                            :disabled="saving"
-                            @click="togglePayrollField(row.field)"
-                        >
-                            <span
-                                class="inline-block h-5 w-5 rounded-full bg-white shadow transition"
-                                :class="payroll[row.field] ? 'translate-x-6' : 'translate-x-1'"
-                            />
+                        <button v-else type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="payroll[row.field] ? 'bg-blue-600' : 'bg-gray-300'" :disabled="saving" @click="togglePayrollField(row.field)">
+                            <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="payroll[row.field] ? 'translate-x-6' : 'translate-x-1'" />
                         </button>
                     </div>
                 </div>
             </section>
         </div>
 
+        <!-- Toast -->
         <div v-if="toast.show" class="fixed right-4 top-4 z-50">
-            <div
-                class="max-w-sm rounded-lg border px-4 py-3 text-sm shadow-lg"
-                :class="toast.type === 'success'
-                    ? 'border-green-200 bg-green-50 text-green-700'
-                    : 'border-red-200 bg-red-50 text-red-700'"
-            >
+            <div class="max-w-sm rounded-lg border px-4 py-3 text-sm shadow-lg" :class="toast.type === 'success' ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'">
                 {{ toast.message }}
             </div>
         </div>
 
+        <!-- Payday Modal -->
         <div v-if="showPaydayModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
             <div class="w-full max-w-2xl rounded-xl bg-white shadow-2xl">
                 <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4">
@@ -357,44 +417,21 @@ const removeTemplate = async (template) => {
                         <h2 class="text-lg font-semibold text-gray-900">Ngày tính lương</h2>
                         <p class="mt-1 text-sm text-gray-500">Thiết lập kỳ lương mặc định để gợi ý khi tạo bảng lương.</p>
                     </div>
-
                     <button type="button" class="text-gray-400 transition hover:text-gray-600" @click="showPaydayModal = false">✕</button>
                 </div>
-
                 <div class="grid grid-cols-1 gap-4 px-6 py-5 md:grid-cols-2">
                     <div>
                         <label class="mb-1 block text-sm font-medium text-gray-700">Từ ngày</label>
-                        <input
-                            v-model.number="paydayForm.start_day"
-                            type="number"
-                            min="1"
-                            max="31"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        />
+                        <input v-model.number="paydayForm.start_day" type="number" min="1" max="31" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                     </div>
-
                     <div>
                         <label class="mb-1 block text-sm font-medium text-gray-700">Đến ngày</label>
-                        <input
-                            v-model.number="paydayForm.end_day"
-                            type="number"
-                            min="1"
-                            max="31"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        />
+                        <input v-model.number="paydayForm.end_day" type="number" min="1" max="31" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                     </div>
-
                     <div>
                         <label class="mb-1 block text-sm font-medium text-gray-700">Ngày trả lương</label>
-                        <input
-                            v-model.number="paydayForm.pay_day"
-                            type="number"
-                            min="1"
-                            max="31"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        />
+                        <input v-model.number="paydayForm.pay_day" type="number" min="1" max="31" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                     </div>
-
                     <div class="flex items-end">
                         <label class="flex items-center gap-3 rounded-md border border-gray-200 px-3 py-2.5 text-sm text-gray-700">
                             <input v-model="paydayForm.start_in_prev_month" type="checkbox" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
@@ -402,22 +439,10 @@ const removeTemplate = async (template) => {
                         </label>
                     </div>
                 </div>
-
                 <div class="border-t border-gray-100 bg-gray-50 px-6 py-4">
                     <div class="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
-                        <button
-                            type="button"
-                            class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-white"
-                            @click="showPaydayModal = false"
-                        >
-                            Bỏ qua
-                        </button>
-                        <button
-                            type="button"
-                            class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
-                            :disabled="saving"
-                            @click="savePaydayModal"
-                        >
+                        <button type="button" class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-white" @click="showPaydayModal = false">Bỏ qua</button>
+                        <button type="button" class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60" :disabled="saving" @click="savePaydayModal">
                             {{ saving ? 'Đang lưu...' : 'Lưu' }}
                         </button>
                     </div>
@@ -425,157 +450,324 @@ const removeTemplate = async (template) => {
             </div>
         </div>
 
+        <!-- Templates List Modal (KiotViet-style: STT, Tên, NV áp dụng, icons) -->
         <div v-if="showTemplatesModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <div class="flex max-h-[85vh] w-full max-w-5xl flex-col rounded-xl bg-white shadow-2xl">
+            <div class="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-2xl">
                 <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-                    <div>
-                        <h2 class="text-lg font-semibold text-gray-900">Danh sách mẫu lương</h2>
-                        <p class="mt-1 text-sm text-gray-500">Tạo và quản lý các mẫu lương để gán nhanh cho nhân viên.</p>
-                    </div>
-
-                    <div class="flex items-center gap-2">
-                        <button
-                            type="button"
-                            class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
-                            @click="openTemplateEditor()"
-                        >
-                            Thêm mẫu lương
-                        </button>
-                        <button type="button" class="text-gray-400 transition hover:text-gray-600" @click="showTemplatesModal = false">✕</button>
-                    </div>
+                    <h2 class="text-lg font-semibold text-gray-900">Danh sách mẫu lương</h2>
+                    <button type="button" class="text-gray-400 transition hover:text-gray-600" @click="showTemplatesModal = false">✕</button>
                 </div>
-
                 <div class="flex-1 overflow-auto px-6 py-5">
                     <div class="overflow-hidden rounded-lg border border-gray-200">
                         <table class="min-w-full divide-y divide-gray-200">
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">STT</th>
-                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Tên mẫu</th>
-                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Loại lương</th>
-                                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Lương cơ bản</th>
-                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Mô tả</th>
-                                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Thao tác</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Tên mẫu lương</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Nhân viên áp dụng</th>
+                                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500"></th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100 bg-white">
                                 <tr v-for="(template, index) in templates" :key="template.id">
                                     <td class="px-4 py-3 text-sm text-gray-500">{{ index + 1 }}</td>
                                     <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ template.name }}</td>
-                                    <td class="px-4 py-3 text-sm text-gray-600">{{ templateTypeLabel(template.type) }}</td>
-                                    <td class="px-4 py-3 text-right text-sm text-gray-900">{{ formatMoney(template.base_salary) }}</td>
-                                    <td class="px-4 py-3 text-sm text-gray-500">{{ template.description || 'Không có mô tả' }}</td>
+                                    <td class="px-4 py-3 text-sm">
+                                        <span class="cursor-pointer text-blue-600 hover:underline">{{ template.employee_count ?? 0 }} nhân viên</span>
+                                    </td>
                                     <td class="px-4 py-3">
                                         <div class="flex items-center justify-end gap-2">
-                                            <button
-                                                type="button"
-                                                class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-                                                @click="openTemplateEditor(template)"
-                                            >
-                                                Sửa
+                                            <button type="button" class="text-gray-400 hover:text-blue-600" title="Sửa" @click="openTemplateEditor(template)">
+                                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                             </button>
-                                            <button
-                                                type="button"
-                                                class="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 disabled:opacity-60"
-                                                :disabled="deletingTemplateId === template.id"
-                                                @click="removeTemplate(template)"
-                                            >
-                                                {{ deletingTemplateId === template.id ? 'Đang xóa...' : 'Xóa' }}
+                                            <button type="button" class="text-gray-400 hover:text-red-600" title="Xóa" :disabled="deletingTemplateId === template.id" @click="removeTemplate(template)">
+                                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                             </button>
                                         </div>
                                     </td>
                                 </tr>
                                 <tr v-if="!templates.length">
-                                    <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-500">Chưa có mẫu lương nào.</td>
+                                    <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-500">Chưa có mẫu lương nào.</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
-
-                <div class="border-t border-gray-100 bg-gray-50 px-6 py-4 text-right">
-                    <button
-                        type="button"
-                        class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-white"
-                        @click="showTemplatesModal = false"
-                    >
-                        Đóng
+                <div class="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-6 py-4">
+                    <button type="button" class="text-sm font-medium text-blue-600 hover:text-blue-700" @click="openTemplateEditor()">
+                        + Thêm mẫu lương
+                    </button>
+                    <button type="button" class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-white" @click="showTemplatesModal = false">
+                        Xong
                     </button>
                 </div>
             </div>
         </div>
 
+        <!-- Template Editor Modal (Full KiotViet-style with 4 sections) -->
         <div v-if="showTemplateEditor" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
-            <div class="w-full max-w-2xl rounded-xl bg-white shadow-2xl">
+            <div class="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-xl bg-white shadow-2xl">
+                <!-- Header -->
                 <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-                    <div>
-                        <h2 class="text-lg font-semibold text-gray-900">{{ templateForm.id ? 'Sửa mẫu lương' : 'Thêm mẫu lương' }}</h2>
-                        <p class="mt-1 text-sm text-gray-500">Khai báo mẫu lương cơ bản để áp dụng nhanh cho nhân viên.</p>
-                    </div>
-
+                    <h2 class="text-lg font-semibold text-gray-900">{{ templateForm.id ? 'Chỉnh sửa mẫu áp dụng' : 'Thêm mới mẫu áp dụng' }}</h2>
                     <button type="button" class="text-gray-400 transition hover:text-gray-600" @click="closeTemplateEditor">✕</button>
                 </div>
 
-                <div class="grid grid-cols-1 gap-4 px-6 py-5 md:grid-cols-2">
-                    <div class="md:col-span-2">
-                        <label class="mb-1 block text-sm font-medium text-gray-700">Tên mẫu lương</label>
-                        <input
-                            v-model="templateForm.name"
-                            type="text"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                            placeholder="Ví dụ: Lương cửa hàng tiêu chuẩn"
-                        />
+                <!-- Body (scrollable) -->
+                <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+                    <!-- Template Name -->
+                    <div class="rounded-lg border border-gray-200 bg-white p-5">
+                        <div class="flex items-center gap-4">
+                            <label class="whitespace-nowrap text-sm font-medium text-gray-700">Mẫu áp dụng</label>
+                            <input v-model="templateForm.name" type="text" class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="VD: Mẫu lương nhân viên hành chính" />
+                        </div>
                     </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-700">Loại lương</label>
-                        <select
-                            v-model="templateForm.type"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        >
-                            <option value="fixed">Cố định</option>
-                            <option value="hourly">Theo giờ</option>
-                            <option value="monthly_commission">Lương tháng + hoa hồng</option>
-                        </select>
+                    <!-- ===== THƯỞNG (Bonus) ===== -->
+                    <div class="rounded-lg border border-gray-200 bg-white p-5">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-base font-bold text-gray-900">Thưởng</h3>
+                                <p class="mt-0.5 text-sm text-gray-500">Thiết lập thưởng theo doanh thu cho nhân viên</p>
+                            </div>
+                            <button type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="templateForm.has_bonus ? 'bg-blue-600' : 'bg-gray-300'" @click="templateForm.has_bonus = !templateForm.has_bonus">
+                                <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="templateForm.has_bonus ? 'translate-x-6' : 'translate-x-1'" />
+                            </button>
+                        </div>
+
+                        <div v-if="templateForm.has_bonus" class="mt-4 space-y-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-600">Loại thưởng</label>
+                                    <select v-model="templateForm.bonus_type" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                        <option v-for="opt in bonusTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-600">Hình thức <span class="cursor-help text-gray-400" title="Tính theo mức tổng doanh thu: thưởng theo bậc đạt. Lũy tiến: thưởng theo từng mức.">&#9432;</span></label>
+                                    <select v-model="templateForm.bonus_calculation" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                        <option v-for="opt in bonusCalculationOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="overflow-hidden rounded-lg border border-gray-200">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Loại hình</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500" colspan="2">Doanh thu <span class="cursor-help text-gray-400" title="Mức doanh thu tối thiểu">&#9432;</span></th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Thưởng</th>
+                                            <th class="w-10"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100 bg-white">
+                                        <tr v-for="(bonus, i) in templateForm.bonuses" :key="i">
+                                            <td class="px-3 py-2">
+                                                <select v-model="bonus.role_type" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option v-for="r in roleTypes" :key="r.value" :value="r.value">{{ r.label }}</option>
+                                                </select>
+                                            </td>
+                                            <td class="px-1 py-2 text-sm text-gray-500 text-right">Từ</td>
+                                            <td class="px-3 py-2">
+                                                <input v-model.number="bonus.revenue_from" type="number" min="0" class="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                            </td>
+                                            <td class="px-3 py-2">
+                                                <div class="flex items-center gap-1">
+                                                    <input v-model.number="bonus.bonus_value" type="number" min="0" class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                                    <select v-model="bonus.bonus_is_percentage" class="rounded border border-gray-300 px-1 py-1.5 text-xs">
+                                                        <option :value="true">% Doanh thu</option>
+                                                        <option :value="false">Cố định</option>
+                                                    </select>
+                                                </div>
+                                            </td>
+                                            <td class="px-3 py-2 text-center">
+                                                <button type="button" class="text-gray-400 hover:text-red-500" @click="removeBonus(i)">
+                                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button type="button" class="text-sm font-medium text-blue-600 hover:text-blue-700" @click="addBonus">Thêm thưởng</button>
+                        </div>
                     </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-700">Lương cơ bản</label>
-                        <input
-                            v-model.number="templateForm.base_salary"
-                            type="number"
-                            min="0"
-                            step="1000"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        />
+                    <!-- ===== HOA HỒNG (Commission) ===== -->
+                    <div class="rounded-lg border border-gray-200 bg-white p-5">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-base font-bold text-gray-900">Hoa hồng</h3>
+                                <p class="mt-0.5 text-sm text-gray-500">Thiết lập mức hoa hồng theo sản phẩm hoặc dịch vụ</p>
+                            </div>
+                            <button type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="templateForm.has_commission ? 'bg-blue-600' : 'bg-gray-300'" @click="templateForm.has_commission = !templateForm.has_commission">
+                                <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="templateForm.has_commission ? 'translate-x-6' : 'translate-x-1'" />
+                            </button>
+                        </div>
+
+                        <div v-if="templateForm.has_commission" class="mt-4 space-y-4">
+                            <div class="overflow-hidden rounded-lg border border-gray-200">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Loại hình</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500" colspan="2">Doanh thu <span class="cursor-help text-gray-400" title="Mức doanh thu tối thiểu">&#9432;</span></th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Hoa hồng thụ hưởng</th>
+                                            <th class="w-10"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100 bg-white">
+                                        <tr v-for="(com, i) in templateForm.commissions" :key="i">
+                                            <td class="px-3 py-2">
+                                                <select v-model="com.role_type" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option v-for="r in roleTypes" :key="r.value" :value="r.value">{{ r.label }}</option>
+                                                </select>
+                                            </td>
+                                            <td class="px-1 py-2 text-sm text-gray-500 text-right">Từ</td>
+                                            <td class="px-3 py-2">
+                                                <input v-model.number="com.revenue_from" type="number" min="0" class="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                            </td>
+                                            <td class="px-3 py-2">
+                                                <select v-model="com.commission_table_id" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option :value="null">Chọn Bảng hoa hồng</option>
+                                                    <option v-for="ct in commissionTables" :key="ct.id" :value="ct.id">{{ ct.name }}</option>
+                                                </select>
+                                            </td>
+                                            <td class="px-3 py-2 text-center">
+                                                <button type="button" class="text-gray-400 hover:text-red-500" @click="removeCommission(i)">
+                                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button type="button" class="text-sm font-medium text-blue-600 hover:text-blue-700" @click="addCommission">Thêm hoa hồng</button>
+                        </div>
                     </div>
 
-                    <div class="md:col-span-2">
-                        <label class="mb-1 block text-sm font-medium text-gray-700">Mô tả</label>
-                        <textarea
-                            v-model="templateForm.description"
-                            rows="3"
-                            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                            placeholder="Ghi chú thêm về mẫu lương này"
-                        />
+                    <!-- ===== PHỤ CẤP (Allowance) ===== -->
+                    <div class="rounded-lg border border-gray-200 bg-white p-5">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-base font-bold text-gray-900">Phụ cấp</h3>
+                                <p class="mt-0.5 text-sm text-gray-500">Thiết lập khoản hỗ trợ làm việc như ăn trưa, đi lại, điện thoại, ...</p>
+                            </div>
+                            <button type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="templateForm.has_allowance ? 'bg-blue-600' : 'bg-gray-300'" @click="templateForm.has_allowance = !templateForm.has_allowance">
+                                <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="templateForm.has_allowance ? 'translate-x-6' : 'translate-x-1'" />
+                            </button>
+                        </div>
+
+                        <div v-if="templateForm.has_allowance" class="mt-4 space-y-4">
+                            <div class="overflow-hidden rounded-lg border border-gray-200">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Tên phụ cấp</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Loại phụ cấp</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Phụ cấp thụ hưởng</th>
+                                            <th class="w-10"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100 bg-white">
+                                        <tr v-for="(al, i) in templateForm.allowances" :key="i">
+                                            <td class="px-3 py-2">
+                                                <select v-model="al.name" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option value="">Chọn Loại phụ cấp</option>
+                                                    <option v-for="a in allowanceNames" :key="a.value" :value="a.value">{{ a.label }}</option>
+                                                </select>
+                                            </td>
+                                            <td class="px-3 py-2">
+                                                <div class="flex items-center gap-1">
+                                                    <select v-model="al.allowance_type" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                        <option v-for="opt in allowanceTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                                    </select>
+                                                    <span class="cursor-help text-gray-400" title="Phụ cấp cố định theo ngày: nhân với số ngày công. Theo tháng: cố định. Theo %: tính trên lương cơ bản.">&#9432;</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-3 py-2">
+                                                <input v-model.number="al.amount" type="number" min="0" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                            </td>
+                                            <td class="px-3 py-2 text-center">
+                                                <button type="button" class="text-gray-400 hover:text-red-500" @click="removeAllowance(i)">
+                                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button type="button" class="text-sm font-medium text-blue-600 hover:text-blue-700" @click="addAllowance">Thêm phụ cấp</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== GIẢM TRỪ (Deduction) ===== -->
+                    <div class="rounded-lg border border-gray-200 bg-white p-5">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-base font-bold text-gray-900">Giảm trừ</h3>
+                                <p class="mt-0.5 text-sm text-gray-500">Thiết lập khoản giảm trừ như đi muộn, về sớm, vi phạm nội quy, ...</p>
+                            </div>
+                            <button type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="templateForm.has_deduction ? 'bg-blue-600' : 'bg-gray-300'" @click="templateForm.has_deduction = !templateForm.has_deduction">
+                                <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="templateForm.has_deduction ? 'translate-x-6' : 'translate-x-1'" />
+                            </button>
+                        </div>
+
+                        <div v-if="templateForm.has_deduction" class="mt-4 space-y-4">
+                            <div class="overflow-hidden rounded-lg border border-gray-200">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Tên giảm trừ</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Loại giảm trừ</th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500"></th>
+                                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500">Khoản giảm trừ</th>
+                                            <th class="w-10"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100 bg-white">
+                                        <tr v-for="(ded, i) in templateForm.deductions" :key="i">
+                                            <td class="px-3 py-2">
+                                                <select v-model="ded.deduction_category" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option value="">Chọn Loại giảm trừ</option>
+                                                    <option v-for="opt in deductionCategoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                                </select>
+                                            </td>
+                                            <td class="px-3 py-2">
+                                                <select v-model="ded.deduction_category" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option v-for="opt in deductionCategoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                                </select>
+                                            </td>
+                                            <td class="px-3 py-2">
+                                                <select v-model="ded.calculation_type" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                    <option v-for="opt in deductionCalcOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                                </select>
+                                            </td>
+                                            <td class="px-3 py-2">
+                                                <input v-model.number="ded.amount" type="number" min="0" class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm text-right" />
+                                            </td>
+                                            <td class="px-3 py-2 text-center">
+                                                <button type="button" class="text-gray-400 hover:text-red-500" @click="removeDeduction(i)">
+                                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button type="button" class="text-sm font-medium text-blue-600 hover:text-blue-700" @click="addDeduction">Thêm giảm trừ</button>
+                        </div>
                     </div>
                 </div>
 
+                <!-- Footer -->
                 <div class="border-t border-gray-100 bg-gray-50 px-6 py-4">
-                    <div class="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
-                        <button
-                            type="button"
-                            class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-white"
-                            @click="closeTemplateEditor"
-                        >
+                    <div class="flex items-center justify-end gap-3">
+                        <button type="button" class="rounded-md border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 transition hover:bg-white" @click="closeTemplateEditor">
                             Bỏ qua
                         </button>
-                        <button
-                            type="button"
-                            class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
-                            :disabled="templateSaving"
-                            @click="saveTemplate"
-                        >
+                        <button type="button" class="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60" :disabled="templateSaving" @click="saveTemplate">
                             {{ templateSaving ? 'Đang lưu...' : 'Lưu' }}
                         </button>
                     </div>

@@ -196,6 +196,8 @@ Route::prefix('payroll-settings')->group(function () {
 
 Route::prefix('salary-templates')->group(function () {
     Route::get('/', [SalaryTemplateController::class, 'index']);
+    Route::get('/commission-tables', [SalaryTemplateController::class, 'commissionTables']);
+    Route::get('/{salaryTemplate}', [SalaryTemplateController::class, 'show']);
     Route::post('/', [SalaryTemplateController::class, 'store']);
     Route::put('/{salaryTemplate}', [SalaryTemplateController::class, 'update']);
     Route::delete('/{salaryTemplate}', [SalaryTemplateController::class, 'destroy']);

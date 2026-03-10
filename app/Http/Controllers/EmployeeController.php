@@ -176,15 +176,10 @@ class EmployeeController extends Controller
                 'auto_generate_enabled' => (bool) ($setting?->auto_generate_enabled ?? false),
             ],
             'salaryTemplates' => SalaryTemplate::query()
+                ->withCount('employeeSettings as employee_count')
+                ->with(['bonuses', 'commissions.commissionTable', 'allowances', 'deductions'])
                 ->orderByDesc('id')
-                ->get([
-                    'id',
-                    'name',
-                    'type',
-                    'base_salary',
-                    'description',
-                    'created_at',
-                ]),
+                ->get(),
         ]);
     }
 

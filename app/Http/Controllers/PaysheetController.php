@@ -106,7 +106,7 @@ class PaysheetController extends Controller
         ]);
 
         // Get employees
-        $empQuery = Employee::where('is_active', true)->with(['salarySetting', 'salaryComponents']);
+        $empQuery = Employee::where('is_active', true)->with(['salarySetting']);
         if (!empty($data['branch_id'])) {
             $empQuery->where('branch_id', $data['branch_id']);
         }
@@ -126,6 +126,8 @@ class PaysheetController extends Controller
                 'paysheet_id' => $paysheet->id,
                 'employee_id' => $employee->id,
                 'base_salary' => $calc['base'],
+                'bonus' => $calc['bonus'] ?? 0,
+                'commission' => $calc['commission'] ?? 0,
                 'allowances' => $calc['allowances'],
                 'deductions' => $calc['deductions'],
                 'ot_pay' => 0,
@@ -165,12 +167,14 @@ class PaysheetController extends Controller
         $periodEnd = Carbon::parse($paysheet->period_end);
 
         foreach ($paysheet->payslips as $slip) {
-            $employee = Employee::with(['salarySetting', 'salaryComponents'])->find($slip->employee_id);
+            $employee = Employee::with(['salarySetting'])->find($slip->employee_id);
             if (!$employee) continue;
 
             $calc = $employee->calculateSalaryForRange($periodStart, $periodEnd);
             $slip->update([
                 'base_salary' => $calc['base'],
+                'bonus' => $calc['bonus'] ?? 0,
+                'commission' => $calc['commission'] ?? 0,
                 'allowances' => $calc['allowances'],
                 'deductions' => $calc['deductions'],
                 'total_salary' => $calc['total'],

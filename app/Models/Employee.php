@@ -64,11 +64,6 @@ class Employee extends Model
         return $this->hasOne(EmployeeSalarySetting::class);
     }
 
-    public function salaryComponents()
-    {
-        return $this->hasMany(EmployeeSalaryComponent::class);
-    }
-
     /**
      * Tính tổng số công trong khoảng ngày
      */
@@ -81,43 +76,11 @@ class Employee extends Model
     }
 
     /**
-     * Tính lương dự kiến theo chấm công
+     * Tính lương dự kiến theo chấm công + mẫu lương
      */
     public function calculateSalaryForRange($from, $to): array
     {
-        $setting = $this->salarySetting;
-        if (!$setting) return ['base' => 0, 'allowances' => 0, 'deductions' => 0, 'total' => 0, 'work_units' => 0];
-
-        $records = $this->timekeepingRecords()
-            ->whereBetween('work_date', [$from, $to])
-            ->get();
-
-        $workUnits = $records->where('attendance_type', 'work')->sum('work_units');
-        $paidLeaveUnits = $records->where('attendance_type', 'leave_paid')->sum('work_units');
-        $totalUnits = $workUnits + $paidLeaveUnits;
-        $otMinutes = $records->sum('ot_minutes');
-
-        // Tính lương cơ bản
-        $baseSalary = $setting->base_salary;
-        if ($setting->type === 'hourly') {
-            $baseSalary = $totalUnits * 8 * $setting->base_salary; // base_salary = lương/giờ
-        }
-
-        // Phụ cấp & giảm trừ
-        $components = $this->salaryComponents;
-        $allowances = $components->where('type', 'allowance')->sum('amount');
-        $deductions = $components->where('type', 'deduction')->sum('amount');
-
-        $total = $baseSalary + $allowances - $deductions;
-
-        return [
-            'base' => round($baseSalary),
-            'allowances' => round($allowances),
-            'deductions' => round($deductions),
-            'ot_minutes' => $otMinutes,
-            'work_units' => $totalUnits,
-            'paid_leave_units' => $paidLeaveUnits,
-            'total' => round(max(0, $total)),
-        ];
+        $service = new \App\Services\SalaryCalculationService();
+        return $service->calculateForEmployee($this, \Carbon\Carbon::parse($from), \Carbon\Carbon::parse($to));
     }
 }
