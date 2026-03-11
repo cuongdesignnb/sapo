@@ -340,6 +340,7 @@ class EmployeeController extends Controller
             'branches' => $branches,
             'departments' => $departments,
             'jobTitles' => $jobTitles,
+            'salaryTemplates' => SalaryTemplate::select('id', 'name')->get(),
             'filters' => $request->only('search', 'is_active', 'branch_id', 'department_id', 'job_title_id')
         ]);
     }

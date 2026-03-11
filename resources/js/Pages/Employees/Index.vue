@@ -1,14 +1,16 @@
 <script setup>
-import { ref, watch } from "vue";
+import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import axios from "axios";
 
 const props = defineProps({
     employees: Object,
     branches: Array,
     departments: Array,
     jobTitles: Array,
+    salaryTemplates: { type: Array, default: () => [] },
     filters: Object,
 });
 
@@ -88,24 +90,127 @@ const openEditModal = (employee) => {
 
     activeTab.value = "info";
     showCreateModal.value = true;
+
+    // Load salary settings
+    loadSalarySetting(employee.id);
 };
 
 const submit = () => {
     if (form.id) {
         form.put(`/employees/${form.id}`, {
             onSuccess: () => {
+                // Also save salary settings if editing
+                saveSalarySetting(form.id);
                 showCreateModal.value = false;
                 form.reset();
             },
         });
     } else {
         form.post("/employees", {
-            onSuccess: () => {
+            onSuccess: (page) => {
                 showCreateModal.value = false;
                 form.reset();
             },
         });
     }
+};
+
+// ─── Salary tab state ───
+const salaryForm = reactive({
+    salary_type: 'fixed',
+    base_salary: 0,
+    salary_template_id: null,
+});
+const selectedTemplate = ref(null);
+const salaryLoading = ref(false);
+const expandedSections = reactive({
+    bonus: false,
+    commission: false,
+    allowance: false,
+    deduction: false,
+});
+
+const loadSalarySetting = async (employeeId) => {
+    salaryLoading.value = true;
+    salaryForm.salary_type = 'fixed';
+    salaryForm.base_salary = 0;
+    salaryForm.salary_template_id = null;
+    selectedTemplate.value = null;
+    Object.keys(expandedSections).forEach(k => expandedSections[k] = false);
+    try {
+        const res = await axios.get(`/api/employee-salary-settings/${employeeId}`);
+        const setting = res.data?.data;
+        if (setting) {
+            salaryForm.salary_type = setting.salary_type || 'fixed';
+            salaryForm.base_salary = setting.base_salary || 0;
+            salaryForm.salary_template_id = setting.salary_template_id;
+            if (setting.template) {
+                selectedTemplate.value = setting.template;
+                if (setting.template.has_bonus) expandedSections.bonus = true;
+                if (setting.template.has_commission) expandedSections.commission = true;
+                if (setting.template.has_allowance) expandedSections.allowance = true;
+                if (setting.template.has_deduction) expandedSections.deduction = true;
+            }
+        }
+    } catch (e) {
+        // No settings yet — keep defaults
+    } finally {
+        salaryLoading.value = false;
+    }
+};
+
+const onTemplateChange = async (templateId) => {
+    salaryForm.salary_template_id = templateId || null;
+    selectedTemplate.value = null;
+    Object.keys(expandedSections).forEach(k => expandedSections[k] = false);
+    if (!templateId) return;
+    try {
+        const res = await axios.get(`/api/salary-templates/${templateId}`);
+        const tpl = res.data?.data || res.data;
+        if (tpl) {
+            selectedTemplate.value = tpl;
+            if (tpl.has_bonus) expandedSections.bonus = true;
+            if (tpl.has_commission) expandedSections.commission = true;
+            if (tpl.has_allowance) expandedSections.allowance = true;
+            if (tpl.has_deduction) expandedSections.deduction = true;
+        }
+    } catch (e) {
+        // ignore
+    }
+};
+
+const saveSalarySetting = async (employeeId) => {
+    try {
+        await axios.post(`/api/employee-salary-settings/${employeeId}`, {
+            salary_type: salaryForm.salary_type,
+            base_salary: salaryForm.base_salary,
+            salary_template_id: salaryForm.salary_template_id,
+        });
+    } catch (e) {
+        console.error('Failed to save salary settings', e);
+    }
+};
+
+const formatCurrency = (val) => {
+    if (!val && val !== 0) return '0';
+    return Number(val).toLocaleString('vi-VN');
+};
+
+const bonusTypeLabel = (type) => {
+    const map = {
+        personal_revenue: 'Theo doanh thu cá nhân',
+        branch_revenue: 'Theo doanh thu chi nhánh',
+        personal_gross_profit: 'Theo lợi nhuận gộp cá nhân',
+    };
+    return map[type] || type;
+};
+
+const bonusCalcLabel = (calc) => {
+    const map = {
+        percent: 'Phần trăm (%)',
+        fixed: 'Số tiền cố định',
+    };
+    return map[calc] || calc;
 };
 </script>
 
@@ -672,167 +777,153 @@ const submit = () => {
 
                         <!-- TAB THIẾT LẬP LƯƠNG -->
                         <div v-show="activeTab === 'salary'" class="space-y-4">
-                            <div
-                                class="bg-white border border-gray-200 shadow-sm rounded-lg p-5"
-                            >
-                                <div
-                                    class="font-bold text-[15px] mb-4 text-gray-800"
-                                >
-                                    Lương chính
-                                </div>
-                                <div class="w-1/2">
-                                    <label
-                                        class="block font-semibold mb-1 text-gray-500"
-                                        >Loại lương</label
-                                    >
-                                    <select
-                                        class="w-full border border-blue-400 text-blue-600 font-medium rounded-md px-3 py-1.5 focus:outline-none"
-                                    >
-                                        <option>Chọn Loại lương</option>
-                                        <option>Cố định</option>
-                                        <option>Theo giờ</option>
-                                    </select>
-                                </div>
-                                <div class="w-1/2 mt-4">
-                                    <label
-                                        class="block font-semibold mb-1 text-gray-500 flex items-center gap-1"
-                                        >Mẫu lương
-                                        <svg
-                                            class="w-3.5 h-3.5 text-gray-400"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            viewBox="0 0 24 24"
+                            <!-- Loading -->
+                            <div v-if="salaryLoading" class="text-center py-8 text-gray-400">Đang tải...</div>
+
+                            <template v-else>
+                            <!-- Lương chính -->
+                            <div class="bg-white border border-gray-200 shadow-sm rounded-lg p-5">
+                                <div class="font-bold text-[15px] mb-4 text-gray-800">Lương chính</div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block font-semibold mb-1 text-gray-500">Loại lương</label>
+                                        <select
+                                            v-model="salaryForm.salary_type"
+                                            class="w-full border border-blue-400 text-blue-600 font-medium rounded-md px-3 py-1.5 focus:outline-none"
                                         >
-                                            <path
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                stroke-width="2"
-                                                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                                            ></path></svg
-                                    ></label>
+                                            <option value="fixed">Cố định</option>
+                                            <option value="hourly">Theo giờ</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block font-semibold mb-1 text-gray-500">Mức lương</label>
+                                        <div class="flex items-center gap-2">
+                                            <input
+                                                v-model.number="salaryForm.base_salary"
+                                                type="number"
+                                                min="0"
+                                                class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
+                                                placeholder="0"
+                                            />
+                                            <span class="text-gray-500 whitespace-nowrap text-sm">/ {{ salaryForm.salary_type === 'hourly' ? 'giờ' : 'kỳ lương' }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mt-4">
+                                    <label class="block font-semibold mb-1 text-gray-500 flex items-center gap-1">
+                                        Mẫu lương
+                                        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                    </label>
                                     <select
+                                        :value="salaryForm.salary_template_id"
+                                        @change="onTemplateChange($event.target.value ? Number($event.target.value) : null)"
                                         class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none text-gray-700"
                                     >
-                                        <option>Chọn mẫu lương có sẵn</option>
+                                        <option :value="null">-- Chọn mẫu lương có sẵn --</option>
+                                        <option v-for="t in salaryTemplates" :key="t.id" :value="t.id">{{ t.name }}</option>
                                     </select>
                                 </div>
                             </div>
 
-                            <div
-                                class="bg-white border border-gray-200 shadow-sm rounded-lg p-4 flex items-center justify-between"
-                            >
-                                <div>
-                                    <div
-                                        class="font-bold text-[14px] text-gray-800"
-                                    >
-                                        Thưởng
+                            <!-- Thưởng -->
+                            <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
+                                <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.bonus = !expandedSections.bonus">
+                                    <div>
+                                        <div class="font-bold text-[14px] text-gray-800">Thưởng</div>
+                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập thưởng theo doanh thu cho nhân viên</div>
                                     </div>
-                                    <div
-                                        class="text-[12px] text-gray-500 mt-0.5"
-                                    >
-                                        Thiết lập thưởng theo doanh thu cho nhân
-                                        viên
+                                    <div class="flex items-center gap-2">
+                                        <span v-if="selectedTemplate?.has_bonus" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
+                                        <span v-else class="text-xs text-gray-400">Không</span>
+                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.bonus }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <label
-                                    class="relative inline-flex items-center cursor-pointer"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        class="sr-only peer"
-                                    />
-                                    <div
-                                        class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"
-                                    ></div>
-                                </label>
+                                <div v-show="expandedSections.bonus && selectedTemplate?.has_bonus" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <div class="flex justify-between"><span class="text-gray-500">Loại thưởng:</span><span class="font-medium">{{ bonusTypeLabel(selectedTemplate.bonus_type) }}</span></div>
+                                    <div v-if="selectedTemplate.bonuses?.length">
+                                        <div v-for="(b, i) in selectedTemplate.bonuses" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                            <span>Từ {{ formatCurrency(b.revenue_from) }} → {{ formatCurrency(b.revenue_to) }}</span>
+                                            <span class="font-semibold text-blue-600">{{ b.bonus_type === 'percent' ? b.bonus_value + '%' : formatCurrency(b.bonus_value) + 'đ' }}</span>
+                                        </div>
+                                    </div>
+                                    <div v-else class="text-gray-400 italic">Chưa có mức thưởng</div>
+                                </div>
                             </div>
 
-                            <div
-                                class="bg-white border border-gray-200 shadow-sm rounded-lg p-4 flex items-center justify-between"
-                            >
-                                <div>
-                                    <div
-                                        class="font-bold text-[14px] text-gray-800"
-                                    >
-                                        Hoa hồng
+                            <!-- Hoa hồng -->
+                            <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
+                                <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.commission = !expandedSections.commission">
+                                    <div>
+                                        <div class="font-bold text-[14px] text-gray-800">Hoa hồng</div>
+                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập mức hoa hồng theo sản phẩm hoặc dịch vụ</div>
                                     </div>
-                                    <div
-                                        class="text-[12px] text-gray-500 mt-0.5"
-                                    >
-                                        Thiết lập mức hoa hồng theo sản phẩm
-                                        hoặc dịch vụ
+                                    <div class="flex items-center gap-2">
+                                        <span v-if="selectedTemplate?.has_commission" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
+                                        <span v-else class="text-xs text-gray-400">Không</span>
+                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.commission }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <label
-                                    class="relative inline-flex items-center cursor-pointer"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        class="sr-only peer"
-                                    />
-                                    <div
-                                        class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"
-                                    ></div>
-                                </label>
+                                <div v-show="expandedSections.commission && selectedTemplate?.has_commission" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <div v-if="selectedTemplate.commissions?.length">
+                                        <div v-for="(c, i) in selectedTemplate.commissions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                            <span>{{ c.name || 'Hoa hồng ' + (i+1) }}</span>
+                                            <span class="font-semibold text-blue-600">{{ c.commission_type === 'percent' ? c.value + '%' : formatCurrency(c.value) + 'đ' }}</span>
+                                        </div>
+                                    </div>
+                                    <div v-else class="text-gray-400 italic">Chưa có mức hoa hồng</div>
+                                </div>
                             </div>
 
-                            <div
-                                class="bg-white border border-gray-200 shadow-sm rounded-lg p-4 flex items-center justify-between"
-                            >
-                                <div>
-                                    <div
-                                        class="font-bold text-[14px] text-gray-800"
-                                    >
-                                        Phụ cấp
+                            <!-- Phụ cấp -->
+                            <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
+                                <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.allowance = !expandedSections.allowance">
+                                    <div>
+                                        <div class="font-bold text-[14px] text-gray-800">Phụ cấp</div>
+                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập khoản hỗ trợ làm việc như ăn trưa, đi lại, điện thoại, ...</div>
                                     </div>
-                                    <div
-                                        class="text-[12px] text-gray-500 mt-0.5"
-                                    >
-                                        Thiết lập khoản hỗ trợ làm việc như ăn
-                                        trưa, đi lại, điện thoại, ...
+                                    <div class="flex items-center gap-2">
+                                        <span v-if="selectedTemplate?.has_allowance" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
+                                        <span v-else class="text-xs text-gray-400">Không</span>
+                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.allowance }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <label
-                                    class="relative inline-flex items-center cursor-pointer"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        class="sr-only peer"
-                                    />
-                                    <div
-                                        class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"
-                                    ></div>
-                                </label>
+                                <div v-show="expandedSections.allowance && selectedTemplate?.has_allowance" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <div v-if="selectedTemplate.allowances?.length">
+                                        <div v-for="(a, i) in selectedTemplate.allowances" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                            <span>{{ a.name }}</span>
+                                            <span class="font-semibold text-blue-600">{{ formatCurrency(a.amount) }}đ</span>
+                                        </div>
+                                    </div>
+                                    <div v-else class="text-gray-400 italic">Chưa có phụ cấp</div>
+                                </div>
                             </div>
 
-                            <div
-                                class="bg-white border border-gray-200 shadow-sm rounded-lg p-4 flex items-center justify-between"
-                            >
-                                <div>
-                                    <div
-                                        class="font-bold text-[14px] text-gray-800"
-                                    >
-                                        Giảm trừ
+                            <!-- Giảm trừ -->
+                            <div class="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
+                                <div class="p-4 flex items-center justify-between cursor-pointer" @click="expandedSections.deduction = !expandedSections.deduction">
+                                    <div>
+                                        <div class="font-bold text-[14px] text-gray-800">Giảm trừ</div>
+                                        <div class="text-[12px] text-gray-500 mt-0.5">Thiết lập khoản giảm trừ như đi muộn, về sớm, vi phạm nội quy, ...</div>
                                     </div>
-                                    <div
-                                        class="text-[12px] text-gray-500 mt-0.5"
-                                    >
-                                        Thiết lập khoản giảm trừ như đi muộn, về
-                                        sớm, vi phạm nội quy, ...
+                                    <div class="flex items-center gap-2">
+                                        <span v-if="selectedTemplate?.has_deduction" class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded">Có</span>
+                                        <span v-else class="text-xs text-gray-400">Không</span>
+                                        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.deduction }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <label
-                                    class="relative inline-flex items-center cursor-pointer"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        class="sr-only peer"
-                                    />
-                                    <div
-                                        class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"
-                                    ></div>
-                                </label>
+                                <div v-show="expandedSections.deduction && selectedTemplate?.has_deduction" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <div v-if="selectedTemplate.deductions?.length">
+                                        <div v-for="(d, i) in selectedTemplate.deductions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                            <span>{{ d.name }}</span>
+                                            <span class="font-semibold text-red-500">-{{ formatCurrency(d.amount) }}đ</span>
+                                        </div>
+                                    </div>
+                                    <div v-else class="text-gray-400 italic">Chưa có giảm trừ</div>
+                                </div>
                             </div>
+                            </template>
                         </div>
                     </form>
                 </div>

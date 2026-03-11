@@ -203,6 +203,11 @@ Route::prefix('salary-templates')->group(function () {
     Route::delete('/{salaryTemplate}', [SalaryTemplateController::class, 'destroy']);
 });
 
+Route::prefix('employee-salary-settings')->group(function () {
+    Route::get('/{employeeId}', [\App\Http\Controllers\Api\EmployeeSalarySettingController::class, 'show']);
+    Route::post('/{employeeId}', [\App\Http\Controllers\Api\EmployeeSalarySettingController::class, 'upsert']);
+});
+
 Route::prefix('attendance-devices')->group(function () {
     Route::get('/', [AttendanceDeviceController::class, 'index']);
     Route::get('/{device}', [AttendanceDeviceController::class, 'show']);
