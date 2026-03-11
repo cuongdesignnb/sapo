@@ -194,6 +194,20 @@ Route::prefix('payroll-settings')->group(function () {
     Route::post('/', [PayrollSettingController::class, 'upsert']);
 });
 
+Route::get('/payroll-cycles', function (\Illuminate\Http\Request $request) {
+    $service = new \App\Services\PayrollCycleService();
+    $branchId = $request->filled('branch_id') ? $request->integer('branch_id') : null;
+
+    if ($request->filled('year')) {
+        $cycles = $service->getCyclesForYear($branchId, $request->integer('year'));
+    } else {
+        $count = $request->integer('count', 12);
+        $cycles = $service->getRecentCycles($branchId, min($count, 24));
+    }
+
+    return response()->json(['success' => true, 'data' => $cycles]);
+});
+
 Route::prefix('salary-templates')->group(function () {
     Route::get('/', [SalaryTemplateController::class, 'index']);
     Route::get('/commission-tables', [SalaryTemplateController::class, 'commissionTables']);

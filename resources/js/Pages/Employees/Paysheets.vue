@@ -1384,92 +1384,27 @@ const createForm = reactive({
     employee_ids: [],
 });
 
-const formatYmd = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+// Chu kỳ lương được tính tự động từ backend (xử lý đúng 28/29/30/31 ngày)
+const payrollCycles = ref([]);
+
+const fetchPayrollCycles = async () => {
+    try {
+        const params = {};
+        if (selectedBranch.value?.id) params.branch_id = selectedBranch.value.id;
+        const res = await axios.get("/api/payroll-cycles", { params });
+        if (res.data?.success && res.data?.data) {
+            payrollCycles.value = res.data.data;
+        }
+    } catch (e) {
+        console.error("Fetch payroll cycles error:", e);
+    }
 };
 
-const clampDate = (year, monthIndex, day) => {
-    const maxDay = new Date(year, monthIndex + 1, 0).getDate();
-    return new Date(year, monthIndex, Math.min(day, maxDay));
-};
-
-const buildCalendarMonthOptions = () => {
-    const opts = [];
-    const now = new Date();
-
-    for (let i = -1; i < 12; i++) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-        const lastDay = new Date(
-            d.getFullYear(),
-            d.getMonth() + 1,
-            0,
-        ).getDate();
-        const end = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${lastDay}`;
-        opts.push({
-            key: `${start}|${end}`,
-            label: `${formatDate(start)} - ${formatDate(end)}`,
-        });
-    }
-
-    return opts;
-};
-
-const buildConfiguredMonthlyPeriodOptions = (settings) => {
-    const opts = [];
-    const now = new Date();
-    const startDay = Number(settings?.start_day ?? 26);
-    const endDay = Number(settings?.end_day ?? 25);
-    const spansPrevMonth =
-        Boolean(settings?.start_in_prev_month ?? true) || startDay > endDay;
-
-    let anchor = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    if (spansPrevMonth && now.getDate() > endDay) {
-        anchor = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    }
-
-    if (!spansPrevMonth && now.getDate() < startDay) {
-        anchor = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    }
-
-    for (let i = 0; i < 12; i++) {
-        const endRef = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
-        const endDate = clampDate(
-            endRef.getFullYear(),
-            endRef.getMonth(),
-            endDay,
-        );
-        const startRef = spansPrevMonth
-            ? new Date(endRef.getFullYear(), endRef.getMonth() - 1, 1)
-            : new Date(endRef.getFullYear(), endRef.getMonth(), 1);
-        const startDate = clampDate(
-            startRef.getFullYear(),
-            startRef.getMonth(),
-            startDay,
-        );
-        const start = formatYmd(startDate);
-        const end = formatYmd(endDate);
-
-        opts.push({
-            key: `${start}|${end}`,
-            label: `${formatDate(start)} - ${formatDate(end)}`,
-        });
-    }
-
-    return opts;
-};
-
-// Generate period options from payroll settings when available
 const periodOptions = computed(() => {
-    if (createForm.pay_period === "monthly") {
-        return buildConfiguredMonthlyPeriodOptions(payrollSettings.value);
-    }
-
-    return buildCalendarMonthOptions();
+    return payrollCycles.value.map((c) => ({
+        key: `${c.period_start}|${c.period_end}`,
+        label: c.label,
+    }));
 });
 
 const setDefaultPeriodKey = () => {
@@ -1501,13 +1436,15 @@ onMounted(async () => {
     await fetchPayrollSettings();
     createForm.pay_period =
         payrollSettings.value.pay_cycle === "biweekly" ? "biweekly" : "monthly";
+    await fetchPayrollCycles();
     setDefaultPeriodKey();
     fetchPaysheets();
 });
 
 watch(
     () => createForm.pay_period,
-    () => {
+    async () => {
+        await fetchPayrollCycles();
         setDefaultPeriodKey();
     },
 );
