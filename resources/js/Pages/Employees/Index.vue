@@ -916,15 +916,18 @@ const bonusCalcLabel = (calc) => {
                                         <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.bonus }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <div v-show="expandedSections.bonus && selectedTemplate?.has_bonus" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div class="flex justify-between"><span class="text-gray-500">Loại thưởng:</span><span class="font-medium">{{ bonusTypeLabel(selectedTemplate?.bonus_type) }}</span></div>
-                                    <div v-if="selectedTemplate?.bonuses?.length">
-                                        <div v-for="(b, i) in selectedTemplate?.bonuses" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                            <span>Từ {{ formatCurrency(b.revenue_from) }}</span>
-                                            <span class="font-semibold text-blue-600">{{ b.bonus_is_percentage ? b.bonus_value + '%' : formatCurrency(b.bonus_value) + 'đ' }}</span>
+                                <div v-show="expandedSections.bonus" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <template v-if="selectedTemplate?.has_bonus">
+                                        <div class="flex justify-between"><span class="text-gray-500">Loại thưởng:</span><span class="font-medium">{{ bonusTypeLabel(selectedTemplate?.bonus_type) }}</span></div>
+                                        <div v-if="selectedTemplate?.bonuses?.length">
+                                            <div v-for="(b, i) in selectedTemplate?.bonuses" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                                <span>Từ {{ formatCurrency(b.revenue_from) }}</span>
+                                                <span class="font-semibold text-blue-600">{{ b.bonus_is_percentage ? b.bonus_value + '%' : formatCurrency(b.bonus_value) + 'đ' }}</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div v-else class="text-gray-400 italic">Chưa có mức thưởng</div>
+                                        <div v-else class="text-gray-400 italic">Chưa có mức thưởng</div>
+                                    </template>
+                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập thưởng</div>
                                 </div>
                             </div>
 
@@ -941,14 +944,17 @@ const bonusCalcLabel = (calc) => {
                                         <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.commission }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <div v-show="expandedSections.commission && selectedTemplate?.has_commission" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div v-if="selectedTemplate?.commissions?.length">
-                                        <div v-for="(c, i) in selectedTemplate?.commissions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                            <span>{{ c.role_type || 'Hoa hồng ' + (i+1) }}</span>
-                                            <span class="font-semibold text-blue-600">{{ c.commission_is_percentage ? c.commission_value + '%' : formatCurrency(c.commission_value) + 'đ' }}</span>
+                                <div v-show="expandedSections.commission" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <template v-if="selectedTemplate?.has_commission">
+                                        <div v-if="selectedTemplate?.commissions?.length">
+                                            <div v-for="(c, i) in selectedTemplate?.commissions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                                <span>{{ c.role_type || 'Hoa hồng ' + (i+1) }}</span>
+                                                <span class="font-semibold text-blue-600">{{ c.commission_is_percentage ? c.commission_value + '%' : formatCurrency(c.commission_value) + 'đ' }}</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div v-else class="text-gray-400 italic">Chưa có mức hoa hồng</div>
+                                        <div v-else class="text-gray-400 italic">Chưa có mức hoa hồng</div>
+                                    </template>
+                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập hoa hồng</div>
                                 </div>
                             </div>
 
@@ -965,14 +971,17 @@ const bonusCalcLabel = (calc) => {
                                         <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.allowance }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <div v-show="expandedSections.allowance && selectedTemplate?.has_allowance" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div v-if="selectedTemplate?.allowances?.length">
-                                        <div v-for="(a, i) in selectedTemplate?.allowances" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                            <span>{{ a.name }}</span>
-                                            <span class="font-semibold text-blue-600">{{ formatCurrency(a.amount) }}đ</span>
+                                <div v-show="expandedSections.allowance" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <template v-if="selectedTemplate?.has_allowance">
+                                        <div v-if="selectedTemplate?.allowances?.length">
+                                            <div v-for="(a, i) in selectedTemplate?.allowances" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                                <span>{{ a.name }}</span>
+                                                <span class="font-semibold text-blue-600">{{ formatCurrency(a.amount) }}đ</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div v-else class="text-gray-400 italic">Chưa có phụ cấp</div>
+                                        <div v-else class="text-gray-400 italic">Chưa có phụ cấp</div>
+                                    </template>
+                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập phụ cấp</div>
                                 </div>
                             </div>
 
@@ -989,14 +998,17 @@ const bonusCalcLabel = (calc) => {
                                         <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.deduction }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
                                 </div>
-                                <div v-show="expandedSections.deduction && selectedTemplate?.has_deduction" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div v-if="selectedTemplate?.deductions?.length">
-                                        <div v-for="(d, i) in selectedTemplate?.deductions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                            <span>{{ d.name }}</span>
-                                            <span class="font-semibold text-red-500">-{{ formatCurrency(d.amount) }}đ</span>
+                                <div v-show="expandedSections.deduction" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
+                                    <template v-if="selectedTemplate?.has_deduction">
+                                        <div v-if="selectedTemplate?.deductions?.length">
+                                            <div v-for="(d, i) in selectedTemplate?.deductions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                                <span>{{ d.name }}</span>
+                                                <span class="font-semibold text-red-500">-{{ formatCurrency(d.amount) }}đ</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div v-else class="text-gray-400 italic">Chưa có giảm trừ</div>
+                                        <div v-else class="text-gray-400 italic">Chưa có giảm trừ</div>
+                                    </template>
+                                    <div v-else class="text-gray-400 italic">Chưa chọn mẫu lương hoặc mẫu lương chưa thiết lập giảm trừ</div>
                                 </div>
                             </div>
                             </template>
