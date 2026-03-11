@@ -333,6 +333,34 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         }"
                         >Sổ quỹ</Link
                     >
+                    <!-- Sửa chữa — chỉ hiện khi module bật -->
+                    <div v-if="$page.props.app_settings?.repair_tracking_enabled" class="relative group">
+                        <button
+                            class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
+                            :class="{
+                                'bg-[#005bb5]':
+                                    $page.url.startsWith('/repairs'),
+                            }"
+                        >
+                            Sửa chữa
+                        </button>
+                        <div
+                            class="absolute left-0 mt-0 w-48 bg-white rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pt-1 border border-gray-100"
+                        >
+                            <div class="bg-white rounded py-1">
+                                <Link
+                                    href="/repairs"
+                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
+                                    >Phiếu sửa chữa</Link
+                                >
+                                <Link
+                                    href="/repairs/performance"
+                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
+                                    >Báo cáo năng suất</Link
+                                >
+                            </div>
+                        </div>
+                    </div>
                     <Link href="#" class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         >Phân tích</Link
                     >

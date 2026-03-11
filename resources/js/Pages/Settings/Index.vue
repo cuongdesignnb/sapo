@@ -8,7 +8,8 @@ import AttributeManager from '@/Components/AttributeManager.vue';
 import LocationManager from '@/Components/LocationManager.vue';
 import OtherFeeManager from '@/Components/OtherFeeManager.vue';
 import BankAccountManager from '@/Components/BankAccountManager.vue';
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
+import axios from 'axios';
 
 const props = defineProps({
     settings: Object,
@@ -32,6 +33,17 @@ const showLocationManager = ref(false);
 const showOtherFeeManager = ref(false);
 const showBankAccountManager = ref(false);
 
+const repairTiers = ref([]);
+const loadRepairTiers = async () => {
+    try {
+        const res = await axios.get('/api/repair-performance-tiers');
+        repairTiers.value = res.data || [];
+    } catch (e) {
+        // Tiers API may 404 if repair module is disabled
+    }
+};
+onMounted(() => loadRepairTiers());
+
 const form = useForm({
     settings: { ...props.settings }
 });
@@ -45,6 +57,7 @@ const categories = [
     { id: 'so-quy', name: 'Sổ quỹ', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
     { id: 'thue-ke-toan', name: 'Thuế & Kế toán', icon: 'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z' },
     { id: 'hoa-don-dien-tu', name: 'Hóa đơn điện tử', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    { id: 'sua-chua', name: 'Sửa chữa', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
 ];
 
 const submit = () => {
@@ -380,7 +393,7 @@ const scrollToSection = (id) => {
                     </div>
                 </div>
 
-                <div v-show="activeCategory !== 'hang-hoa' && activeCategory !== 'don-hang' && activeCategory !== 'khach-hang' && activeCategory !== 'so-quy'" class="flex flex-col items-center justify-center py-20 bg-white rounded border border-dashed border-gray-300">
+                <div v-show="activeCategory !== 'hang-hoa' && activeCategory !== 'don-hang' && activeCategory !== 'khach-hang' && activeCategory !== 'so-quy' && activeCategory !== 'sua-chua'" class="flex flex-col items-center justify-center py-20 bg-white rounded border border-dashed border-gray-300">
                     <svg class="w-12 h-12 text-gray-200 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
                     <p class="text-gray-400 font-medium text-[14px]">Tính năng thiết lập {{ categories.find(c => c.id === activeCategory)?.name }} đang phát triển</p>
                     <button @click="activeCategory = 'hang-hoa'" class="mt-4 text-blue-600 text-sm font-semibold hover:underline underline-offset-4">Quay lại Thiết lập Hàng hóa</button>
@@ -782,6 +795,66 @@ const scrollToSection = (id) => {
                         </div>
                     </div>
                 </div>
+
+                <!-- ==================== SỬA CHỮA TAB ==================== -->
+                <div v-show="activeCategory === 'sua-chua'" class="space-y-4">
+                    <h2 id="repair-toggle" class="text-xl font-bold text-gray-800 mb-4">Thiết lập sửa chữa</h2>
+
+                    <!-- Toggle: repair_tracking_enabled -->
+                    <div class="bg-white rounded shadow-sm border overflow-hidden">
+                        <div class="px-5 py-4 flex justify-between items-start">
+                            <div class="flex-1">
+                                <h4 class="text-[14px] font-bold text-gray-900">Bật module sửa chữa / lắp ráp</h4>
+                                <p class="text-[12.5px] text-gray-500 mt-0.5">Khi bật, menu Sửa chữa sẽ xuất hiện. Bạn có thể tạo phiếu sửa, xuất linh kiện, theo dõi trạng thái serial.</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer ml-4">
+                                <input type="checkbox" class="sr-only peer" v-model="form.settings.repair_tracking_enabled" @change="submit">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Toggle: repair_performance_salary_enabled -->
+                    <div class="bg-white rounded shadow-sm border overflow-hidden">
+                        <div class="px-5 py-4 flex justify-between items-start">
+                            <div class="flex-1">
+                                <h4 class="text-[14px] font-bold text-gray-900">Tính lương theo năng suất sửa chữa</h4>
+                                <p class="text-[12.5px] text-gray-500 mt-0.5">Khi bật, lương cơ bản sẽ được nhân với hệ số năng suất dựa trên tỷ lệ hoàn thành sửa chữa của nhân viên.</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer ml-4">
+                                <input type="checkbox" class="sr-only peer" v-model="form.settings.repair_performance_salary_enabled" @change="submit">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <h2 id="repair-tiers" class="text-xl font-bold text-gray-800 mb-4 mt-8">Bậc năng suất sửa chữa</h2>
+                    <p class="text-[12.5px] text-gray-500 mb-3">Cấu hình các bậc tỷ lệ hoàn thành (%) và hệ số lương tương ứng. Xem chi tiết tại <a href="/repairs/performance" class="text-blue-600 hover:underline">Báo cáo năng suất</a>.</p>
+
+                    <div class="bg-white rounded shadow-sm border overflow-hidden">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
+                                <tr>
+                                    <th class="px-4 py-3 text-left">Xếp loại</th>
+                                    <th class="px-4 py-3 text-center">Từ %</th>
+                                    <th class="px-4 py-3 text-center">Đến %</th>
+                                    <th class="px-4 py-3 text-center">Hệ số lương %</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="tier in repairTiers" :key="tier.id" class="border-t">
+                                    <td class="px-4 py-3 font-semibold">{{ tier.label }}</td>
+                                    <td class="px-4 py-3 text-center">{{ tier.min_percent }}%</td>
+                                    <td class="px-4 py-3 text-center">{{ tier.max_percent }}%</td>
+                                    <td class="px-4 py-3 text-center font-bold">{{ tier.salary_percent }}%</td>
+                                </tr>
+                                <tr v-if="!repairTiers.length">
+                                    <td colspan="4" class="text-center py-6 text-gray-400">Chưa có bậc nào.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <!-- Jump Sidebar (Right) - Hang Hoa -->
@@ -824,6 +897,14 @@ const scrollToSection = (id) => {
             <div v-show="activeCategory === 'so-quy'" class="w-56 shrink-0 pt-12 sticky top-12 h-fit">
                 <nav class="space-y-1 border-l border-gray-100 ml-4">
                     <button @click="scrollToSection('sq-bank-accounts')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 hover:border-l-2 hover:border-blue-600 transition-all font-medium">Quản lý tài khoản thu chi</button>
+                </nav>
+            </div>
+
+            <!-- Jump Sidebar (Right) - Sua Chua -->
+            <div v-show="activeCategory === 'sua-chua'" class="w-56 shrink-0 pt-12 sticky top-12 h-fit">
+                <nav class="space-y-1 border-l border-gray-100 ml-4">
+                    <button @click="scrollToSection('repair-toggle')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 hover:border-l-2 hover:border-blue-600 transition-all font-medium">Thiết lập sửa chữa</button>
+                    <button @click="scrollToSection('repair-tiers')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">Bậc năng suất</button>
                 </nav>
             </div>
         </div>

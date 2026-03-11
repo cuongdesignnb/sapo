@@ -64,6 +64,11 @@ class Employee extends Model
         return $this->hasOne(EmployeeSalarySetting::class);
     }
 
+    public function deviceRepairs()
+    {
+        return $this->hasMany(DeviceRepair::class, 'assigned_employee_id');
+    }
+
     /**
      * Tính tổng số công trong khoảng ngày
      */
