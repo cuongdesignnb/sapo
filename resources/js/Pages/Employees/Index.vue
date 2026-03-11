@@ -841,9 +841,9 @@ const bonusCalcLabel = (calc) => {
                                     </div>
                                 </div>
                                 <div v-show="expandedSections.bonus && selectedTemplate?.has_bonus" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div class="flex justify-between"><span class="text-gray-500">Loại thưởng:</span><span class="font-medium">{{ bonusTypeLabel(selectedTemplate.bonus_type) }}</span></div>
-                                    <div v-if="selectedTemplate.bonuses?.length">
-                                        <div v-for="(b, i) in selectedTemplate.bonuses" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                    <div class="flex justify-between"><span class="text-gray-500">Loại thưởng:</span><span class="font-medium">{{ bonusTypeLabel(selectedTemplate?.bonus_type) }}</span></div>
+                                    <div v-if="selectedTemplate?.bonuses?.length">
+                                        <div v-for="(b, i) in selectedTemplate?.bonuses" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
                                             <span>Từ {{ formatCurrency(b.revenue_from) }} → {{ formatCurrency(b.revenue_to) }}</span>
                                             <span class="font-semibold text-blue-600">{{ b.bonus_type === 'percent' ? b.bonus_value + '%' : formatCurrency(b.bonus_value) + 'đ' }}</span>
                                         </div>
@@ -866,8 +866,8 @@ const bonusCalcLabel = (calc) => {
                                     </div>
                                 </div>
                                 <div v-show="expandedSections.commission && selectedTemplate?.has_commission" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div v-if="selectedTemplate.commissions?.length">
-                                        <div v-for="(c, i) in selectedTemplate.commissions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                    <div v-if="selectedTemplate?.commissions?.length">
+                                        <div v-for="(c, i) in selectedTemplate?.commissions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
                                             <span>{{ c.name || 'Hoa hồng ' + (i+1) }}</span>
                                             <span class="font-semibold text-blue-600">{{ c.commission_type === 'percent' ? c.value + '%' : formatCurrency(c.value) + 'đ' }}</span>
                                         </div>
@@ -890,8 +890,8 @@ const bonusCalcLabel = (calc) => {
                                     </div>
                                 </div>
                                 <div v-show="expandedSections.allowance && selectedTemplate?.has_allowance" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div v-if="selectedTemplate.allowances?.length">
-                                        <div v-for="(a, i) in selectedTemplate.allowances" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                    <div v-if="selectedTemplate?.allowances?.length">
+                                        <div v-for="(a, i) in selectedTemplate?.allowances" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
                                             <span>{{ a.name }}</span>
                                             <span class="font-semibold text-blue-600">{{ formatCurrency(a.amount) }}đ</span>
                                         </div>
@@ -914,8 +914,8 @@ const bonusCalcLabel = (calc) => {
                                     </div>
                                 </div>
                                 <div v-show="expandedSections.deduction && selectedTemplate?.has_deduction" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
-                                    <div v-if="selectedTemplate.deductions?.length">
-                                        <div v-for="(d, i) in selectedTemplate.deductions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
+                                    <div v-if="selectedTemplate?.deductions?.length">
+                                        <div v-for="(d, i) in selectedTemplate?.deductions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
                                             <span>{{ d.name }}</span>
                                             <span class="font-semibold text-red-500">-{{ formatCurrency(d.amount) }}đ</span>
                                         </div>
