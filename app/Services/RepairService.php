@@ -29,6 +29,7 @@ class RepairService
                 'status'               => DeviceRepair::STATUS_PENDING,
                 'branch_id'            => $data['branch_id'] ?? null,
                 'notes'                => $data['notes'] ?? null,
+                'deadline'             => $data['deadline'] ?? null,
                 'created_by'           => $data['created_by'] ?? null,
             ]);
 

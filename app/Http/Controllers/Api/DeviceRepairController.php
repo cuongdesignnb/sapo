@@ -79,6 +79,7 @@ class DeviceRepairController extends Controller
             'issue_description' => 'nullable|string|max:2000',
             'branch_id'         => 'nullable|exists:branches,id',
             'notes'             => 'nullable|string|max:2000',
+            'deadline'          => 'nullable|date',
         ]);
         $data['created_by'] = $request->user()?->id;
 

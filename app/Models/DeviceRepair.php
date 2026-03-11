@@ -20,6 +20,7 @@ class DeviceRepair extends Model
         'completed_at',
         'branch_id',
         'notes',
+        'deadline',
         'created_by',
     ];
 
@@ -29,6 +30,7 @@ class DeviceRepair extends Model
         'total_cost'    => 'decimal:0',
         'assigned_at'   => 'datetime',
         'completed_at'  => 'datetime',
+        'deadline'      => 'date',
     ];
 
     const STATUS_PENDING     = 'pending';

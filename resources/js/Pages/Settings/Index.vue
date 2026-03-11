@@ -34,12 +34,52 @@ const showOtherFeeManager = ref(false);
 const showBankAccountManager = ref(false);
 
 const repairTiers = ref([]);
+const tierForm = ref({ label: '', min_percent: 0, max_percent: 100, salary_percent: 100, sort_order: 0 });
+const editingTierId = ref(null);
+const tierError = ref('');
+
 const loadRepairTiers = async () => {
     try {
         const res = await axios.get('/api/repair-performance-tiers');
         repairTiers.value = res.data || [];
     } catch (e) {
         // ignore
+    }
+};
+
+const resetTierForm = () => {
+    tierForm.value = { label: '', min_percent: 0, max_percent: 100, salary_percent: 100, sort_order: 0 };
+    editingTierId.value = null;
+    tierError.value = '';
+};
+
+const saveTier = async () => {
+    tierError.value = '';
+    try {
+        if (editingTierId.value) {
+            await axios.put(`/api/repair-performance-tiers/${editingTierId.value}`, tierForm.value);
+        } else {
+            await axios.post('/api/repair-performance-tiers', tierForm.value);
+        }
+        resetTierForm();
+        loadRepairTiers();
+    } catch (e) {
+        tierError.value = e.response?.data?.message || 'Lỗi khi lưu bậc.';
+    }
+};
+
+const editTier = (tier) => {
+    editingTierId.value = tier.id;
+    tierForm.value = { label: tier.label, min_percent: tier.min_percent, max_percent: tier.max_percent, salary_percent: tier.salary_percent, sort_order: tier.sort_order };
+};
+
+const deleteTier = async (tier) => {
+    if (!confirm(`Xóa bậc "${tier.label}"?`)) return;
+    try {
+        await axios.delete(`/api/repair-performance-tiers/${tier.id}`);
+        loadRepairTiers();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi khi xóa.');
     }
 };
 
@@ -833,6 +873,35 @@ const scrollToSection = (id) => {
                     <h2 id="repair-tiers" class="text-xl font-bold text-gray-800 mb-4 mt-8">Bậc năng suất sửa chữa</h2>
                     <p class="text-[12.5px] text-gray-500 mb-3">Cấu hình các bậc tỷ lệ hoàn thành (%) và hệ số lương tương ứng. Xem chi tiết tại <a href="/repairs/performance" class="text-blue-600 hover:underline">Báo cáo năng suất</a>.</p>
 
+                    <!-- Tier form -->
+                    <div class="bg-blue-50 border border-blue-200 rounded p-4 mb-3">
+                        <div v-if="tierError" class="text-red-500 text-sm mb-2">{{ tierError }}</div>
+                        <div class="grid grid-cols-5 gap-2 items-end">
+                            <div>
+                                <label class="text-xs font-semibold text-gray-600">Xếp loại</label>
+                                <input v-model="tierForm.label" type="text" placeholder="VD: Tốt" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
+                            </div>
+                            <div>
+                                <label class="text-xs font-semibold text-gray-600">Từ %</label>
+                                <input v-model.number="tierForm.min_percent" type="number" min="0" max="100" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
+                            </div>
+                            <div>
+                                <label class="text-xs font-semibold text-gray-600">Đến %</label>
+                                <input v-model.number="tierForm.max_percent" type="number" min="0" max="100" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
+                            </div>
+                            <div>
+                                <label class="text-xs font-semibold text-gray-600">Hệ số lương %</label>
+                                <input v-model.number="tierForm.salary_percent" type="number" min="0" max="200" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
+                            </div>
+                            <div class="flex gap-1">
+                                <button @click="saveTier" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-semibold hover:bg-blue-700">
+                                    {{ editingTierId ? 'Cập nhật' : 'Thêm' }}
+                                </button>
+                                <button v-if="editingTierId" @click="resetTierForm" class="px-3 py-1.5 border border-gray-300 rounded text-sm font-semibold hover:bg-gray-50">Hủy</button>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="bg-white rounded shadow-sm border overflow-hidden">
                         <table class="w-full text-sm">
                             <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
@@ -841,6 +910,7 @@ const scrollToSection = (id) => {
                                     <th class="px-4 py-3 text-center">Từ %</th>
                                     <th class="px-4 py-3 text-center">Đến %</th>
                                     <th class="px-4 py-3 text-center">Hệ số lương %</th>
+                                    <th class="px-4 py-3 text-center w-28"></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -849,9 +919,13 @@ const scrollToSection = (id) => {
                                     <td class="px-4 py-3 text-center">{{ tier.min_percent }}%</td>
                                     <td class="px-4 py-3 text-center">{{ tier.max_percent }}%</td>
                                     <td class="px-4 py-3 text-center font-bold">{{ tier.salary_percent }}%</td>
+                                    <td class="px-4 py-3 text-center">
+                                        <button @click="editTier(tier)" class="text-blue-600 text-xs font-semibold mr-2 hover:underline">Sửa</button>
+                                        <button @click="deleteTier(tier)" class="text-red-500 text-xs font-semibold hover:underline">Xóa</button>
+                                    </td>
                                 </tr>
                                 <tr v-if="!repairTiers.length">
-                                    <td colspan="4" class="text-center py-6 text-gray-400">Chưa có bậc nào.</td>
+                                    <td colspan="5" class="text-center py-6 text-gray-400">Chưa có bậc nào.</td>
                                 </tr>
                             </tbody>
                         </table>

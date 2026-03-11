@@ -20,6 +20,8 @@ const assignError = ref("");
 const productSearch = ref("");
 const productResults = ref([]);
 const selectedProduct = ref(null);
+const editDeadline = ref("");
+const showDeadlineEdit = ref(false);
 
 const loadRepair = async () => {
     loading.value = true;
@@ -115,6 +117,25 @@ const markComplete = async () => {
     if (!confirm("Xác nhận hoàn thành sửa chữa?")) return;
     try {
         await axios.post(`/api/device-repairs/${props.repairId}/complete`);
+        loadRepair();
+    } catch (e) {
+        alert(e.response?.data?.message || "Lỗi.");
+    }
+};
+
+const startEditDeadline = () => {
+    editDeadline.value = repair.value?.deadline || "";
+    showDeadlineEdit.value = true;
+};
+
+const saveDeadline = async () => {
+    try {
+        await axios.put(`/api/device-repairs/${props.repairId}`, {
+            issue_description: repair.value.issue_description,
+            notes: repair.value.notes,
+            deadline: editDeadline.value || null,
+        });
+        showDeadlineEdit.value = false;
         loadRepair();
     } catch (e) {
         alert(e.response?.data?.message || "Lỗi.");
@@ -222,6 +243,22 @@ loadRepair();
                             <div>
                                 <span class="text-gray-500">Mô tả lỗi:</span>
                                 <p class="mt-1 text-gray-800">{{ repair.issue_description || '-' }}</p>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-500">Deadline:</span>
+                                <div class="flex items-center gap-2">
+                                    <template v-if="showDeadlineEdit">
+                                        <input v-model="editDeadline" type="date" class="border border-gray-300 rounded px-2 py-1 text-sm" />
+                                        <button @click="saveDeadline" class="text-blue-600 text-xs font-semibold hover:underline">Lưu</button>
+                                        <button @click="showDeadlineEdit = false" class="text-gray-400 text-xs hover:underline">Hủy</button>
+                                    </template>
+                                    <template v-else>
+                                        <span :class="repair.status !== 'completed' && repair.deadline && new Date(repair.deadline) < new Date() ? 'text-red-600 font-bold' : 'font-semibold'">
+                                            {{ repair.deadline || 'Chưa đặt' }}
+                                        </span>
+                                        <button v-if="repair.status !== 'completed'" @click="startEditDeadline" class="text-blue-500 text-xs hover:underline">Sửa</button>
+                                    </template>
+                                </div>
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-500">Chi nhánh:</span>

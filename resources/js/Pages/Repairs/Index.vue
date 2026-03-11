@@ -27,6 +27,7 @@ const createForm = ref({
     issue_description: "",
     branch_id: null,
     notes: "",
+    deadline: "",
 });
 const serialSearch = ref("");
 const serialResults = ref([]);
@@ -91,7 +92,7 @@ const submitCreate = async () => {
     try {
         await axios.post("/api/device-repairs", createForm.value);
         showCreateModal.value = false;
-        createForm.value = { serial_imei_id: null, issue_description: "", branch_id: null, notes: "" };
+        createForm.value = { serial_imei_id: null, issue_description: "", branch_id: null, notes: "", deadline: "" };
         selectedSerial.value = null;
         serialSearch.value = "";
         loadRepairs();
@@ -136,7 +137,7 @@ loadRepairs();
             <div class="flex items-center justify-between mb-4">
                 <h1 class="text-xl font-bold text-gray-800">Phiếu sửa chữa</h1>
                 <button
-                    @click="showCreateModal = true; createError = ''; selectedSerial = null; serialSearch = ''; createForm = { serial_imei_id: null, issue_description: '', branch_id: null, notes: '' }"
+                    @click="showCreateModal = true; createError = ''; selectedSerial = null; serialSearch = ''; createForm = { serial_imei_id: null, issue_description: '', branch_id: null, notes: '', deadline: '' }"
                     class="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition"
                 >
                     + Tạo phiếu sửa
@@ -179,6 +180,7 @@ loadRepairs();
                             <th class="px-4 py-3 text-left">NV phụ trách</th>
                             <th class="px-4 py-3 text-center">Trạng thái</th>
                             <th class="px-4 py-3 text-center">Serial ST</th>
+                            <th class="px-4 py-3 text-center">Deadline</th>
                             <th class="px-4 py-3 text-right">Giá gốc</th>
                             <th class="px-4 py-3 text-right">Giá LK</th>
                             <th class="px-4 py-3 text-right">Tổng giá vốn</th>
@@ -186,7 +188,7 @@ loadRepairs();
                     </thead>
                     <tbody>
                         <tr v-if="!repairs.data?.length">
-                            <td colspan="9" class="text-center py-8 text-gray-400">Chưa có phiếu sửa chữa nào.</td>
+                            <td colspan="10" class="text-center py-8 text-gray-400">Chưa có phiếu sửa chữa nào.</td>
                         </tr>
                         <tr
                             v-for="r in repairs.data"
@@ -211,6 +213,10 @@ loadRepairs();
                                 >
                                     {{ repairStatusBadge(r.serial_imei.repair_status).label }}
                                 </span>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <span v-if="r.deadline" :class="r.status !== 'completed' && new Date(r.deadline) < new Date() ? 'text-red-600 font-bold' : 'text-gray-600'">{{ r.deadline }}</span>
+                                <span v-else class="text-gray-300">-</span>
                             </td>
                             <td class="px-4 py-3 text-right">{{ formatCurrency(r.original_cost) }}</td>
                             <td class="px-4 py-3 text-right">{{ formatCurrency(r.parts_cost) }}</td>
@@ -291,6 +297,12 @@ loadRepairs();
                             <option :value="null">-- Chọn chi nhánh --</option>
                             <option v-for="b in branches" :key="b.id" :value="b.id">{{ b.name }}</option>
                         </select>
+                    </div>
+
+                    <!-- Deadline -->
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Deadline</label>
+                        <input v-model="createForm.deadline" type="date" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                     </div>
 
                     <!-- Notes -->
