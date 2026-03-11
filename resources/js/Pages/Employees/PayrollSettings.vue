@@ -334,7 +334,10 @@ const saveTemplate = async () => {
             bonuses: templateForm.has_bonus ? templateForm.bonuses : [],
             commissions: templateForm.has_commission ? templateForm.commissions : [],
             allowances: templateForm.has_allowance ? templateForm.allowances.filter(a => a.name) : [],
-            deductions: templateForm.has_deduction ? templateForm.deductions.filter(d => d.deduction_category) : [],
+            deductions: templateForm.has_deduction ? templateForm.deductions.filter(d => d.deduction_category).map(d => ({
+                ...d,
+                name: d.name || (deductionCategoryOptions.find(o => o.value === d.deduction_category)?.label || d.deduction_category),
+            })) : [],
         };
 
         const response = templateForm.id
@@ -739,7 +742,7 @@ const removeTemplate = async (template) => {
                                     <tbody class="divide-y divide-gray-100 bg-white">
                                         <tr v-for="(ded, i) in templateForm.deductions" :key="i">
                                             <td class="px-3 py-2">
-                                                <select v-model="ded.deduction_category" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                                                <select v-model="ded.deduction_category" @change="ded.name = deductionCategoryOptions.find(o => o.value === ded.deduction_category)?.label || ded.deduction_category" class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
                                                     <option value="">Chọn Loại giảm trừ</option>
                                                     <option v-for="opt in deductionCategoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                                                 </select>

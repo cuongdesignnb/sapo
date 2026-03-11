@@ -30,6 +30,11 @@ class EmployeeSalarySettingController extends Controller
             'salary_type' => 'required|in:fixed,hourly',
             'base_salary' => 'required|numeric|min:0',
             'salary_template_id' => 'nullable|integer|exists:salary_templates,id',
+            'advanced_salary' => 'boolean',
+            'holiday_rate' => 'nullable|numeric|min:0|max:999',
+            'tet_rate' => 'nullable|numeric|min:0|max:999',
+            'has_overtime' => 'boolean',
+            'overtime_rate' => 'nullable|numeric|min:0|max:999',
         ]);
 
         $setting = EmployeeSalarySetting::updateOrCreate(

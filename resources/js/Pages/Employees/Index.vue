@@ -120,6 +120,11 @@ const salaryForm = reactive({
     salary_type: 'fixed',
     base_salary: 0,
     salary_template_id: null,
+    advanced_salary: false,
+    holiday_rate: 200,
+    tet_rate: 300,
+    has_overtime: false,
+    overtime_rate: 150,
 });
 const selectedTemplate = ref(null);
 const salaryLoading = ref(false);
@@ -135,6 +140,11 @@ const loadSalarySetting = async (employeeId) => {
     salaryForm.salary_type = 'fixed';
     salaryForm.base_salary = 0;
     salaryForm.salary_template_id = null;
+    salaryForm.advanced_salary = false;
+    salaryForm.holiday_rate = 200;
+    salaryForm.tet_rate = 300;
+    salaryForm.has_overtime = false;
+    salaryForm.overtime_rate = 150;
     selectedTemplate.value = null;
     Object.keys(expandedSections).forEach(k => expandedSections[k] = false);
     try {
@@ -144,6 +154,11 @@ const loadSalarySetting = async (employeeId) => {
             salaryForm.salary_type = setting.salary_type || 'fixed';
             salaryForm.base_salary = setting.base_salary || 0;
             salaryForm.salary_template_id = setting.salary_template_id;
+            salaryForm.advanced_salary = Boolean(setting.advanced_salary);
+            salaryForm.holiday_rate = setting.holiday_rate ?? 200;
+            salaryForm.tet_rate = setting.tet_rate ?? 300;
+            salaryForm.has_overtime = Boolean(setting.has_overtime);
+            salaryForm.overtime_rate = setting.overtime_rate ?? 150;
             if (setting.template) {
                 selectedTemplate.value = setting.template;
                 if (setting.template.has_bonus) expandedSections.bonus = true;
@@ -185,6 +200,11 @@ const saveSalarySetting = async (employeeId) => {
             salary_type: salaryForm.salary_type,
             base_salary: salaryForm.base_salary,
             salary_template_id: salaryForm.salary_template_id,
+            advanced_salary: salaryForm.advanced_salary,
+            holiday_rate: salaryForm.holiday_rate,
+            tet_rate: salaryForm.tet_rate,
+            has_overtime: salaryForm.has_overtime,
+            overtime_rate: salaryForm.overtime_rate,
         });
     } catch (e) {
         console.error('Failed to save salary settings', e);
@@ -809,6 +829,62 @@ const bonusCalcLabel = (calc) => {
                                         </div>
                                     </div>
                                 </div>
+
+                                <!-- Thiết lập nâng cao -->
+                                <div class="mt-4">
+                                    <label class="flex items-center gap-2 cursor-pointer select-none">
+                                        <input type="checkbox" v-model="salaryForm.advanced_salary" class="accent-blue-600 w-4 h-4" />
+                                        <span class="font-semibold text-gray-700 text-sm">Thiết lập nâng cao</span>
+                                    </label>
+                                </div>
+                                <div v-if="salaryForm.advanced_salary" class="mt-3 border border-gray-200 rounded-lg overflow-hidden">
+                                    <table class="w-full text-sm">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th class="text-left px-3 py-2 font-semibold text-gray-600">Mức lương</th>
+                                                <th class="text-right px-3 py-2 font-semibold text-gray-600">Lương/kỳ lương</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr class="border-t">
+                                                <td class="px-3 py-2 text-gray-700">Mặc định</td>
+                                                <td class="px-3 py-2 text-right font-medium text-gray-800">{{ formatCurrency(salaryForm.base_salary) }}</td>
+                                            </tr>
+                                            <tr class="border-t">
+                                                <td class="px-3 py-2 text-gray-700">Ngày nghỉ</td>
+                                                <td class="px-3 py-2 text-right">
+                                                    <div class="flex items-center justify-end gap-1">
+                                                        <input v-model.number="salaryForm.holiday_rate" type="number" min="0" max="999" class="w-20 border border-gray-300 rounded px-2 py-1 text-right focus:border-blue-500 outline-none" />
+                                                        <span class="text-gray-500">%</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr class="border-t">
+                                                <td class="px-3 py-2 text-gray-700">Ngày lễ, tết</td>
+                                                <td class="px-3 py-2 text-right">
+                                                    <div class="flex items-center justify-end gap-1">
+                                                        <input v-model.number="salaryForm.tet_rate" type="number" min="0" max="999" class="w-20 border border-gray-300 rounded px-2 py-1 text-right focus:border-blue-500 outline-none" />
+                                                        <span class="text-gray-500">%</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- Lương làm thêm giờ -->
+                                <div class="mt-4">
+                                    <label class="flex items-center gap-2 cursor-pointer select-none">
+                                        <input type="checkbox" v-model="salaryForm.has_overtime" class="accent-blue-600 w-4 h-4" />
+                                        <span class="font-semibold text-gray-700 text-sm">Lương làm thêm giờ</span>
+                                    </label>
+                                </div>
+                                <div v-if="salaryForm.has_overtime" class="mt-2 flex items-center gap-2 pl-6">
+                                    <span class="text-sm text-gray-600">Hệ số:</span>
+                                    <input v-model.number="salaryForm.overtime_rate" type="number" min="0" max="999" class="w-20 border border-gray-300 rounded px-2 py-1 text-right focus:border-blue-500 outline-none" />
+                                    <span class="text-gray-500 text-sm">%</span>
+                                </div>
+
                                 <div class="mt-4">
                                     <label class="block font-semibold mb-1 text-gray-500 flex items-center gap-1">
                                         Mẫu lương
@@ -844,8 +920,8 @@ const bonusCalcLabel = (calc) => {
                                     <div class="flex justify-between"><span class="text-gray-500">Loại thưởng:</span><span class="font-medium">{{ bonusTypeLabel(selectedTemplate?.bonus_type) }}</span></div>
                                     <div v-if="selectedTemplate?.bonuses?.length">
                                         <div v-for="(b, i) in selectedTemplate?.bonuses" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                            <span>Từ {{ formatCurrency(b.revenue_from) }} → {{ formatCurrency(b.revenue_to) }}</span>
-                                            <span class="font-semibold text-blue-600">{{ b.bonus_type === 'percent' ? b.bonus_value + '%' : formatCurrency(b.bonus_value) + 'đ' }}</span>
+                                            <span>Từ {{ formatCurrency(b.revenue_from) }}</span>
+                                            <span class="font-semibold text-blue-600">{{ b.bonus_is_percentage ? b.bonus_value + '%' : formatCurrency(b.bonus_value) + 'đ' }}</span>
                                         </div>
                                     </div>
                                     <div v-else class="text-gray-400 italic">Chưa có mức thưởng</div>
@@ -868,8 +944,8 @@ const bonusCalcLabel = (calc) => {
                                 <div v-show="expandedSections.commission && selectedTemplate?.has_commission" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-1">
                                     <div v-if="selectedTemplate?.commissions?.length">
                                         <div v-for="(c, i) in selectedTemplate?.commissions" :key="i" class="flex justify-between mt-1 bg-white px-2 py-1 rounded border">
-                                            <span>{{ c.name || 'Hoa hồng ' + (i+1) }}</span>
-                                            <span class="font-semibold text-blue-600">{{ c.commission_type === 'percent' ? c.value + '%' : formatCurrency(c.value) + 'đ' }}</span>
+                                            <span>{{ c.role_type || 'Hoa hồng ' + (i+1) }}</span>
+                                            <span class="font-semibold text-blue-600">{{ c.commission_is_percentage ? c.commission_value + '%' : formatCurrency(c.commission_value) + 'đ' }}</span>
                                         </div>
                                     </div>
                                     <div v-else class="text-gray-400 italic">Chưa có mức hoa hồng</div>
