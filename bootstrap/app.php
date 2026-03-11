@@ -19,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'attendance.agent' => \App\Http\Middleware\VerifyAttendanceAgentSignature::class,
+            'permission'       => \App\Http\Middleware\CheckPermission::class,
+            'role'             => \App\Http\Middleware\CheckRole::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

@@ -227,8 +227,8 @@ Route::get('/warranties/{warranty}/print', [\App\Http\Controllers\WarrantyContro
 Route::get('/paysheets/{paysheet}/print', [\App\Http\Controllers\PaysheetController::class, 'print'])->name('paysheets.print');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy');
 
-Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
-Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
+Route::get('/settings', [SettingController::class, 'index'])->middleware('permission:settings.view')->name('settings.index');
+Route::post('/settings', [SettingController::class, 'update'])->middleware('permission:settings.view')->name('settings.update');
 
 // Category CRUD from Settings
 Route::post('/settings/categories', [SettingController::class, 'storeCategory'])->name('settings.categories.store');
@@ -335,8 +335,8 @@ Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class,
 // =======================
 // 🔧 DEVICE REPAIR
 // =======================
-Route::get('/repairs', [App\Http\Controllers\DeviceRepairPageController::class, 'index'])->name('repairs.index');
-Route::get('/repairs/performance', [App\Http\Controllers\DeviceRepairPageController::class, 'performance'])->name('repairs.performance');
-Route::get('/repairs/{id}', [App\Http\Controllers\DeviceRepairPageController::class, 'show'])->name('repairs.show');
+Route::get('/repairs', [App\Http\Controllers\DeviceRepairPageController::class, 'index'])->middleware('permission:repairs.view')->name('repairs.index');
+Route::get('/repairs/performance', [App\Http\Controllers\DeviceRepairPageController::class, 'performance'])->middleware('permission:repairs.view')->name('repairs.performance');
+Route::get('/repairs/{id}', [App\Http\Controllers\DeviceRepairPageController::class, 'show'])->middleware('permission:repairs.view')->name('repairs.show');
 
 }); // end auth middleware

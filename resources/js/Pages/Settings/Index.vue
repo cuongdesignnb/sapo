@@ -83,6 +83,181 @@ const deleteTier = async (tier) => {
     }
 };
 
+// ── Roles & Users management ──
+const roles = ref([]);
+const users = ref({ data: [], total: 0 });
+const permissionsMap = ref({});
+const userSubTab = ref('roles'); // 'roles' | 'users'
+const loadingRoles = ref(false);
+const loadingUsers = ref(false);
+
+// Role editor state
+const showRoleEditor = ref(false);
+const editingRole = ref(null);
+const roleForm = ref({ display_name: '', name: '', description: '', permissions: [] });
+const roleError = ref('');
+
+// User editor state
+const showUserModal = ref(false);
+const editingUser = ref(null);
+const userForm = ref({ name: '', email: '', password: '', phone: '', role_id: null, branch_id: null, status: 'active', branch_ids: [] });
+const userError = ref('');
+
+const loadRoles = async () => {
+    loadingRoles.value = true;
+    try {
+        const res = await axios.get('/api/roles');
+        roles.value = res.data || [];
+    } catch (e) { /* ignore */ }
+    loadingRoles.value = false;
+};
+
+const loadUsers = async () => {
+    loadingUsers.value = true;
+    try {
+        const res = await axios.get('/api/users', { params: { per_page: 100 } });
+        users.value = res.data || { data: [], total: 0 };
+    } catch (e) { /* ignore */ }
+    loadingUsers.value = false;
+};
+
+const loadPermissionsMap = async () => {
+    if (Object.keys(permissionsMap.value).length > 0) return;
+    try {
+        const res = await axios.get('/api/roles/permissions-map');
+        permissionsMap.value = res.data || {};
+    } catch (e) { /* ignore */ }
+};
+
+const loadRolesAndUsers = () => {
+    loadRoles();
+    loadUsers();
+    loadPermissionsMap();
+};
+
+// Role CRUD
+const openRoleEditor = (role = null) => {
+    editingRole.value = role;
+    roleError.value = '';
+    if (role) {
+        roleForm.value = { display_name: role.display_name, name: role.name, description: role.description || '', permissions: [...(role.permissions || [])] };
+    } else {
+        roleForm.value = { display_name: '', name: '', description: '', permissions: [] };
+    }
+    showRoleEditor.value = true;
+};
+
+const togglePermission = (key) => {
+    const idx = roleForm.value.permissions.indexOf(key);
+    if (idx >= 0) roleForm.value.permissions.splice(idx, 1);
+    else roleForm.value.permissions.push(key);
+};
+
+const isGroupChecked = (perms) => {
+    const keys = Object.keys(perms);
+    return keys.length > 0 && keys.every(k => roleForm.value.permissions.includes(k));
+};
+
+const isGroupPartial = (perms) => {
+    const keys = Object.keys(perms);
+    const checked = keys.filter(k => roleForm.value.permissions.includes(k));
+    return checked.length > 0 && checked.length < keys.length;
+};
+
+const toggleGroup = (perms) => {
+    const keys = Object.keys(perms);
+    if (isGroupChecked(perms)) {
+        roleForm.value.permissions = roleForm.value.permissions.filter(p => !keys.includes(p));
+    } else {
+        keys.forEach(k => { if (!roleForm.value.permissions.includes(k)) roleForm.value.permissions.push(k); });
+    }
+};
+
+const saveRole = async () => {
+    roleError.value = '';
+    try {
+        if (editingRole.value) {
+            await axios.put(`/api/roles/${editingRole.value.id}`, roleForm.value);
+        } else {
+            // Auto-generate name from display_name
+            const autoName = roleForm.value.display_name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'role_' + Date.now();
+            await axios.post('/api/roles', { ...roleForm.value, name: autoName });
+        }
+        showRoleEditor.value = false;
+        loadRoles();
+    } catch (e) {
+        roleError.value = e.response?.data?.message || 'Lỗi khi lưu vai trò.';
+    }
+};
+
+const duplicateRole = async (role) => {
+    try {
+        await axios.post(`/api/roles/${role.id}/duplicate`);
+        loadRoles();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi.');
+    }
+};
+
+const deleteRole = async (role) => {
+    if (!confirm(`Xóa vai trò "${role.display_name}"?`)) return;
+    try {
+        await axios.delete(`/api/roles/${role.id}`);
+        loadRoles();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi khi xóa.');
+    }
+};
+
+// User CRUD
+const openUserModal = (user = null) => {
+    editingUser.value = user;
+    userError.value = '';
+    if (user) {
+        userForm.value = { name: user.name, email: user.email, password: '', phone: user.phone || '', role_id: user.role_id, branch_id: user.branch_id, status: user.status || 'active', branch_ids: [] };
+    } else {
+        userForm.value = { name: '', email: '', password: '', phone: '', role_id: null, branch_id: null, status: 'active', branch_ids: [] };
+    }
+    showUserModal.value = true;
+};
+
+const saveUser = async () => {
+    userError.value = '';
+    try {
+        const payload = { ...userForm.value };
+        if (!payload.password) delete payload.password;
+        if (editingUser.value) {
+            await axios.put(`/api/users/${editingUser.value.id}`, payload);
+        } else {
+            await axios.post('/api/users', payload);
+        }
+        showUserModal.value = false;
+        loadUsers();
+    } catch (e) {
+        userError.value = e.response?.data?.message || Object.values(e.response?.data?.errors || {}).flat().join(', ') || 'Lỗi.';
+    }
+};
+
+const deleteUser = async (user) => {
+    if (!confirm(`Xóa tài khoản "${user.name}"?`)) return;
+    try {
+        await axios.delete(`/api/users/${user.id}`);
+        loadUsers();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi khi xóa.');
+    }
+};
+
+const toggleUserStatus = async (user) => {
+    const newStatus = user.status === 'active' ? 'locked' : 'active';
+    try {
+        await axios.put(`/api/users/${user.id}`, { name: user.name, email: user.email, status: newStatus, role_id: user.role_id, branch_id: user.branch_id });
+        loadUsers();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi.');
+    }
+};
+
 const form = useForm({
     settings: { ...props.settings }
 });
@@ -90,6 +265,7 @@ const form = useForm({
 const activeCategory = ref('hang-hoa');
 watch(activeCategory, (val) => {
     if (val === 'sua-chua') loadRepairTiers();
+    if (val === 'nguoi-dung') loadRolesAndUsers();
 });
 
 const categories = [
@@ -97,8 +273,7 @@ const categories = [
     { id: 'don-hang', name: 'Đơn hàng', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
     { id: 'khach-hang', name: 'Khách hàng', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z' },
     { id: 'so-quy', name: 'Sổ quỹ', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
-    { id: 'thue-ke-toan', name: 'Thuế & Kế toán', icon: 'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z' },
-    { id: 'hoa-don-dien-tu', name: 'Hóa đơn điện tử', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    { id: 'nguoi-dung', name: 'Người dùng', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
     { id: 'sua-chua', name: 'Sửa chữa', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
 ];
 
@@ -435,7 +610,7 @@ const scrollToSection = (id) => {
                     </div>
                 </div>
 
-                <div v-show="activeCategory !== 'hang-hoa' && activeCategory !== 'don-hang' && activeCategory !== 'khach-hang' && activeCategory !== 'so-quy' && activeCategory !== 'sua-chua'" class="flex flex-col items-center justify-center py-20 bg-white rounded border border-dashed border-gray-300">
+                <div v-show="activeCategory !== 'hang-hoa' && activeCategory !== 'don-hang' && activeCategory !== 'khach-hang' && activeCategory !== 'so-quy' && activeCategory !== 'sua-chua' && activeCategory !== 'nguoi-dung'" class="flex flex-col items-center justify-center py-20 bg-white rounded border border-dashed border-gray-300">
                     <svg class="w-12 h-12 text-gray-200 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
                     <p class="text-gray-400 font-medium text-[14px]">Tính năng thiết lập {{ categories.find(c => c.id === activeCategory)?.name }} đang phát triển</p>
                     <button @click="activeCategory = 'hang-hoa'" class="mt-4 text-blue-600 text-sm font-semibold hover:underline underline-offset-4">Quay lại Thiết lập Hàng hóa</button>
@@ -933,7 +1108,99 @@ const scrollToSection = (id) => {
                 </div>
             </div>
 
-            <!-- Jump Sidebar (Right) - Hang Hoa -->
+            <!-- ==================== NGUOI DUNG TAB ==================== -->
+            <div v-show="activeCategory === 'nguoi-dung'" class="space-y-4">
+                <!-- Sub-tabs -->
+                <div class="flex gap-4 border-b border-gray-200 mb-2">
+                    <button @click="userSubTab = 'roles'" :class="userSubTab === 'roles' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'" class="pb-2 border-b-2 text-[13.5px] transition-all px-1">Quản lý vai trò</button>
+                    <button @click="userSubTab = 'users'" :class="userSubTab === 'users' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'" class="pb-2 border-b-2 text-[13.5px] transition-all px-1">Tài khoản người dùng</button>
+                </div>
+
+                <!-- === ROLES SUB-TAB === -->
+                <div v-show="userSubTab === 'roles'">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-lg font-bold text-gray-800">Danh sách vai trò</h2>
+                        <button @click="openRoleEditor()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-[13px] font-semibold hover:bg-blue-700 transition-colors">+ Tạo vai trò</button>
+                    </div>
+                    <div v-if="loadingRoles" class="py-12 text-center text-gray-400">Đang tải...</div>
+                    <div v-else class="bg-white rounded shadow-sm border overflow-hidden">
+                        <table class="w-full text-[13px]">
+                            <thead class="bg-gray-50 text-gray-600">
+                                <tr>
+                                    <th class="text-left px-4 py-2.5 font-semibold">Tên vai trò</th>
+                                    <th class="text-left px-4 py-2.5 font-semibold">Mô tả</th>
+                                    <th class="text-center px-4 py-2.5 font-semibold">Người dùng</th>
+                                    <th class="text-center px-4 py-2.5 font-semibold w-32"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr v-for="role in roles" :key="role.id" class="hover:bg-gray-50">
+                                    <td class="px-4 py-3">
+                                        <span class="font-semibold text-gray-800">{{ role.display_name }}</span>
+                                        <span v-if="role.is_system" class="ml-2 text-[11px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Hệ thống</span>
+                                    </td>
+                                    <td class="px-4 py-3 text-gray-500">{{ role.description || '—' }}</td>
+                                    <td class="px-4 py-3 text-center text-gray-600">{{ role.users_count }}</td>
+                                    <td class="px-4 py-3 text-center">
+                                        <div class="flex justify-center gap-2">
+                                            <button @click="openRoleEditor(role)" class="text-blue-600 hover:text-blue-800 text-[12px] font-medium">Sửa</button>
+                                            <button @click="duplicateRole(role)" class="text-gray-500 hover:text-gray-700 text-[12px] font-medium">Nhân bản</button>
+                                            <button v-if="!role.is_system" @click="deleteRole(role)" class="text-red-500 hover:text-red-700 text-[12px] font-medium">Xóa</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr v-if="!roles.length">
+                                    <td colspan="4" class="text-center py-8 text-gray-400">Chưa có vai trò nào.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- === USERS SUB-TAB === -->
+                <div v-show="userSubTab === 'users'">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-lg font-bold text-gray-800">Tài khoản người dùng</h2>
+                        <button @click="openUserModal()" class="bg-blue-600 text-white px-4 py-1.5 rounded text-[13px] font-semibold hover:bg-blue-700 transition-colors">+ Tạo tài khoản</button>
+                    </div>
+                    <div v-if="loadingUsers" class="py-12 text-center text-gray-400">Đang tải...</div>
+                    <div v-else class="bg-white rounded shadow-sm border overflow-hidden">
+                        <table class="w-full text-[13px]">
+                            <thead class="bg-gray-50 text-gray-600">
+                                <tr>
+                                    <th class="text-left px-4 py-2.5 font-semibold">Họ tên</th>
+                                    <th class="text-left px-4 py-2.5 font-semibold">Email</th>
+                                    <th class="text-left px-4 py-2.5 font-semibold">Vai trò</th>
+                                    <th class="text-left px-4 py-2.5 font-semibold">Chi nhánh</th>
+                                    <th class="text-center px-4 py-2.5 font-semibold">Trạng thái</th>
+                                    <th class="text-center px-4 py-2.5 font-semibold w-32"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr v-for="user in users.data" :key="user.id" class="hover:bg-gray-50">
+                                    <td class="px-4 py-3 font-medium text-gray-800">{{ user.name }}</td>
+                                    <td class="px-4 py-3 text-gray-500">{{ user.email }}</td>
+                                    <td class="px-4 py-3 text-gray-600">{{ user.role?.display_name || 'Quản trị viên' }}</td>
+                                    <td class="px-4 py-3 text-gray-500">{{ user.branch?.name || '—' }}</td>
+                                    <td class="px-4 py-3 text-center">
+                                        <span :class="user.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'" class="text-[11px] px-2 py-0.5 rounded-full font-medium">{{ user.status === 'active' ? 'Hoạt động' : 'Khóa' }}</span>
+                                    </td>
+                                    <td class="px-4 py-3 text-center">
+                                        <div class="flex justify-center gap-2">
+                                            <button @click="openUserModal(user)" class="text-blue-600 hover:text-blue-800 text-[12px] font-medium">Sửa</button>
+                                            <button @click="toggleUserStatus(user)" class="text-[12px] font-medium" :class="user.status === 'active' ? 'text-orange-500 hover:text-orange-700' : 'text-green-600 hover:text-green-800'">{{ user.status === 'active' ? 'Khóa' : 'Mở khóa' }}</button>
+                                            <button @click="deleteUser(user)" class="text-red-500 hover:text-red-700 text-[12px] font-medium">Xóa</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr v-if="!users.data?.length">
+                                    <td colspan="6" class="text-center py-8 text-gray-400">Chưa có tài khoản nào.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
             <div v-show="activeCategory === 'hang-hoa'" class="w-56 shrink-0 pt-12 sticky top-12 h-fit">
                 <nav class="space-y-1 border-l border-gray-100 ml-4">
                     <button @click="scrollToSection('info-section')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 hover:border-l-2 hover:border-blue-600 transition-all font-medium">Thông tin hàng hóa</button>
@@ -982,6 +1249,145 @@ const scrollToSection = (id) => {
                     <button @click="scrollToSection('repair-toggle')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 hover:border-l-2 hover:border-blue-600 transition-all font-medium">Thiết lập sửa chữa</button>
                     <button @click="scrollToSection('repair-tiers')" class="block w-full text-left px-4 py-1.5 text-[12.5px] text-gray-500 hover:text-blue-600 border-l-2 border-transparent transition-all font-medium">Bậc năng suất</button>
                 </nav>
+            </div>
+        </div>
+
+        <!-- ==================== ROLE EDITOR (Full-page overlay) ==================== -->
+        <div v-if="showRoleEditor" class="fixed inset-0 z-50 bg-gray-100 overflow-y-auto">
+            <div class="sticky top-0 z-10 bg-white border-b shadow-sm px-6 py-3 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <button @click="showRoleEditor = false" class="text-gray-500 hover:text-gray-700">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <h2 class="text-lg font-bold text-gray-800">{{ editingRole ? 'Chỉnh sửa vai trò' : 'Tạo vai trò mới' }}</h2>
+                </div>
+                <button @click="saveRole" class="bg-blue-600 text-white px-6 py-1.5 rounded text-[13px] font-semibold hover:bg-blue-700">Lưu</button>
+            </div>
+
+            <div class="max-w-5xl mx-auto py-6 px-4 flex gap-6">
+                <!-- Left: Form + Permissions -->
+                <div class="flex-1 min-w-0">
+                    <!-- Role info -->
+                    <div class="bg-white rounded shadow-sm border p-5 mb-4">
+                        <div v-if="roleError" class="mb-3 text-red-600 text-[13px] bg-red-50 p-2 rounded">{{ roleError }}</div>
+                        <div class="grid grid-cols-2 gap-4 mb-3">
+                            <div>
+                                <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Tên vai trò <span class="text-red-500">*</span></label>
+                                <input v-model="roleForm.display_name" type="text" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500" placeholder="VD: Nhân viên bán hàng">
+                            </div>
+                            <div>
+                                <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Mã vai trò</label>
+                                <input v-model="roleForm.name" type="text" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-gray-50" placeholder="Tự tạo nếu để trống">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Mô tả</label>
+                            <input v-model="roleForm.description" type="text" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500" placeholder="Mô tả ngắn gọn về vai trò này">
+                        </div>
+                    </div>
+
+                    <!-- Permission groups -->
+                    <div v-for="(catData, catKey) in permissionsMap" :key="catKey" :id="'perm-' + catKey" class="bg-white rounded shadow-sm border mb-3 overflow-hidden">
+                        <div class="px-5 py-3 bg-gray-50 border-b flex items-center justify-between">
+                            <h3 class="font-bold text-[14px] text-gray-800">{{ catData._label || catKey }}</h3>
+                        </div>
+                        <div class="p-5">
+                            <!-- Category with sub-groups -->
+                            <template v-if="catData._sub">
+                                <div v-for="(subPerms, subKey) in catData._sub" :key="subKey" class="mb-4 last:mb-0">
+                                    <div class="flex items-center gap-2 mb-2 pb-1 border-b border-gray-100">
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" :checked="isGroupChecked(subPerms)" :indeterminate.prop="isGroupPartial(subPerms)" @change="toggleGroup(subPerms)" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                            <span class="text-[13px] font-semibold text-gray-700">{{ subKey }}</span>
+                                        </label>
+                                    </div>
+                                    <div class="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2 pl-1">
+                                        <label v-for="(label, permKey) in subPerms" :key="permKey" class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" :checked="roleForm.permissions.includes(permKey)" @change="togglePermission(permKey)" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                            <span class="text-[13px] text-gray-600">{{ label }}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </template>
+                            <!-- Flat category (no sub-groups) -->
+                            <template v-else>
+                                <div class="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
+                                    <template v-for="(val, key) in catData" :key="key">
+                                        <label v-if="key !== '_label'" class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" :checked="roleForm.permissions.includes(key)" @change="togglePermission(key)" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                            <span class="text-[13px] text-gray-600">{{ val }}</span>
+                                        </label>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Jump links sidebar -->
+                <div class="w-48 shrink-0 sticky top-20 h-fit hidden lg:block">
+                    <nav class="space-y-1 border-l border-gray-200 ml-2">
+                        <button v-for="(catData, catKey) in permissionsMap" :key="catKey" @click="document.getElementById('perm-' + catKey)?.scrollIntoView({ behavior: 'smooth', block: 'start' })" class="block w-full text-left px-3 py-1.5 text-[12px] text-gray-500 hover:text-blue-600 hover:border-l-2 hover:border-blue-600 transition-all font-medium">{{ catData._label || catKey }}</button>
+                    </nav>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== USER MODAL ==================== -->
+        <div v-if="showUserModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+                <div class="flex items-center justify-between px-5 py-3 border-b">
+                    <h3 class="font-bold text-[15px] text-gray-800">{{ editingUser ? 'Chỉnh sửa tài khoản' : 'Tạo tài khoản mới' }}</h3>
+                    <button @click="showUserModal = false" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div v-if="userError" class="text-red-600 text-[13px] bg-red-50 p-2 rounded">{{ userError }}</div>
+                    <div>
+                        <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Họ tên <span class="text-red-500">*</span></label>
+                        <input v-model="userForm.name" type="text" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Email <span class="text-red-500">*</span></label>
+                        <input v-model="userForm.email" type="email" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Mật khẩu {{ editingUser ? '(để trống nếu không đổi)' : '' }} <span v-if="!editingUser" class="text-red-500">*</span></label>
+                        <input v-model="userForm.password" type="password" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Số điện thoại</label>
+                        <input v-model="userForm.phone" type="text" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Vai trò</label>
+                            <select v-model="userForm.role_id" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                                <option :value="null">Quản trị viên (Admin)</option>
+                                <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.display_name }}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Chi nhánh chính</label>
+                            <select v-model="userForm.branch_id" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                                <option :value="null">— Không chọn —</option>
+                                <option v-for="b in props.branches" :key="b.id" :value="b.id">{{ b.name }}</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[12.5px] font-semibold text-gray-600 mb-1">Trạng thái</label>
+                        <select v-model="userForm.status" class="w-full border rounded px-3 py-1.5 text-[13px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="active">Hoạt động</option>
+                            <option value="locked">Khóa</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 px-5 py-3 border-t bg-gray-50 rounded-b-lg">
+                    <button @click="showUserModal = false" class="px-4 py-1.5 text-[13px] rounded border text-gray-600 hover:bg-gray-100 font-medium">Hủy</button>
+                    <button @click="saveUser" class="px-5 py-1.5 text-[13px] rounded bg-blue-600 text-white font-semibold hover:bg-blue-700">Lưu</button>
+                </div>
             </div>
         </div>
 

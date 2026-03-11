@@ -263,3 +263,23 @@ Route::prefix('repair-performance-tiers')->group(function () {
     Route::put('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'update']);
     Route::delete('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'destroy']);
 });
+
+// ── Roles & Users ──
+Route::middleware('permission:settings.view')->group(function () {
+    Route::prefix('roles')->group(function () {
+        Route::get('/permissions-map', [\App\Http\Controllers\Api\RoleController::class, 'permissionsMap']);
+        Route::get('/', [\App\Http\Controllers\Api\RoleController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\Api\RoleController::class, 'store']);
+        Route::get('/{role}', [\App\Http\Controllers\Api\RoleController::class, 'show']);
+        Route::put('/{role}', [\App\Http\Controllers\Api\RoleController::class, 'update']);
+        Route::delete('/{role}', [\App\Http\Controllers\Api\RoleController::class, 'destroy']);
+        Route::post('/{role}/duplicate', [\App\Http\Controllers\Api\RoleController::class, 'duplicate']);
+    });
+
+    Route::prefix('users')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\UserController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\Api\UserController::class, 'store']);
+        Route::put('/{user}', [\App\Http\Controllers\Api\UserController::class, 'update']);
+        Route::delete('/{user}', [\App\Http\Controllers\Api\UserController::class, 'destroy']);
+    });
+});

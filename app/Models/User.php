@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -11,37 +10,112 @@ class User extends Authenticatable
 {
     use HasFactory, Notifiable;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'name',
         'email',
         'password',
+        'role_id',
+        'branch_id',
+        'phone',
+        'status',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var array<int, string>
-     */
     protected $hidden = [
         'password',
         'remember_token',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    // ── Relationships ──
+
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
+    }
+
+    public function branchAccess()
+    {
+        return $this->belongsToMany(Branch::class, 'user_branch_access');
+    }
+
+    // ── Permission helpers ──
+
+    /**
+     * User without role_id is treated as admin (backward compatible).
+     */
+    public function isAdmin(): bool
+    {
+        if ($this->role_id === null) {
+            return true;
+        }
+        return $this->role && $this->role->hasPermission('*');
+    }
+
+    public function hasPermission(string $permission): bool
+    {
+        if ($this->isAdmin()) {
+            return true;
+        }
+        return $this->role && $this->role->hasPermission($permission);
+    }
+
+    public function hasAnyPermission(array $permissions): bool
+    {
+        foreach ($permissions as $p) {
+            if ($this->hasPermission($p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public function hasRole(string $roleName): bool
+    {
+        return $this->role && $this->role->name === $roleName;
+    }
+
+    public function hasAnyRole(array $roleNames): bool
+    {
+        return $this->role && in_array($this->role->name, $roleNames);
+    }
+
+    public function isActive(): bool
+    {
+        return ($this->status ?? 'active') === 'active';
+    }
+
+    /**
+     * Get all branch IDs this user can access.
+     */
+    public function getAccessibleBranchIds(): array
+    {
+        $ids = $this->branchAccess()->pluck('branches.id')->toArray();
+        if ($this->branch_id && !in_array($this->branch_id, $ids)) {
+            $ids[] = $this->branch_id;
+        }
+        return $ids;
+    }
+
+    /**
+     * Returns permissions array for frontend sharing.
+     */
+    public function getPermissionsArray(): array
+    {
+        if ($this->isAdmin()) {
+            return ['*'];
+        }
+        return $this->role ? ($this->role->permissions ?? []) : [];
     }
 }

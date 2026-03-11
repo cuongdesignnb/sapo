@@ -22,6 +22,13 @@ class LoginController extends Controller
         ]);
 
         if (Auth::attempt($credentials, $request->boolean('remember'))) {
+            $user = Auth::user();
+            if ($user->status === 'locked') {
+                Auth::logout();
+                return back()->withErrors([
+                    'email' => 'Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.',
+                ])->onlyInput('email');
+            }
             $request->session()->regenerate();
             return redirect()->intended('/');
         }

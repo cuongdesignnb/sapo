@@ -1,9 +1,11 @@
 <script setup>
 import { Link, usePage, router } from "@inertiajs/vue3";
 import { useSlots, ref, watch, onMounted, computed } from "vue";
+import { usePermission } from "@/composables/usePermission";
 
 const slots = useSlots();
 const page = usePage();
+const { can, canAny, isAdmin } = usePermission();
 
 const user = computed(() => page.props.auth?.user);
 const userInitial = computed(() =>
@@ -52,12 +54,13 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                     class="hidden md:flex items-center space-x-1 text-sm font-medium"
                 >
                     <Link
+                        v-if="canAny(['dashboard.view'])"
                         href="/"
                         class="px-3 py-2 rounded hover:bg-[#005bb5]"
                         :class="{ 'bg-[#005bb5]': $page.url === '/' }"
                         >Tổng quan</Link
                     >
-                    <div class="relative group cursor-pointer">
+                    <div v-if="canAny(['products.view', 'stock.transfer', 'stock.take', 'purchases.view'])" class="relative group cursor-pointer">
                         <div
                             class="px-3 py-2 flex items-center gap-1 hover:bg-[#005bb5] rounded"
                             :class="{
@@ -221,7 +224,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             </div>
                         </div>
                     </div>
-                    <div class="relative group">
+                    <div v-if="canAny(['orders.view', 'invoices.view'])" class="relative group">
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{
@@ -271,6 +274,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         </div>
                     </div>
                     <Link
+                        v-if="canAny(['customers.view'])"
                         href="/customers"
                         class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         :class="{
@@ -278,7 +282,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         }"
                         >Khách hàng</Link
                     >
-                    <div class="relative group">
+                    <div v-if="canAny(['employees.view'])" class="relative group">
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{
@@ -326,6 +330,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         </div>
                     </div>
                     <Link
+                        v-if="canAny(['cashbook.view'])"
                         href="/cash-flows"
                         class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         :class="{
@@ -333,8 +338,8 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         }"
                         >Sổ quỹ</Link
                     >
-                    <!-- Sửa chữa — chỉ hiện khi module bật -->
-                    <div v-if="$page.props.app_settings?.repair_tracking_enabled" class="relative group">
+                    <!-- Sửa chữa — chỉ hiện khi module bật + có quyền -->
+                    <div v-if="$page.props.app_settings?.repair_tracking_enabled && canAny(['repairs.view'])" class="relative group">
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{
