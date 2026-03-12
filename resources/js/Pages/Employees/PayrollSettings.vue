@@ -375,7 +375,20 @@ const templateSummary = computed(() => {
     return `Đang có ${templates.value.length} mẫu lương sẵn sàng để áp dụng cho nhân viên.`;
 });
 
+const salarySetupDescription = computed(() => {
+    const count = salaryEmployees.value.length;
+    if (count > 0) return `Đang có ${count} nhân viên được thiết lập lương.`;
+    return 'Thiết lập lương chính, làm thêm, thưởng, hoa hồng, phụ cấp, giảm trừ cho từng nhân viên.';
+});
+
 const payrollRows = computed(() => [
+    {
+        key: 'salary-setup',
+        title: 'Thiết lập lương nhân viên',
+        description: salarySetupDescription.value,
+        kind: 'action',
+        action: () => { openSalarySetup(); },
+    },
     {
         key: 'payday',
         title: 'Ngày tính lương',
@@ -597,14 +610,9 @@ const removeTemplate = async (template) => {
                             Cấu hình ngày tính lương, tự động tạo bảng lương và danh sách mẫu lương áp dụng cho nhân viên.
                         </p>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <button type="button" class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700" @click="openSalarySetup">
-                            Thiết lập lương
-                        </button>
-                        <Link href="/employees/paysheets" class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50">
-                            Mở bảng lương
-                        </Link>
-                    </div>
+                    <Link href="/employees/paysheets" class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50">
+                        Mở bảng lương
+                    </Link>
                 </div>
 
                 <div class="divide-y divide-gray-100">
