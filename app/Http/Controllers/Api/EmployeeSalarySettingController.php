@@ -9,6 +9,40 @@ use Illuminate\Http\Request;
 
 class EmployeeSalarySettingController extends Controller
 {
+    public function index(Request $request)
+    {
+        $query = Employee::with(['salarySetting', 'branch'])
+            ->where('is_active', true)
+            ->orderBy('name');
+
+        if ($request->filled('branch_id')) {
+            $query->where('branch_id', $request->integer('branch_id'));
+        }
+
+        if ($request->filled('salary_type')) {
+            $type = $request->input('salary_type');
+            $query->whereHas('salarySetting', fn($q) => $q->where('salary_type', $type));
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->input('search');
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%");
+            });
+        }
+
+        $employees = $query->get();
+
+        $branches = \App\Models\Branch::orderBy('name')->get(['id', 'name']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $employees,
+            'branches' => $branches,
+        ]);
+    }
+
     public function show($employeeId)
     {
         $employee = Employee::findOrFail($employeeId);

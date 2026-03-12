@@ -1,13 +1,13 @@
 {
-  "_AppLayout-BlrdmehT.js": {
-    "file": "assets/AppLayout-BlrdmehT.js",
+  "_AppLayout-CCzXtK5o.js": {
+    "file": "assets/AppLayout-CCzXtK5o.js",
     "name": "AppLayout",
     "imports": [
       "resources/js/app.js"
     ]
   },
-  "_ExcelButtons-8nq_jib5.js": {
-    "file": "assets/ExcelButtons-8nq_jib5.js",
+  "_ExcelButtons-DjNS2tI_.js": {
+    "file": "assets/ExcelButtons-DjNS2tI_.js",
     "name": "ExcelButtons",
     "imports": [
       "resources/js/app.js"
@@ -18,12 +18,12 @@
     "name": "_plugin-vue_export-helper"
   },
   "resources/css/app.css": {
-    "file": "assets/app-D9myX7f3.css",
+    "file": "assets/app-BiwjLb-4.css",
     "src": "resources/css/app.css",
     "isEntry": true
   },
   "resources/js/Pages/Auth/Login.vue": {
-    "file": "assets/Login-VB1TA0M3.js",
+    "file": "assets/Login-LB-gZ58D.js",
     "name": "Login",
     "src": "resources/js/Pages/Auth/Login.vue",
     "isDynamicEntry": true,
@@ -32,25 +32,25 @@
     ]
   },
   "resources/js/Pages/CashFlows/Index.vue": {
-    "file": "assets/Index-B-Ak4EXq.js",
+    "file": "assets/Index-CP2NFdxy.js",
     "name": "Index",
     "src": "resources/js/Pages/CashFlows/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/Customers/Index.vue": {
-    "file": "assets/Index-CMQqMWf4.js",
+    "file": "assets/Index-1CN0KDCw.js",
     "name": "Index",
     "src": "resources/js/Pages/Customers/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js",
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -58,7 +58,7 @@
     ]
   },
   "resources/js/Pages/Damages/Create.vue": {
-    "file": "assets/Create-Blhp03hx.js",
+    "file": "assets/Create-xF4Jag7B.js",
     "name": "Create",
     "src": "resources/js/Pages/Damages/Create.vue",
     "isDynamicEntry": true,
@@ -67,89 +67,89 @@
     ]
   },
   "resources/js/Pages/Damages/Index.vue": {
-    "file": "assets/Index-Z2zyLoE5.js",
+    "file": "assets/Index-Bybe1XD4.js",
     "name": "Index",
     "src": "resources/js/Pages/Damages/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/Dashboard/Index.vue": {
-    "file": "assets/Index-B3njFgZn.js",
+    "file": "assets/Index-ClG2BQFP.js",
     "name": "Index",
     "src": "resources/js/Pages/Dashboard/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/Employees/Attendance.vue": {
-    "file": "assets/Attendance-zO_kzNQ7.js",
+    "file": "assets/Attendance-CtCAkt7f.js",
     "name": "Attendance",
     "src": "resources/js/Pages/Employees/Attendance.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/Employees/AttendanceDevices.vue": {
-    "file": "assets/AttendanceDevices-CA22URas.js",
+    "file": "assets/AttendanceDevices-B48xR-kE.js",
     "name": "AttendanceDevices",
     "src": "resources/js/Pages/Employees/AttendanceDevices.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "resources/js/Pages/Employees/Partials/SetupSidebar.vue"
     ]
   },
   "resources/js/Pages/Employees/AttendanceSettings.vue": {
-    "file": "assets/AttendanceSettings-DkVXcQ1R.js",
+    "file": "assets/AttendanceSettings-Bfl32Z4F.js",
     "name": "AttendanceSettings",
     "src": "resources/js/Pages/Employees/AttendanceSettings.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "resources/js/Pages/Employees/Partials/SetupSidebar.vue"
     ]
   },
   "resources/js/Pages/Employees/AttendanceShiftList.vue": {
-    "file": "assets/AttendanceShiftList-ChXRWIW8.js",
+    "file": "assets/AttendanceShiftList-Bg8mV3mE.js",
     "name": "AttendanceShiftList",
     "src": "resources/js/Pages/Employees/AttendanceShiftList.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "resources/js/Pages/Employees/Partials/SetupSidebar.vue"
     ]
   },
   "resources/js/Pages/Employees/HolidayManagement.vue": {
-    "file": "assets/HolidayManagement-Dk_Z1xCG.js",
+    "file": "assets/HolidayManagement-CXCbdvnF.js",
     "name": "HolidayManagement",
     "src": "resources/js/Pages/Employees/HolidayManagement.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "resources/js/Pages/Employees/Partials/SetupSidebar.vue"
     ]
   },
   "resources/js/Pages/Employees/Index.vue": {
-    "file": "assets/Index-Dqe1sAEy.js",
+    "file": "assets/Index-Dj-g4T2B.js",
     "name": "Index",
     "src": "resources/js/Pages/Employees/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js",
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -157,7 +157,7 @@
     ]
   },
   "resources/js/Pages/Employees/Partials/SetupSidebar.vue": {
-    "file": "assets/SetupSidebar-CmsDLGDs.js",
+    "file": "assets/SetupSidebar-CcR3Rj-E.js",
     "name": "SetupSidebar",
     "src": "resources/js/Pages/Employees/Partials/SetupSidebar.vue",
     "isDynamicEntry": true,
@@ -166,72 +166,72 @@
     ]
   },
   "resources/js/Pages/Employees/PayrollSettings.vue": {
-    "file": "assets/PayrollSettings-DCFyvSB8.js",
+    "file": "assets/PayrollSettings-DZHBuAL_.js",
     "name": "PayrollSettings",
     "src": "resources/js/Pages/Employees/PayrollSettings.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "resources/js/Pages/Employees/Partials/SetupSidebar.vue"
     ]
   },
   "resources/js/Pages/Employees/Paysheets.vue": {
-    "file": "assets/Paysheets-5JflY3Si.js",
+    "file": "assets/Paysheets-BKIVpOq2.js",
     "name": "Paysheets",
     "src": "resources/js/Pages/Employees/Paysheets.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/Employees/Schedules.vue": {
-    "file": "assets/Schedules-JMwjTPDl.js",
+    "file": "assets/Schedules-CGErOrwe.js",
     "name": "Schedules",
     "src": "resources/js/Pages/Employees/Schedules.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/Employees/Settings.vue": {
-    "file": "assets/Settings-CL4tUyIy.js",
+    "file": "assets/Settings-epFLfugn.js",
     "name": "Settings",
     "src": "resources/js/Pages/Employees/Settings.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "resources/js/Pages/Employees/Partials/SetupSidebar.vue"
     ]
   },
   "resources/js/Pages/Employees/WorkdaySettings.vue": {
-    "file": "assets/WorkdaySettings-BmtsgGOE.js",
+    "file": "assets/WorkdaySettings-BdRRFelT.js",
     "name": "WorkdaySettings",
     "src": "resources/js/Pages/Employees/WorkdaySettings.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "resources/js/Pages/Employees/Partials/SetupSidebar.vue"
     ]
   },
   "resources/js/Pages/Invoices/Index.vue": {
-    "file": "assets/Index-BBxGvt4J.js",
+    "file": "assets/Index-BgWbJ9Kj.js",
     "name": "Index",
     "src": "resources/js/Pages/Invoices/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/Orders/Create.vue": {
-    "file": "assets/Create-DowfAgBh.js",
+    "file": "assets/Create-DrFE_DnW.js",
     "name": "Create",
     "src": "resources/js/Pages/Orders/Create.vue",
     "isDynamicEntry": true,
@@ -244,18 +244,18 @@
     ]
   },
   "resources/js/Pages/Orders/Index.vue": {
-    "file": "assets/Index-CbleBlIf.js",
+    "file": "assets/Index-D_5FasjV.js",
     "name": "Index",
     "src": "resources/js/Pages/Orders/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/POS/Index.vue": {
-    "file": "assets/Index-DbWwzl3e.js",
+    "file": "assets/Index-BShOzHXr.js",
     "name": "Index",
     "src": "resources/js/Pages/POS/Index.vue",
     "isDynamicEntry": true,
@@ -268,13 +268,13 @@
     ]
   },
   "resources/js/Pages/PriceSettings/Index.vue": {
-    "file": "assets/Index-BRzgz7QJ.js",
+    "file": "assets/Index-KfLWNYgh.js",
     "name": "Index",
     "src": "resources/js/Pages/PriceSettings/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -282,27 +282,27 @@
     ]
   },
   "resources/js/Pages/Products/Create.vue": {
-    "file": "assets/Create-DKtPttJH.js",
+    "file": "assets/Create-DStzkxer.js",
     "name": "Create",
     "src": "resources/js/Pages/Products/Create.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/Products/Edit.vue": {
-    "file": "assets/Edit-CR_NlCng.js",
+    "file": "assets/Edit-DoHkw4Kh.js",
     "name": "Edit",
     "src": "resources/js/Pages/Products/Edit.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/PurchaseOrders/Create.vue": {
-    "file": "assets/Create-C6Og30xY.js",
+    "file": "assets/Create-D8ckWtKj.js",
     "name": "Create",
     "src": "resources/js/Pages/PurchaseOrders/Create.vue",
     "isDynamicEntry": true,
@@ -311,18 +311,18 @@
     ]
   },
   "resources/js/Pages/PurchaseOrders/Index.vue": {
-    "file": "assets/Index-CIJxSsA9.js",
+    "file": "assets/Index-BJD6Sqpf.js",
     "name": "Index",
     "src": "resources/js/Pages/PurchaseOrders/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/Purchases/Create.vue": {
-    "file": "assets/Create-1Rs6kJyV.js",
+    "file": "assets/Create-DaW7Am4r.js",
     "name": "Create",
     "src": "resources/js/Pages/Purchases/Create.vue",
     "isDynamicEntry": true,
@@ -331,65 +331,65 @@
     ]
   },
   "resources/js/Pages/Purchases/Index.vue": {
-    "file": "assets/Index-Ckz4J-km.js",
+    "file": "assets/Index-B9CNK-U4.js",
     "name": "Index",
     "src": "resources/js/Pages/Purchases/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/Repairs/Index.vue": {
-    "file": "assets/Index-NZDmnxKQ.js",
+    "file": "assets/Index-aOeM7A3d.js",
     "name": "Index",
     "src": "resources/js/Pages/Repairs/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/Repairs/Performance.vue": {
-    "file": "assets/Performance-CWDAuORn.js",
+    "file": "assets/Performance-DVq9Eq84.js",
     "name": "Performance",
     "src": "resources/js/Pages/Repairs/Performance.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/Repairs/Show.vue": {
-    "file": "assets/Show-9IyPzIaK.js",
+    "file": "assets/Show-DLLij3lY.js",
     "name": "Show",
     "src": "resources/js/Pages/Repairs/Show.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js"
+      "_AppLayout-CCzXtK5o.js"
     ]
   },
   "resources/js/Pages/Returns/Index.vue": {
-    "file": "assets/Index-XaxkkMPw.js",
+    "file": "assets/Index-CqgMxmR6.js",
     "name": "Index",
     "src": "resources/js/Pages/Returns/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/Settings/Index.vue": {
-    "file": "assets/Index-BG4wQGS4.js",
+    "file": "assets/Index-BKys5z8s.js",
     "name": "Index",
     "src": "resources/js/Pages/Settings/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
+      "_AppLayout-CCzXtK5o.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -397,7 +397,7 @@
     ]
   },
   "resources/js/Pages/StockTakes/Create.vue": {
-    "file": "assets/Create-DyD32kC1.js",
+    "file": "assets/Create-B5QrHUpu.js",
     "name": "Create",
     "src": "resources/js/Pages/StockTakes/Create.vue",
     "isDynamicEntry": true,
@@ -406,18 +406,18 @@
     ]
   },
   "resources/js/Pages/StockTakes/Index.vue": {
-    "file": "assets/Index-z_k7mFW7.js",
+    "file": "assets/Index-B2bJv8ep.js",
     "name": "Index",
     "src": "resources/js/Pages/StockTakes/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/Pages/StockTransfers/Create.vue": {
-    "file": "assets/Create-CYvM25vA.js",
+    "file": "assets/Create-Wd8n_bz4.js",
     "name": "Create",
     "src": "resources/js/Pages/StockTransfers/Create.vue",
     "isDynamicEntry": true,
@@ -429,14 +429,14 @@
     ]
   },
   "resources/js/Pages/StockTransfers/Index.vue": {
-    "file": "assets/Index-8_TspsQI.js",
+    "file": "assets/Index-CuLNfoUY.js",
     "name": "Index",
     "src": "resources/js/Pages/StockTransfers/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js",
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -444,14 +444,14 @@
     ]
   },
   "resources/js/Pages/Suppliers/Index.vue": {
-    "file": "assets/Index-ju-qdljC.js",
+    "file": "assets/Index-DIMHAFEH.js",
     "name": "Index",
     "src": "resources/js/Pages/Suppliers/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js",
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -459,14 +459,14 @@
     ]
   },
   "resources/js/Pages/Warranties/Index.vue": {
-    "file": "assets/Index-CUQ2cULj.js",
+    "file": "assets/Index-DRgrXn9L.js",
     "name": "Index",
     "src": "resources/js/Pages/Warranties/Index.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js",
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -474,18 +474,18 @@
     ]
   },
   "resources/js/Pages/Welcome.vue": {
-    "file": "assets/Welcome-DTDKuBT5.js",
+    "file": "assets/Welcome-BZZxXQEL.js",
     "name": "Welcome",
     "src": "resources/js/Pages/Welcome.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppLayout-BlrdmehT.js",
-      "_ExcelButtons-8nq_jib5.js"
+      "_AppLayout-CCzXtK5o.js",
+      "_ExcelButtons-DjNS2tI_.js"
     ]
   },
   "resources/js/app.js": {
-    "file": "assets/app-CExvtfYg.js",
+    "file": "assets/app-DjR_IWNL.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,
