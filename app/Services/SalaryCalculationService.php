@@ -114,6 +114,30 @@ class SalaryCalculationService
             }
         }
 
+        // ===== GIẢM TRỪ ĐI MUỘN THEO MỨC (PayrollSetting) =====
+        $latePenaltyAmount = 0;
+        $latePenaltyDetails = [];
+        $payrollSetting = \App\Models\PayrollSetting::first();
+        if ($payrollSetting && $payrollSetting->late_penalty_enabled) {
+            $tiers = collect($payrollSetting->late_penalty_tiers ?? [])->sortByDesc('minutes')->values();
+            if ($tiers->isNotEmpty()) {
+                foreach ($records->where('late_minutes', '>', 0) as $rec) {
+                    $mins = (int) $rec->late_minutes;
+                    $matched = $tiers->first(fn($t) => $mins >= (int) $t['minutes']);
+                    if ($matched) {
+                        $latePenaltyAmount += (float) $matched['amount'];
+                        $latePenaltyDetails[] = [
+                            'date' => $rec->work_date,
+                            'late_minutes' => $mins,
+                            'tier_minutes' => (int) $matched['minutes'],
+                            'penalty' => (float) $matched['amount'],
+                        ];
+                    }
+                }
+            }
+        }
+        $deductionAmount += $latePenaltyAmount;
+
         $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount - $deductionAmount;
 
         // ===== ĐÁNH GIÁ NĂNG SUẤT SỬA CHỮA (chỉ khi module bật) =====
@@ -146,11 +170,13 @@ class SalaryCalculationService
             'personal_revenue' => $personalRevenue,
             'repair_performance' => $repairPerformance,
             'total' => round(max(0, $totalSalary)),
+            'late_penalty' => round($latePenaltyAmount),
             'details' => [
                 'bonus' => $bonusDetails,
                 'commission' => $commissionDetails,
                 'allowances' => $allowanceDetails,
                 'deductions' => $deductionDetails,
+                'late_penalty' => $latePenaltyDetails,
             ],
         ];
     }

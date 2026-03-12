@@ -33,6 +33,8 @@ class PayrollSettingController extends Controller
                     'auto_generate_enabled' => false,
                     'late_half_day_enabled' => false,
                     'late_half_day_threshold' => 120,
+                    'late_penalty_enabled' => false,
+                    'late_penalty_tiers' => [],
                     'status' => 'active',
                 ],
             ]);
@@ -56,6 +58,10 @@ class PayrollSettingController extends Controller
             'auto_generate_enabled' => ['nullable', 'boolean'],
             'late_half_day_enabled' => ['nullable', 'boolean'],
             'late_half_day_threshold' => ['nullable', 'integer', 'min:1', 'max:480'],
+            'late_penalty_enabled' => ['nullable', 'boolean'],
+            'late_penalty_tiers' => ['nullable', 'array'],
+            'late_penalty_tiers.*.minutes' => ['required', 'integer', 'min:1', 'max:480'],
+            'late_penalty_tiers.*.amount' => ['required', 'numeric', 'min:0'],
             'status' => ['nullable', 'in:active,inactive'],
         ]);
 
@@ -74,6 +80,8 @@ class PayrollSettingController extends Controller
                 'auto_generate_enabled' => $data['auto_generate_enabled'] ?? false,
                 'late_half_day_enabled' => $data['late_half_day_enabled'] ?? false,
                 'late_half_day_threshold' => $data['late_half_day_threshold'] ?? 120,
+                'late_penalty_enabled' => $data['late_penalty_enabled'] ?? false,
+                'late_penalty_tiers' => $data['late_penalty_tiers'] ?? [],
                 'status' => $data['status'] ?? 'active',
                 'updated_by' => $userId,
             ]

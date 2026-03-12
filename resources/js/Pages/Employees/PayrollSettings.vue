@@ -43,6 +43,8 @@ const payroll = reactive({
     auto_generate_enabled: Boolean(props.payrollSetting?.auto_generate_enabled ?? false),
     late_half_day_enabled: Boolean(props.payrollSetting?.late_half_day_enabled ?? false),
     late_half_day_threshold: Number(props.payrollSetting?.late_half_day_threshold ?? 120),
+    late_penalty_enabled: Boolean(props.payrollSetting?.late_penalty_enabled ?? false),
+    late_penalty_tiers: (props.payrollSetting?.late_penalty_tiers ?? []).map(t => ({ minutes: Number(t.minutes), amount: Number(t.amount) })),
 });
 
 const paydayForm = reactive({
@@ -227,6 +229,13 @@ const payrollRows = computed(() => [
         field: 'late_half_day_enabled',
     },
     {
+        key: 'late-penalty',
+        title: 'Trừ tiền khi đi muộn',
+        description: 'Đi muộn X phút sẽ bị trừ Y đồng vào lương. Áp dụng cho tất cả nhân viên, tính theo từng ngày.',
+        kind: 'toggle',
+        field: 'late_penalty_enabled',
+    },
+    {
         key: 'templates',
         title: 'Thiết lập Mẫu lương',
         description: 'Thưởng, Hoa hồng, Phụ cấp, Giảm trừ',
@@ -249,6 +258,8 @@ const persistPayrollSettings = async () => {
             auto_generate_enabled: Boolean(payroll.auto_generate_enabled),
             late_half_day_enabled: Boolean(payroll.late_half_day_enabled),
             late_half_day_threshold: Number(payroll.late_half_day_threshold || 120),
+            late_penalty_enabled: Boolean(payroll.late_penalty_enabled),
+            late_penalty_tiers: (payroll.late_penalty_tiers || []).filter(t => t.minutes > 0).map(t => ({ minutes: Number(t.minutes), amount: Number(t.amount || 0) })),
             status: 'active',
         });
         setToast('Đã lưu thiết lập tính lương.');
@@ -433,6 +444,19 @@ const removeTemplate = async (template) => {
                                 @change="persistPayrollSettings()"
                             />
                             <span class="text-sm text-gray-500">phút ({{ Math.round(payroll.late_half_day_threshold / 60 * 10) / 10 }}h)</span>
+                        </div>
+                        <!-- Bảng mức trừ tiền đi muộn -->
+                        <div v-if="row.key === 'late-penalty' && payroll.late_penalty_enabled" class="px-5 pb-4 space-y-3">
+                            <div class="text-sm text-gray-600">Thiết lập mức trừ tiền theo số phút đi muộn (mỗi ngày):</div>
+                            <div v-for="(tier, ti) in payroll.late_penalty_tiers" :key="ti" class="flex items-center gap-2">
+                                <span class="text-sm text-gray-500">Đi muộn ≥</span>
+                                <input v-model.number="tier.minutes" type="number" min="1" max="480" class="w-20 border border-gray-300 rounded-md px-2 py-1 text-center text-sm focus:border-blue-500 outline-none" @change="persistPayrollSettings()" />
+                                <span class="text-sm text-gray-500">phút → trừ</span>
+                                <input v-model.number="tier.amount" type="number" min="0" step="1000" class="w-28 border border-gray-300 rounded-md px-2 py-1 text-right text-sm focus:border-blue-500 outline-none" @change="persistPayrollSettings()" />
+                                <span class="text-sm text-gray-500">đ</span>
+                                <button type="button" class="text-red-400 hover:text-red-600 text-sm px-1" @click="payroll.late_penalty_tiers.splice(ti, 1); persistPayrollSettings()">✕</button>
+                            </div>
+                            <button type="button" class="text-sm text-blue-600 hover:text-blue-700" @click="payroll.late_penalty_tiers.push({ minutes: 0, amount: 0 })">+ Thêm mức</button>
                         </div>
                     </div>
                 </div>

@@ -20,6 +20,8 @@ class PayrollSetting extends Model
         'auto_generate_enabled',
         'late_half_day_enabled',
         'late_half_day_threshold',
+        'late_penalty_enabled',
+        'late_penalty_tiers',
         'status',
         'created_by',
         'updated_by',
@@ -35,6 +37,8 @@ class PayrollSetting extends Model
         'auto_generate_enabled' => 'boolean',
         'late_half_day_enabled' => 'boolean',
         'late_half_day_threshold' => 'integer',
+        'late_penalty_enabled' => 'boolean',
+        'late_penalty_tiers' => 'array',
         'created_by' => 'integer',
         'updated_by' => 'integer',
     ];
