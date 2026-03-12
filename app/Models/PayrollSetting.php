@@ -18,6 +18,8 @@ class PayrollSetting extends Model
         'pay_day',
         'default_recalculate_timekeeping',
         'auto_generate_enabled',
+        'late_half_day_enabled',
+        'late_half_day_threshold',
         'status',
         'created_by',
         'updated_by',
@@ -31,6 +33,8 @@ class PayrollSetting extends Model
         'pay_day' => 'integer',
         'default_recalculate_timekeeping' => 'boolean',
         'auto_generate_enabled' => 'boolean',
+        'late_half_day_enabled' => 'boolean',
+        'late_half_day_threshold' => 'integer',
         'created_by' => 'integer',
         'updated_by' => 'integer',
     ];

@@ -41,6 +41,8 @@ const payroll = reactive({
     pay_day: Number(props.payrollSetting?.pay_day ?? 5),
     default_recalculate_timekeeping: Boolean(props.payrollSetting?.default_recalculate_timekeeping ?? true),
     auto_generate_enabled: Boolean(props.payrollSetting?.auto_generate_enabled ?? false),
+    late_half_day_enabled: Boolean(props.payrollSetting?.late_half_day_enabled ?? false),
+    late_half_day_threshold: Number(props.payrollSetting?.late_half_day_threshold ?? 120),
 });
 
 const paydayForm = reactive({
@@ -218,6 +220,13 @@ const payrollRows = computed(() => [
         field: 'auto_generate_enabled',
     },
     {
+        key: 'late-half-day',
+        title: 'Đi muộn quá giờ tính nửa ngày công',
+        description: `Khi nhân viên đi muộn quá ${payroll.late_half_day_threshold} phút (${Math.round(payroll.late_half_day_threshold / 60 * 10) / 10}h) sẽ chỉ tính 0.5 ngày công.`,
+        kind: 'toggle',
+        field: 'late_half_day_enabled',
+    },
+    {
         key: 'templates',
         title: 'Thiết lập Mẫu lương',
         description: 'Thưởng, Hoa hồng, Phụ cấp, Giảm trừ',
@@ -238,6 +247,8 @@ const persistPayrollSettings = async () => {
             pay_day: Number(payroll.pay_day || 1),
             default_recalculate_timekeeping: Boolean(payroll.default_recalculate_timekeeping),
             auto_generate_enabled: Boolean(payroll.auto_generate_enabled),
+            late_half_day_enabled: Boolean(payroll.late_half_day_enabled),
+            late_half_day_threshold: Number(payroll.late_half_day_threshold || 120),
             status: 'active',
         });
         setToast('Đã lưu thiết lập tính lương.');
@@ -399,17 +410,30 @@ const removeTemplate = async (template) => {
                 </div>
 
                 <div class="divide-y divide-gray-100">
-                    <div v-for="row in payrollRows" :key="row.key" class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                            <div class="font-medium text-gray-900">{{ row.title }}</div>
-                            <div class="mt-1 text-sm text-gray-500">{{ row.description }}</div>
+                    <div v-for="row in payrollRows" :key="row.key">
+                        <div class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <div class="font-medium text-gray-900">{{ row.title }}</div>
+                                <div class="mt-1 text-sm text-gray-500">{{ row.description }}</div>
+                            </div>
+                            <button v-if="row.kind === 'action'" type="button" class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50" @click="row.action()">
+                                Chi tiết
+                            </button>
+                            <button v-else type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="payroll[row.field] ? 'bg-blue-600' : 'bg-gray-300'" :disabled="saving" @click="togglePayrollField(row.field)">
+                                <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="payroll[row.field] ? 'translate-x-6' : 'translate-x-1'" />
+                            </button>
                         </div>
-                        <button v-if="row.kind === 'action'" type="button" class="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50" @click="row.action()">
-                            Chi tiết
-                        </button>
-                        <button v-else type="button" class="inline-flex h-7 w-12 items-center rounded-full transition" :class="payroll[row.field] ? 'bg-blue-600' : 'bg-gray-300'" :disabled="saving" @click="togglePayrollField(row.field)">
-                            <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="payroll[row.field] ? 'translate-x-6' : 'translate-x-1'" />
-                        </button>
+                        <!-- Ngưỡng thời gian đi muộn -->
+                        <div v-if="row.key === 'late-half-day' && payroll.late_half_day_enabled" class="px-5 pb-4 flex items-center gap-3">
+                            <label class="text-sm text-gray-600 whitespace-nowrap">Ngưỡng đi muộn:</label>
+                            <input
+                                v-model.number="payroll.late_half_day_threshold"
+                                type="number" min="1" max="480"
+                                class="w-20 border border-gray-300 rounded-md px-2 py-1 text-center text-sm focus:border-blue-500 outline-none"
+                                @change="persistPayrollSettings()"
+                            />
+                            <span class="text-sm text-gray-500">phút ({{ Math.round(payroll.late_half_day_threshold / 60 * 10) / 10 }}h)</span>
+                        </div>
                     </div>
                 </div>
             </section>

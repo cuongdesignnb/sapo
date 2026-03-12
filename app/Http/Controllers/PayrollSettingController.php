@@ -31,6 +31,8 @@ class PayrollSettingController extends Controller
                     'pay_day' => 5,
                     'default_recalculate_timekeeping' => true,
                     'auto_generate_enabled' => false,
+                    'late_half_day_enabled' => false,
+                    'late_half_day_threshold' => 120,
                     'status' => 'active',
                 ],
             ]);
@@ -52,6 +54,8 @@ class PayrollSettingController extends Controller
             'pay_day' => ['nullable', 'integer', 'min:1', 'max:31'],
             'default_recalculate_timekeeping' => ['nullable', 'boolean'],
             'auto_generate_enabled' => ['nullable', 'boolean'],
+            'late_half_day_enabled' => ['nullable', 'boolean'],
+            'late_half_day_threshold' => ['nullable', 'integer', 'min:1', 'max:480'],
             'status' => ['nullable', 'in:active,inactive'],
         ]);
 
@@ -68,6 +72,8 @@ class PayrollSettingController extends Controller
                 'pay_day' => $data['pay_day'] ?? 5,
                 'default_recalculate_timekeeping' => $data['default_recalculate_timekeeping'] ?? true,
                 'auto_generate_enabled' => $data['auto_generate_enabled'] ?? false,
+                'late_half_day_enabled' => $data['late_half_day_enabled'] ?? false,
+                'late_half_day_threshold' => $data['late_half_day_threshold'] ?? 120,
                 'status' => $data['status'] ?? 'active',
                 'updated_by' => $userId,
             ]

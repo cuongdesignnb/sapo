@@ -33,6 +33,9 @@ class TimekeepingService
         $halfWorkEnabled = (bool) Setting::get('attendance_half_work_enabled', true);
         $halfWorkMaxMinutes = (int) Setting::get('attendance_half_work_max_minutes', 480);
         $halfWorkMinMinutes = (int) Setting::get('attendance_half_work_min_minutes', 0);
+        $payrollSetting = \App\Models\PayrollSetting::first();
+        $lateHalfDayEnabled = (bool) ($payrollSetting->late_half_day_enabled ?? false);
+        $lateHalfDayThreshold = (int) ($payrollSetting->late_half_day_threshold ?? 120);
         $overtimeBeforeEnabled = (bool) Setting::get('attendance_overtime_before_enabled', true);
         $overtimeBeforeMinutes = (int) Setting::get('attendance_overtime_before_minutes', 0);
 
@@ -182,6 +185,11 @@ class TimekeepingService
                         $workUnits = 0.5;
                     }
                 }
+            }
+
+            // Đi muộn quá ngưỡng → tính nửa ngày công
+            if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $workUnits > 0.5) {
+                $workUnits = 0.5;
             }
 
             $attributes = [
