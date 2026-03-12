@@ -752,6 +752,23 @@ const openModal = (schedule) => {
     otMinutes.value = form.ot_minutes % 60
     isModalOpen.value = true
 }
+
+// Auto-fill shift start time when Vào checkbox is checked
+watch(hasCheckIn, (checked) => {
+    if (checked && !form.check_in_time && activeSchedule.value?.shift) {
+        const st = activeSchedule.value.shift.start_time
+        form.check_in_time = st ? st.substring(0, 5) : '08:30'
+    }
+})
+
+// Auto-fill shift end time when Ra checkbox is checked
+watch(hasCheckOut, (checked) => {
+    if (checked && !form.check_out_time && activeSchedule.value?.shift) {
+        const et = activeSchedule.value.shift.end_time
+        form.check_out_time = et ? et.substring(0, 5) : '17:30'
+    }
+})
+
 const closeModal = () => { isModalOpen.value = false; activeSchedule.value = null }
 
 const deleteRecord = async () => {
