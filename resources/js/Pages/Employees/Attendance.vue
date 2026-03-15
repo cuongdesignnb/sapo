@@ -532,7 +532,7 @@ const employeeGroups = computed(() => {
         if (!map[empId].days[s.work_date]) map[empId].days[s.work_date] = []
         map[empId].days[s.work_date].push(s)
     })
-    return Object.values(map).sort((a,b) => a.employee.name.localeCompare(b.employee.name))
+    return Object.values(map).sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
 })
 
 const filteredEmployeeGroups = computed(() => {
@@ -572,9 +572,9 @@ const monthlyShiftEmployeeRows = computed(() => {
                 const q = searchQuery.value.toLowerCase()
                 return e.employee?.name?.toLowerCase().includes(q) || e.employee?.code?.toLowerCase().includes(q)
             })
-            .sort((a, b) => a.employee.name.localeCompare(b.employee.name))
+            .sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
     })).filter(g => g.employees.length > 0)
-    .sort((a, b) => a.shiftName.localeCompare(b.shiftName))
+    .sort((a, b) => (a.shiftName || '').localeCompare(b.shiftName || ''))
 })
 
 const monthlyEmployeeRows = computed(() => {
@@ -584,7 +584,7 @@ const monthlyEmployeeRows = computed(() => {
         if (!map[empId]) { map[empId] = { employee: s.employee, schedules: {} } }
         map[empId].schedules[s.work_date] = s
     })
-    let rows = Object.values(map).sort((a, b) => a.employee.name.localeCompare(b.employee.name))
+    let rows = Object.values(map).sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
     if (searchQuery.value.trim()) {
         const q = searchQuery.value.toLowerCase()
         rows = rows.filter(e => e.employee?.name?.toLowerCase().includes(q) || e.employee?.code?.toLowerCase().includes(q))
@@ -800,9 +800,10 @@ const saveRecord = async () => {
         await fetchSchedules()
         closeModal()
     } catch(e) {
-        const msg = e.response?.data?.message || e.response?.data?.errors
-            ? Object.values(e.response.data.errors).flat().join('\n')
-            : 'Không thể lưu thay đổi!'
+        const errData = e.response?.data
+        const msg = (errData?.errors ? Object.values(errData.errors).flat().join('\n') : null)
+            || errData?.message
+            || 'Không thể lưu thay đổi!'
         alert(msg)
         console.error(e)
     }
