@@ -20,10 +20,11 @@ return new class extends Migration {
 
         // 3) Rename FK column trong task_parts: device_repair_id → task_id
         if (Schema::hasColumn('task_parts', 'device_repair_id')) {
-            // Drop old FK — tên có thể khác nhau
-            DB::statement("SET @fk_name = (SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'device_repair_id' AND REFERENCED_TABLE_NAME IS NOT NULL LIMIT 1)");
-            DB::statement("SET @sql = IF(@fk_name IS NOT NULL, CONCAT('ALTER TABLE task_parts DROP FOREIGN KEY ', @fk_name), 'SELECT 1')");
-            DB::statement("PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;");
+            // Find and drop old FK by querying information_schema
+            $fk = DB::selectOne("SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'task_parts' AND COLUMN_NAME = 'device_repair_id' AND REFERENCED_TABLE_NAME IS NOT NULL LIMIT 1");
+            if ($fk) {
+                DB::statement("ALTER TABLE task_parts DROP FOREIGN KEY `{$fk->CONSTRAINT_NAME}`");
+            }
 
             Schema::table('task_parts', function (Blueprint $table) {
                 $table->renameColumn('device_repair_id', 'task_id');
