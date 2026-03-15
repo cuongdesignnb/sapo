@@ -203,14 +203,22 @@ class Role extends Model
                     ],
                 ],
             ],
-            'Sửa chữa' => [
-                'repairs.view'          => 'Xem phiếu sửa chữa',
-                'repairs.create'        => 'Tạo phiếu sửa chữa',
-                'repairs.assign'        => 'Giao nhân viên sửa chữa',
-                'repairs.complete'      => 'Hoàn thành sửa chữa',
-                'repairs.manage_parts'  => 'Quản lý linh kiện sửa chữa',
-                'repair_performance.view' => 'Xem báo cáo năng suất sửa chữa',
-                'repair_tiers.manage'   => 'Quản lý bậc năng suất',
+            'Công việc & Sửa chữa' => [
+                'tasks.view'             => 'Xem công việc',
+                'tasks.create'           => 'Tạo công việc',
+                'tasks.assign'           => 'Giao nhân viên',
+                'tasks.complete'         => 'Hoàn thành công việc',
+                'tasks.manage_parts'     => 'Quản lý linh kiện',
+                'tasks.manage_categories' => 'Quản lý danh mục công việc',
+                'tasks.performance'      => 'Xem báo cáo năng suất',
+                // Backward compat aliases
+                'repairs.view'           => 'Xem phiếu sửa chữa (cũ)',
+                'repairs.create'         => 'Tạo phiếu sửa chữa (cũ)',
+                'repairs.assign'         => 'Giao nhân viên sửa chữa (cũ)',
+                'repairs.complete'       => 'Hoàn thành sửa chữa (cũ)',
+                'repairs.manage_parts'   => 'Quản lý linh kiện sửa chữa (cũ)',
+                'repair_performance.view' => 'Xem báo cáo năng suất sửa chữa (cũ)',
+                'repair_tiers.manage'    => 'Quản lý bậc năng suất',
             ],
             'Thiết lập' => [
                 '_sub' => [

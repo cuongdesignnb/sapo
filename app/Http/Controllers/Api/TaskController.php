@@ -1,0 +1,348 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Task;
+use App\Models\TaskCategory;
+use App\Models\Employee;
+use App\Models\SerialImei;
+use App\Models\Product;
+use App\Services\TaskService;
+use Illuminate\Http\Request;
+use Carbon\Carbon;
+
+class TaskController extends Controller
+{
+    protected TaskService $service;
+
+    public function __construct(TaskService $service)
+    {
+        $this->service = $service;
+    }
+
+    /**
+     * Danh sách công việc.
+     */
+    public function index(Request $request)
+    {
+        $query = Task::with([
+            'product:id,name,sku',
+            'serialImei:id,serial_number,repair_status',
+            'assignedEmployee:id,name',
+            'branch:id,name',
+            'category:id,name,color',
+            'assignments.employee:id,name',
+        ])->latest();
+
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+        if ($request->filled('priority')) {
+            $query->where('priority', $request->priority);
+        }
+        if ($request->filled('category_id')) {
+            $query->where('category_id', $request->category_id);
+        }
+        if ($request->filled('assigned_employee_id')) {
+            $query->where(function ($q) use ($request) {
+                $q->where('assigned_employee_id', $request->assigned_employee_id)
+                    ->orWhereHas('assignments', fn($q2) => $q2->where('employee_id', $request->assigned_employee_id));
+            });
+        }
+        if ($request->filled('branch_id')) {
+            $query->where('branch_id', $request->branch_id);
+        }
+        if ($request->filled('from') && $request->filled('to')) {
+            $query->whereBetween('created_at', [$request->from, $request->to . ' 23:59:59']);
+        }
+        if ($request->filled('search')) {
+            $s = $request->search;
+            $query->where(function ($q) use ($s) {
+                $q->where('code', 'like', "%{$s}%")
+                    ->orWhere('title', 'like', "%{$s}%")
+                    ->orWhereHas('serialImei', fn($q2) => $q2->where('serial_number', 'like', "%{$s}%"))
+                    ->orWhereHas('product', fn($q2) => $q2->where('name', 'like', "%{$s}%"));
+            });
+        }
+
+        return response()->json($query->paginate($request->per_page ?? 20));
+    }
+
+    /**
+     * Chi tiết công việc.
+     */
+    public function show(Task $task)
+    {
+        $task->load([
+            'product:id,name,sku,image',
+            'serialImei:id,serial_number,repair_status,cost_price',
+            'assignedEmployee:id,name',
+            'branch:id,name',
+            'category:id,name,color,type',
+            'parts.product:id,name,sku',
+            'creator:id,name',
+            'assignments.employee:id,name',
+            'assignments.assigner:id,name',
+            'comments.user:id,name',
+        ]);
+
+        return response()->json($task);
+    }
+
+    /**
+     * Tạo công việc.
+     */
+    public function store(Request $request)
+    {
+        $type = $request->input('type', Task::TYPE_GENERAL);
+
+        if ($type === Task::TYPE_REPAIR) {
+            $data = $request->validate([
+                'serial_imei_id'    => 'required|exists:serial_imeis,id',
+                'issue_description' => 'nullable|string|max:2000',
+                'title'             => 'nullable|string|max:255',
+                'category_id'       => 'nullable|exists:task_categories,id',
+                'priority'          => 'nullable|in:low,normal,high,urgent',
+                'branch_id'         => 'nullable|exists:branches,id',
+                'notes'             => 'nullable|string|max:2000',
+                'deadline'          => 'nullable|date',
+            ]);
+        } else {
+            $data = $request->validate([
+                'title'             => 'required|string|max:255',
+                'description'       => 'nullable|string|max:2000',
+                'category_id'       => 'nullable|exists:task_categories,id',
+                'priority'          => 'nullable|in:low,normal,high,urgent',
+                'branch_id'         => 'nullable|exists:branches,id',
+                'notes'             => 'nullable|string|max:2000',
+                'deadline'          => 'nullable|date',
+            ]);
+        }
+
+        $data['type'] = $type;
+        $data['created_by'] = $request->user()?->id;
+
+        $task = $this->service->createTask($data);
+        $task->load(['product:id,name,sku', 'serialImei:id,serial_number', 'category:id,name,color']);
+
+        return response()->json($task, 201);
+    }
+
+    /**
+     * Cập nhật công việc.
+     */
+    public function update(Request $request, Task $task)
+    {
+        $data = $request->validate([
+            'title'             => 'nullable|string|max:255',
+            'issue_description' => 'nullable|string|max:2000',
+            'category_id'       => 'nullable|exists:task_categories,id',
+            'priority'          => 'nullable|in:low,normal,high,urgent',
+            'branch_id'         => 'nullable|exists:branches,id',
+            'notes'             => 'nullable|string|max:2000',
+            'deadline'          => 'nullable|date',
+        ]);
+
+        $task->update($data);
+
+        return response()->json($task->fresh('category:id,name,color'));
+    }
+
+    /**
+     * Xóa / hủy công việc.
+     */
+    public function destroy(Task $task)
+    {
+        if ($task->status === Task::STATUS_COMPLETED) {
+            return response()->json(['message' => 'Không thể xóa công việc đã hoàn thành.'], 422);
+        }
+
+        $this->service->changeStatus($task, Task::STATUS_CANCELLED, request()->user()?->id);
+
+        return response()->json(['message' => 'Đã hủy công việc.']);
+    }
+
+    /**
+     * Giao nhân viên (multi-assign).
+     */
+    public function assign(Request $request, Task $task)
+    {
+        $data = $request->validate([
+            'employee_ids'   => 'required|array|min:1',
+            'employee_ids.*' => 'exists:employees,id',
+        ]);
+
+        $result = $this->service->assignEmployees(
+            $task,
+            $data['employee_ids'],
+            $request->user()?->id
+        );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Xuất linh kiện (repair only).
+     */
+    public function addPart(Request $request, Task $task)
+    {
+        if (!$task->is_repair) {
+            return response()->json(['message' => 'Chỉ phiếu sửa chữa mới có linh kiện.'], 422);
+        }
+
+        $data = $request->validate([
+            'product_id' => 'required|exists:products,id',
+            'quantity'   => 'required|integer|min:1',
+            'notes'      => 'nullable|string|max:500',
+        ]);
+
+        try {
+            $part = $this->service->addPart(
+                $task,
+                $data['product_id'],
+                $data['quantity'],
+                $data['notes'] ?? null,
+                $request->user()?->id
+            );
+            $part->load('product:id,name,sku');
+            $task->refresh();
+
+            return response()->json([
+                'part' => $part,
+                'task' => $task->only(['parts_cost', 'total_cost']),
+            ], 201);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Gỡ linh kiện.
+     */
+    public function removePart(Task $task, int $partId)
+    {
+        $part = $task->parts()->findOrFail($partId);
+        $this->service->removePart($part);
+        $task->refresh();
+
+        return response()->json([
+            'message' => 'Đã gỡ linh kiện.',
+            'task'    => $task->only(['parts_cost', 'total_cost']),
+        ]);
+    }
+
+    /**
+     * Hoàn thành công việc.
+     */
+    public function complete(Request $request, Task $task)
+    {
+        $result = $this->service->markCompleted($task, $request->user()?->id);
+        return response()->json($result);
+    }
+
+    /**
+     * Cập nhật tiến độ.
+     */
+    public function updateProgress(Request $request, Task $task)
+    {
+        $data = $request->validate([
+            'progress' => 'required|integer|min:0|max:100',
+        ]);
+
+        $result = $this->service->updateProgress($task, $data['progress']);
+        return response()->json($result);
+    }
+
+    /**
+     * Thêm bình luận.
+     */
+    public function addComment(Request $request, Task $task)
+    {
+        $data = $request->validate([
+            'body' => 'required|string|max:2000',
+        ]);
+
+        $comment = $this->service->addComment($task, $request->user()->id, $data['body']);
+        return response()->json($comment, 201);
+    }
+
+    /**
+     * Danh sách danh mục.
+     */
+    public function categories(Request $request)
+    {
+        $query = TaskCategory::where('is_active', true);
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+        return response()->json($query->orderBy('name')->get());
+    }
+
+    /**
+     * Báo cáo năng suất.
+     */
+    public function performance(Request $request)
+    {
+        $request->validate([
+            'month' => 'required|integer|between:1,12',
+            'year'  => 'required|integer|min:2020',
+        ]);
+
+        $from = Carbon::create($request->year, $request->month, 1)->startOfMonth();
+        $to = $from->copy()->endOfMonth();
+
+        $employees = Employee::whereHas('tasks', function ($q) use ($from, $to) {
+            $q->whereBetween('assigned_at', [$from, $to]);
+        })->get();
+
+        $results = [];
+        foreach ($employees as $emp) {
+            $perf = $this->service->getEmployeePerformance($emp->id, $from->toDateString(), $to->toDateString());
+            $results[] = array_merge(['employee_id' => $emp->id, 'employee_name' => $emp->name], $perf);
+        }
+
+        return response()->json($results);
+    }
+
+    /**
+     * Tìm serial/IMEI.
+     */
+    public function searchSerials(Request $request)
+    {
+        $q = $request->get('q', '');
+        if (mb_strlen($q) < 2) {
+            return response()->json([]);
+        }
+
+        $serials = SerialImei::with('product:id,name,sku,cost_price')
+            ->where('serial_number', 'like', '%' . $q . '%')
+            ->limit(10)
+            ->get(['id', 'serial_number', 'product_id', 'status', 'cost_price', 'repair_status']);
+
+        return response()->json($serials);
+    }
+
+    /**
+     * Tìm sản phẩm (linh kiện).
+     */
+    public function searchProducts(Request $request)
+    {
+        $q = $request->get('q', '');
+        if (mb_strlen($q) < 2) {
+            return response()->json([]);
+        }
+
+        $products = Product::where(function ($query) use ($q) {
+                $query->where('name', 'like', '%' . $q . '%')
+                      ->orWhere('sku', 'like', '%' . $q . '%');
+            })
+            ->limit(10)
+            ->get(['id', 'name', 'sku', 'cost_price', 'stock_quantity']);
+
+        return response()->json($products);
+    }
+}

@@ -19,6 +19,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\CashFlowController;
 use App\Http\Controllers\OrderReturnController;
 use App\Http\Controllers\SettingController;
+use App\Http\Controllers\TaskPageController;
 
 // Auth routes (guest)
 Route::middleware('guest')->group(function () {
@@ -335,10 +336,16 @@ Route::get('/warranties/export', [App\Http\Controllers\WarrantyController::class
 Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class, 'export'])->name('paysheets.export');
 
 // =======================
-// 🔧 DEVICE REPAIR
+// � TASKS (unified: repairs + general)
 // =======================
-Route::get('/repairs', [App\Http\Controllers\DeviceRepairPageController::class, 'index'])->middleware('permission:repairs.view')->name('repairs.index');
-Route::get('/repairs/performance', [App\Http\Controllers\DeviceRepairPageController::class, 'performance'])->middleware('permission:repairs.view')->name('repairs.performance');
-Route::get('/repairs/{id}', [App\Http\Controllers\DeviceRepairPageController::class, 'show'])->middleware('permission:repairs.view')->name('repairs.show');
+Route::get('/tasks', [TaskPageController::class, 'index'])->middleware('permission:tasks.view')->name('tasks.index');
+Route::get('/tasks/performance', [TaskPageController::class, 'performance'])->middleware('permission:tasks.view')->name('tasks.performance');
+Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->middleware('permission:tasks.view')->name('tasks.show');
+Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->name('my-tasks');
+
+// Backward compat: redirect old repair routes
+Route::get('/repairs', fn () => redirect('/tasks?type=repair'));
+Route::get('/repairs/performance', fn () => redirect('/tasks/performance'));
+Route::get('/repairs/{id}', fn ($id) => redirect("/tasks/$id"));
 
 }); // end auth middleware

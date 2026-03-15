@@ -50,6 +50,16 @@ class User extends Authenticatable
         return $this->belongsToMany(Branch::class, 'user_branch_access');
     }
 
+    public function employee()
+    {
+        return $this->hasOne(Employee::class);
+    }
+
+    public function taskComments()
+    {
+        return $this->hasMany(TaskComment::class);
+    }
+
     // ── Permission helpers ──
 
     /**

@@ -117,6 +117,17 @@ const submit = () => {
     }
 };
 
+const deleteEmployee = () => {
+    if (!form.id) return;
+    if (!confirm('Bạn có chắc muốn xóa nhân viên này? Thao tác này không thể hoàn tác.')) return;
+    router.delete(`/employees/${form.id}`, {
+        onSuccess: () => {
+            showCreateModal.value = false;
+            form.reset();
+        },
+    });
+};
+
 // ─── Salary tab state ───
 const salaryForm = reactive({
     salary_type: 'fixed',
@@ -1041,7 +1052,7 @@ const bonusCalcLabel = (calc) => {
                                         <div>
                                             <label class="block text-xs font-semibold text-gray-500 mb-1">Hình thức</label>
                                             <select v-model="salaryForm.bonus_calculation" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 outline-none">
-                                                <option value="total_revenue">Theo mức doanh thu tổng</option>
+                                                <option value="total_revenue">{{ salaryForm.bonus_type === 'personal_gross_profit' ? 'Theo mức lợi nhuận tổng' : 'Theo mức doanh thu tổng' }}</option>
                                                 <option value="progressive">Lũy tiến</option>
                                             </select>
                                         </div>
@@ -1051,7 +1062,7 @@ const bonusCalcLabel = (calc) => {
                                         <table class="w-full text-sm">
                                             <thead class="bg-gray-100">
                                                 <tr>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Doanh thu từ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">{{ salaryForm.bonus_type === 'personal_gross_profit' ? 'Lợi nhuận từ' : 'Doanh thu từ' }}</th>
                                                     <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Thưởng</th>
                                                     <th class="text-center px-2 py-1.5 font-semibold text-gray-600">%</th>
                                                     <th class="w-8"></th>
@@ -1219,8 +1230,17 @@ const bonusCalcLabel = (calc) => {
 
                 <!-- Modal Footer Actions -->
                 <div
-                    class="px-6 py-4 border-t border-gray-200 bg-white flex justify-end gap-3 rounded-b shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10"
+                    class="px-6 py-4 border-t border-gray-200 bg-white flex items-center rounded-b shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10"
                 >
+                    <button
+                        v-if="form.id"
+                        @click="deleteEmployee"
+                        class="px-4 py-2 border border-red-300 rounded text-red-600 bg-white font-bold hover:bg-red-50 transition shadow-sm text-sm"
+                    >
+                        Xóa nhân viên
+                    </button>
+                    <div class="flex-1"></div>
+                    <div class="flex gap-3">
                     <button
                         @click="showCreateModal = false"
                         class="px-6 py-2 border border-gray-300 rounded text-gray-700 bg-white font-bold hover:bg-gray-50 transition shadow-sm"
@@ -1243,6 +1263,7 @@ const bonusCalcLabel = (calc) => {
                     >
                         Lưu
                     </button>
+                    </div>
                 </div>
             </div>
         </div>

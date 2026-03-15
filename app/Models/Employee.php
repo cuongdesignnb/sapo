@@ -10,6 +10,7 @@ class Employee extends Model
     use HasFactory;
 
     protected $fillable = [
+        'user_id',
         'code',
         'attendance_code',
         'name',
@@ -64,9 +65,27 @@ class Employee extends Model
         return $this->hasOne(EmployeeSalarySetting::class);
     }
 
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function tasks()
+    {
+        return $this->hasMany(Task::class, 'assigned_employee_id');
+    }
+
+    public function taskAssignments()
+    {
+        return $this->hasMany(TaskAssignment::class);
+    }
+
+    /**
+     * @deprecated Use tasks() instead
+     */
     public function deviceRepairs()
     {
-        return $this->hasMany(DeviceRepair::class, 'assigned_employee_id');
+        return $this->tasks();
     }
 
     /**
