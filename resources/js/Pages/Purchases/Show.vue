@@ -11,9 +11,11 @@ const activeTab = ref('info');
 const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
 const formatDate = (val) => val ? new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
-const totalQty = props.purchase.items?.reduce((s, i) => s + (i.quantity || 0), 0) || 0;
+const totalQty = props.purchase.items?.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 0;
 const totalProducts = props.purchase.items?.length || 0;
-const needToPay = (props.purchase.total_amount || 0) - (props.purchase.discount || 0);
+const calcTotal = props.purchase.items?.reduce((s, i) => s + (Number(i.subtotal) || 0), 0) || 0;
+const totalAmount = calcTotal || Number(props.purchase.total_amount) || 0;
+const needToPay = totalAmount - (Number(props.purchase.discount) || 0);
 
 const printPurchase = () => {
     window.open(`/purchases/${props.purchase.id}/print`, '_blank', 'width=400,height=600');
@@ -60,7 +62,9 @@ const cancelPurchase = () => {
             <!-- Content -->
             <div class="flex-1 overflow-auto">
                 <!-- Info Tab -->
-                <div v-if="activeTab === 'info'" class="p-5">
+                <div v-if="activeTab === 'info'" class="flex h-full">
+                <!-- Left: Main content -->
+                <div class="flex-1 p-5 overflow-auto">
                     <!-- Header Info Grid -->
                     <div class="grid grid-cols-3 gap-x-8 gap-y-3 mb-6 text-[13px]">
                         <div class="flex gap-2">
@@ -166,7 +170,7 @@ const cancelPurchase = () => {
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-500">Tổng tiền hàng:</span>
-                                <span class="font-medium">{{ formatCurrency(purchase.total_amount) }}</span>
+                                <span class="font-medium">{{ formatCurrency(totalAmount) }}</span>
                             </div>
                             <div class="flex justify-between items-center">
                                 <span class="text-gray-500 flex items-center gap-1">
@@ -183,8 +187,57 @@ const cancelPurchase = () => {
                                 <span class="text-gray-700 font-medium">Tiền đã trả NCC:</span>
                                 <span class="font-bold text-blue-600">{{ formatCurrency(purchase.paid_amount) }}</span>
                             </div>
+                            <div class="flex justify-between" v-if="purchase.debt_amount > 0">
+                                <span class="text-gray-500">Ship hàng:</span>
+                                <span class="font-medium">0</span>
+                            </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Right: Supplier Info Sidebar -->
+                <div class="w-[300px] flex-shrink-0 border-l border-gray-200 bg-gray-50/30 p-4 overflow-auto">
+                    <div v-if="purchase.supplier" class="space-y-4">
+                        <!-- Supplier Name -->
+                        <div>
+                            <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-1">Nhà cung cấp</div>
+                            <div class="font-bold text-blue-600 text-[14px]">{{ purchase.supplier.name }}</div>
+                        </div>
+                        <!-- Supplier Code -->
+                        <div v-if="purchase.supplier.code">
+                            <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-1">Mã NCC</div>
+                            <div class="text-[13px] text-gray-700">{{ purchase.supplier.code }}</div>
+                        </div>
+                        <!-- Phone -->
+                        <div v-if="purchase.supplier.phone">
+                            <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-1">Điện thoại</div>
+                            <div class="text-[13px] text-gray-700">{{ purchase.supplier.phone }}</div>
+                        </div>
+                        <!-- Email -->
+                        <div v-if="purchase.supplier.email">
+                            <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-1">Email</div>
+                            <div class="text-[13px] text-gray-700">{{ purchase.supplier.email }}</div>
+                        </div>
+                        <!-- Address -->
+                        <div v-if="purchase.supplier.address">
+                            <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-1">Địa chỉ</div>
+                            <div class="text-[13px] text-gray-700">{{ purchase.supplier.address }}</div>
+                        </div>
+                        <!-- Debt -->
+                        <div class="border-t border-gray-200 pt-3 mt-3">
+                            <div class="text-[11px] text-gray-400 uppercase tracking-wider mb-2">Công nợ NCC</div>
+                            <div class="flex justify-between text-[13px]">
+                                <span class="text-gray-500">Nợ hiện tại:</span>
+                                <span class="font-bold" :class="purchase.supplier.supplier_debt_amount > 0 ? 'text-red-600' : 'text-green-600'">{{ formatCurrency(purchase.supplier.supplier_debt_amount || 0) }}</span>
+                            </div>
+                            <div class="flex justify-between text-[13px] mt-1">
+                                <span class="text-gray-500">Tổng mua:</span>
+                                <span class="font-medium text-gray-700">{{ formatCurrency(purchase.supplier.total_bought || 0) }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="text-gray-400 text-[13px] italic">Không có thông tin nhà cung cấp</div>
+                </div>
                 </div>
 
                 <!-- Payments Tab -->

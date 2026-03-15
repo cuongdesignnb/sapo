@@ -205,6 +205,8 @@ const copyTemplateToForm = (tpl) => {
     }));
     salaryForm.custom_deductions = (tpl.deductions || []).map(d => ({
         name: d.name || '',
+        deduction_category: d.deduction_category || '',
+        calculation_type: d.calculation_type || 'fixed_per_month',
         amount: d.amount || 0,
     }));
     if (salaryForm.has_bonus) expandedSections.bonus = true;
@@ -249,7 +251,7 @@ const loadSalarySetting = async (employeeId) => {
                 salaryForm.custom_bonuses = (setting.custom_bonuses || []).map(b => ({ ...b }));
                 salaryForm.custom_commissions = (setting.custom_commissions || []).map(c => ({ ...c }));
                 salaryForm.custom_allowances = (setting.custom_allowances || []).map(a => ({ ...a }));
-                salaryForm.custom_deductions = (setting.custom_deductions || []).map(d => ({ ...d }));
+                salaryForm.custom_deductions = (setting.custom_deductions || []).map(d => ({ name: d.name || '', deduction_category: d.deduction_category || '', calculation_type: d.calculation_type || 'fixed_per_month', amount: d.amount || 0 }));
                 if (salaryForm.has_bonus) expandedSections.bonus = true;
                 if (salaryForm.has_commission) expandedSections.commission = true;
                 if (salaryForm.has_allowance) expandedSections.allowance = true;
@@ -1169,26 +1171,45 @@ const bonusCalcLabel = (calc) => {
                                     <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedSections.deduction }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                 </div>
                                 <div v-show="expandedSections.deduction && salaryForm.has_deduction" class="border-t px-4 py-3 bg-gray-50 text-sm space-y-3">
-                                    <p class="text-xs text-gray-400 italic">Khoản giảm trừ cố định hàng tháng (BHXH, thuế...). Phạt đi muộn/về sớm được tính tự động theo Cài đặt bảng lương.</p>
+                                    <p class="text-xs text-gray-400 italic">Khoản giảm trừ cố định hàng tháng (BHXH, thuế...) hoặc giảm trừ theo chấm công (đi muộn, về sớm).</p>
                                     <div v-if="salaryForm.custom_deductions.length" class="border rounded overflow-hidden">
                                         <table class="w-full text-sm">
                                             <thead class="bg-gray-100">
                                                 <tr>
                                                     <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên giảm trừ</th>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Số tiền/tháng</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Loại giảm trừ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Loại tính</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[130px]">Số tiền</th>
                                                     <th class="w-8"></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(d, i) in salaryForm.custom_deductions" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model="d.name" type="text" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" placeholder="BHXH, Thuế TNCN..." /></td>
+                                                    <td class="px-2 py-1"><input v-model="d.name" type="text" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" placeholder="Đi muộn, BHXH..." /></td>
+                                                    <td class="px-2 py-1">
+                                                        <select v-model="d.deduction_category" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none text-[13px]">
+                                                            <option value="">Cố định</option>
+                                                            <option value="late">Đi muộn</option>
+                                                            <option value="early_leave">Về sớm</option>
+                                                            <option value="absence">Vắng mặt</option>
+                                                            <option value="violation">Vi phạm nội quy</option>
+                                                        </select>
+                                                    </td>
+                                                    <td class="px-2 py-1">
+                                                        <select v-model="d.calculation_type" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none text-[13px]"
+                                                            :disabled="!d.deduction_category || d.deduction_category === 'absence' || d.deduction_category === 'violation'">
+                                                            <option value="fixed_per_month">Cố định/tháng</option>
+                                                            <option v-if="d.deduction_category === 'late' || d.deduction_category === 'early_leave'" value="per_minute">Theo số phút</option>
+                                                            <option v-if="d.deduction_category === 'late' || d.deduction_category === 'early_leave'" value="per_occurrence">Theo số lần</option>
+                                                        </select>
+                                                    </td>
                                                     <td class="px-2 py-1"><input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_deductions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
                                             </tbody>
                                         </table>
                                     </div>
-                                    <button type="button" @click="salaryForm.custom_deductions.push({ name: '', amount: 0 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm giảm trừ</button>
+                                    <button type="button" @click="salaryForm.custom_deductions.push({ name: '', deduction_category: '', calculation_type: 'fixed_per_month', amount: 0 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm giảm trừ</button>
                                 </div>
                             </div>
                             </template>
