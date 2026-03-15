@@ -38,6 +38,7 @@ const createForm = ref({
     branch_id: null,
     deadline: "",
     notes: "",
+    employee_ids: [],
 });
 const createError = ref("");
 const serialSearch = ref("");
@@ -103,7 +104,7 @@ const openCreateModal = (type = "general") => {
     createError.value = "";
     selectedSerial.value = null;
     serialSearch.value = "";
-    createForm.value = { title: "", description: "", serial_imei_id: null, issue_description: "", category_id: null, priority: "normal", branch_id: null, deadline: "", notes: "" };
+    createForm.value = { title: "", description: "", serial_imei_id: null, issue_description: "", category_id: null, priority: "normal", branch_id: null, deadline: "", notes: "", employee_ids: [] };
     showCreateModal.value = true;
 };
 
@@ -125,7 +126,15 @@ const submitCreate = async () => {
         payload.deadline = createForm.value.deadline || null;
         payload.notes = createForm.value.notes;
 
-        await axios.post("/api/tasks", payload);
+        const res = await axios.post("/api/tasks", payload);
+        // Auto-assign employees if selected
+        if (createForm.value.employee_ids.length > 0 && res.data?.id) {
+            try {
+                await axios.post(`/api/tasks/${res.data.id}/assign`, { employee_ids: createForm.value.employee_ids });
+            } catch (assignErr) {
+                console.warn('Auto-assign failed:', assignErr);
+            }
+        }
         showCreateModal.value = false;
         loadTasks();
     } catch (e) {
@@ -536,6 +545,19 @@ loadTasks();
                     <div>
                         <label class="block font-semibold text-sm mb-1">Ghi chú</label>
                         <input v-model="createForm.notes" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+
+                    <!-- Giao nhân viên -->
+                    <div>
+                        <label class="block font-semibold text-sm mb-1">Giao cho nhân viên</label>
+                        <div class="border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
+                            <label v-for="e in employees" :key="e.id" class="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                                <input type="checkbox" :value="e.id" v-model="createForm.employee_ids" class="accent-blue-600" />
+                                <span class="text-sm">{{ e.name }}</span>
+                            </label>
+                            <div v-if="!employees?.length" class="px-3 py-3 text-sm text-gray-400">Chưa có nhân viên</div>
+                        </div>
+                        <p v-if="createForm.employee_ids.length" class="text-xs text-blue-600 mt-1">Đã chọn {{ createForm.employee_ids.length }} nhân viên</p>
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 px-6 py-4 border-t sticky bottom-0 bg-white">
