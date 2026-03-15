@@ -256,31 +256,37 @@ class PurchaseController extends Controller
     {
         $purchase->load(['supplier', 'items.product', 'user']);
 
-        // Load serials for each item & fix quantity for serial products
+        // Fix quantity for serial products (old bug: saved as 0)
         $recalcTotal = false;
         foreach ($purchase->items as $item) {
             if ($item->product && $item->product->has_serial) {
-                $item->serials = SerialImei::where('purchase_id', $purchase->id)
-                    ->where('product_id', $item->product_id)
-                    ->get(['id', 'serial_number', 'status']);
-                // Fix quantity if it was saved as 0 (old bug)
-                if ($item->quantity == 0 && $item->serials->count() > 0) {
-                    $item->quantity = $item->serials->count();
+                $serialCount = SerialImei::where('purchase_id', $purchase->id)
+                    ->where('product_id', $item->product_id)->count();
+                if ($item->quantity == 0 && $serialCount > 0) {
+                    $item->quantity = $serialCount;
                     $item->subtotal = ($item->quantity * $item->price) - $item->discount;
                     $item->save();
                     $recalcTotal = true;
                 }
-            } else {
-                $item->serials = [];
             }
         }
-        // Recalculate purchase total if any item was fixed
         if ($recalcTotal) {
             $purchase->total_amount = $purchase->items->sum('subtotal');
             $purchase->debt_amount = ($purchase->total_amount - $purchase->discount) - $purchase->paid_amount;
             $purchase->save();
             $purchase->refresh();
             $purchase->load(['supplier', 'items.product', 'user']);
+        }
+
+        // Load serials for each item (after save, to avoid dirty attributes)
+        foreach ($purchase->items as $item) {
+            if ($item->product && $item->product->has_serial) {
+                $item->setRelation('serials', SerialImei::where('purchase_id', $purchase->id)
+                    ->where('product_id', $item->product_id)
+                    ->get(['id', 'serial_number', 'status']));
+            } else {
+                $item->setRelation('serials', collect([]));
+            }
         }
 
         // Load payment history (cash flows)
