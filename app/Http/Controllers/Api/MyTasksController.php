@@ -43,7 +43,17 @@ class MyTasksController extends Controller
             $query->where('priority', $request->priority);
         }
 
-        return response()->json($query->paginate($request->per_page ?? 20));
+        $paginated = $query->paginate($request->per_page ?? 20);
+
+        // Map assignment_status + assignment_id vào mỗi task cho frontend
+        $paginated->getCollection()->transform(function ($task) use ($employee) {
+            $myAssignment = $task->assignments->first();
+            $task->assignment_id = $myAssignment?->id;
+            $task->assignment_status = $myAssignment?->status;
+            return $task;
+        });
+
+        return response()->json($paginated);
     }
 
     /**

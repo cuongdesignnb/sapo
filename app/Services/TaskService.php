@@ -128,10 +128,7 @@ class TaskService
                 ]);
             }
 
-            // Auto-move to in_progress if still pending
-            if ($task->status === Task::STATUS_PENDING) {
-                $this->changeStatus($task, Task::STATUS_IN_PROGRESS, $assignedBy);
-            }
+            // KHÔNG tự động chuyển in_progress — phải đợi nhân viên accept
 
             return $task->fresh('assignments.employee');
         });
@@ -147,6 +144,36 @@ class TaskService
             'responded_at' => now(),
             'notes'        => $notes,
         ]);
+
+        $task = $assignment->task;
+
+        if ($status === TaskAssignment::STATUS_ACCEPTED) {
+            // Khi có ít nhất 1 người nhận → chuyển task sang in_progress
+            if ($task->status === Task::STATUS_PENDING) {
+                $this->changeStatus($task, Task::STATUS_IN_PROGRESS, null);
+            }
+        } elseif ($status === TaskAssignment::STATUS_REJECTED) {
+            // Nếu TẤT CẢ đều reject → thông báo, giữ pending
+            $allResponded = $task->assignments()
+                ->where('status', '!=', TaskAssignment::STATUS_PENDING)
+                ->count();
+            $totalAssigned = $task->assignments()->count();
+            $anyAccepted = $task->assignments()
+                ->where('status', TaskAssignment::STATUS_ACCEPTED)
+                ->exists();
+
+            if ($allResponded === $totalAssigned && !$anyAccepted) {
+                // Tất cả đã từ chối — task vẫn pending, cần giao lại
+                // Gửi notification cho người tạo
+                if ($task->created_by) {
+                    $creator = User::find($task->created_by);
+                    $creator?->notify(new TaskStatusChangedNotification(
+                        $task, $task->status, $task->status,
+                        'Tất cả nhân viên đã từ chối — cần giao lại'
+                    ));
+                }
+            }
+        }
 
         return $assignment;
     }
