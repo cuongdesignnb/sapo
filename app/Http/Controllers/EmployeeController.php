@@ -369,7 +369,10 @@ class EmployeeController extends Controller
 
         $employee = Employee::create($validated);
 
-        return redirect()->back()->with('success', 'Thêm nhân viên thành công.');
+        return redirect()->back()->with([
+            'success' => 'Thêm nhân viên thành công.',
+            'new_employee_id' => $employee->id,
+        ]);
     }
 
     public function update(Request $request, Employee $employee)

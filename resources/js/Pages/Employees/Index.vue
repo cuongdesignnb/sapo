@@ -108,6 +108,8 @@ const submit = () => {
     } else {
         form.post("/employees", {
             onSuccess: (page) => {
+                const newId = page.props?.flash?.new_employee_id;
+                if (newId) saveSalarySetting(newId);
                 showCreateModal.value = false;
                 form.reset();
             },
@@ -146,6 +148,12 @@ const expandedSections = reactive({
     allowance: false,
     deduction: false,
 });
+
+// Auto-expand when checkbox is checked, collapse when unchecked
+watch(() => salaryForm.has_bonus, v => { expandedSections.bonus = v });
+watch(() => salaryForm.has_commission, v => { expandedSections.commission = v });
+watch(() => salaryForm.has_allowance, v => { expandedSections.allowance = v });
+watch(() => salaryForm.has_deduction, v => { expandedSections.deduction = v });
 
 const resetSalaryForm = () => {
     salaryForm.salary_type = 'fixed';

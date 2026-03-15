@@ -46,6 +46,7 @@ class HandleInertiaRequests extends Middleware
                 'success' => fn() => $request->session()->get('success'),
                 'error' => fn() => $request->session()->get('error'),
                 'print_id' => fn() => $request->session()->get('print_id'),
+                'new_employee_id' => fn() => $request->session()->get('new_employee_id'),
             ],
             'app_settings' => function () {
                 try {
