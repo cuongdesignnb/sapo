@@ -228,7 +228,7 @@ const copyTemplateToForm = (tpl) => {
 
 const loadCommissionTables = async () => {
     try {
-        const res = await axios.get('/api/commission-tables');
+        const res = await axios.get('/api/salary-templates/commission-tables');
         commissionTables.value = res.data?.data || res.data || [];
     } catch (e) { commissionTables.value = []; }
 };

@@ -125,6 +125,35 @@ const toggleStatus = (customer) => {
     );
 };
 
+// Edit customer modal
+const showEditModal = ref(false);
+const editingCustomer = ref(null);
+const editForm = useForm({
+    name: "", code: "", phone: "", phone2: "", birthday: "", gender: "none",
+    email: "", facebook: "", address: "", city: "", district: "", ward: "",
+    customer_group: "", note: "", type: "individual",
+    invoice_name: "", tax_code: "", invoice_address: "",
+});
+
+const openEditModal = (customer) => {
+    editingCustomer.value = customer;
+    Object.keys(editForm.data()).forEach(key => {
+        editForm[key] = customer[key] ?? (key === 'gender' ? 'none' : key === 'type' ? 'individual' : '');
+    });
+    showEditModal.value = true;
+};
+
+const submitEdit = () => {
+    editForm.put(`/customers/${editingCustomer.value.id}`, {
+        preserveScroll: true,
+        onSuccess: () => {
+            showEditModal.value = false;
+            editingCustomer.value = null;
+            editForm.reset();
+        },
+    });
+};
+
 // Debt payment / adjustment modals
 const debtModal = ref({
     show: false,
@@ -1695,6 +1724,7 @@ const submit = () => {
                                                 class="flex gap-2 text-[13.5px]"
                                             >
                                                 <button
+                                                    @click.stop="openEditModal(customer)"
                                                     class="text-white bg-blue-600 rounded px-4 py-1.5 font-bold hover:bg-blue-700 flex items-center gap-1 shadow-sm"
                                                 >
                                                     <svg
@@ -2288,6 +2318,112 @@ const submit = () => {
                     >
                         Lưu
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- EDIT Customer Modal -->
+        <div v-if="showEditModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 pt-10 pb-10">
+            <div class="bg-white rounded shadow-xl w-full max-w-3xl max-h-full overflow-hidden flex flex-col relative text-[13px] text-gray-800">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+                    <h2 class="text-xl font-bold text-gray-800">Chỉnh sửa khách hàng</h2>
+                    <button @click="showEditModal = false" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto px-6 py-6 custom-scrollbar text-[13.5px]">
+                    <form @submit.prevent="submitEdit" class="space-y-5">
+                        <div class="grid grid-cols-2 gap-x-6 gap-y-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Tên khách hàng <span class="text-red-500">*</span></label>
+                                <input v-model="editForm.name" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Mã khách hàng</label>
+                                <input v-model="editForm.code" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-gray-50" disabled />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Điện thoại</label>
+                                <input v-model="editForm.phone" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Điện thoại 2</label>
+                                <input v-model="editForm.phone2" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
+                                <input v-model="editForm.email" type="email" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Facebook</label>
+                                <input v-model="editForm.facebook" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Sinh nhật</label>
+                                <input v-model="editForm.birthday" type="date" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Giới tính</label>
+                                <select v-model="editForm.gender" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                                    <option value="none">Chưa có</option>
+                                    <option value="male">Nam</option>
+                                    <option value="female">Nữ</option>
+                                </select>
+                            </div>
+                            <div class="col-span-2">
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Địa chỉ</label>
+                                <input v-model="editForm.address" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Tỉnh/Thành phố</label>
+                                <input v-model="editForm.city" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Quận/Huyện</label>
+                                <input v-model="editForm.district" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Phường/Xã</label>
+                                <input v-model="editForm.ward" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm khách hàng</label>
+                                <input v-model="editForm.customer_group" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
+                            <textarea v-model="editForm.note" rows="2" class="w-full border border-gray-300 rounded px-3 py-2 text-sm"></textarea>
+                        </div>
+                        <details class="border border-gray-200 rounded p-3">
+                            <summary class="font-semibold text-sm text-gray-700 cursor-pointer">Thông tin xuất hóa đơn</summary>
+                            <div class="grid grid-cols-2 gap-x-6 gap-y-4 mt-3">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Loại</label>
+                                    <select v-model="editForm.type" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                                        <option value="individual">Cá nhân</option>
+                                        <option value="company">Công ty</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Mã số thuế</label>
+                                    <input v-model="editForm.tax_code" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Tên xuất hóa đơn</label>
+                                    <input v-model="editForm.invoice_name" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Địa chỉ hóa đơn</label>
+                                    <input v-model="editForm.invoice_address" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                                </div>
+                            </div>
+                        </details>
+                    </form>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 bg-white flex justify-end gap-3 rounded-b">
+                    <button @click="showEditModal = false" class="px-6 py-2 border border-gray-300 rounded text-gray-700 bg-white font-bold hover:bg-gray-50 transition shadow-sm">Bỏ qua</button>
+                    <button @click="submitEdit" :disabled="editForm.processing" class="px-8 py-2 border border-transparent rounded text-white bg-blue-600 font-bold hover:bg-blue-700 transition shadow-sm" :class="{ 'opacity-50 cursor-not-allowed': editForm.processing }">Lưu</button>
                 </div>
             </div>
         </div>
