@@ -10,12 +10,18 @@ class Purchase extends Model
         'code',
         'supplier_id',
         'user_id',
+        'employee_id',
         'total_amount',
         'discount',
         'paid_amount',
         'debt_amount',
         'note',
         'status',
+        'purchase_date',
+    ];
+
+    protected $casts = [
+        'purchase_date' => 'datetime',
     ];
 
     public function items()
@@ -31,5 +37,10 @@ class Purchase extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function employee()
+    {
+        return $this->belongsTo(Employee::class);
     }
 }

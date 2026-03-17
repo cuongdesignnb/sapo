@@ -15,6 +15,12 @@ class PurchaseItem extends Model
         'price',
         'discount',
         'subtotal',
+        'warranty_months',
+        'warranty_expires_at',
+    ];
+
+    protected $casts = [
+        'warranty_expires_at' => 'date',
     ];
 
     public function purchase()

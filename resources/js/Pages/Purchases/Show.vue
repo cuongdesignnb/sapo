@@ -83,7 +83,7 @@ const cancelPurchase = () => {
                         </div>
                         <div class="flex gap-2">
                             <span class="text-gray-500 w-28 flex-shrink-0">Thời gian:</span>
-                            <span class="text-gray-700">{{ formatDate(purchase.created_at) }}</span>
+                            <span class="text-gray-700">{{ formatDate(purchase.purchase_date || purchase.created_at) }}</span>
                         </div>
                         <div class="flex gap-2">
                             <span class="text-gray-500 w-32 flex-shrink-0">Trạng thái:</span>
@@ -97,7 +97,7 @@ const cancelPurchase = () => {
                         </div>
                         <div class="flex gap-2">
                             <span class="text-gray-500 w-32 flex-shrink-0">Người nhập:</span>
-                            <span class="text-gray-700">{{ purchase.user?.name || 'N/A' }}</span>
+                            <span class="text-gray-700">{{ purchase.employee?.name || purchase.user?.name || 'N/A' }}</span>
                         </div>
                         <div class="flex gap-2">
                             <span class="text-gray-500 w-28 flex-shrink-0">Người tạo:</span>
@@ -116,6 +116,7 @@ const cancelPurchase = () => {
                                     <th class="px-3 py-2 font-medium text-gray-600 text-right w-28">Đơn giá</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-right w-24">Giảm giá</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-right w-28">Giá nhập</th>
+                                    <th class="px-3 py-2 font-medium text-gray-600 text-center w-24">BH (tháng)</th>
                                     <th class="px-3 py-2 font-medium text-gray-600 text-right w-28 pr-4">Thành tiền</th>
                                 </tr>
                             </thead>
@@ -127,7 +128,7 @@ const cancelPurchase = () => {
                                     <th class="px-3 py-1.5">
                                         <input type="text" placeholder="Tìm tên hàng" class="w-full text-[12px] text-gray-400 outline-none font-normal" disabled>
                                     </th>
-                                    <th colspan="5"></th>
+                                    <th colspan="6"></th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100">
@@ -139,11 +140,16 @@ const cancelPurchase = () => {
                                         <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
                                         <td class="px-3 py-2 text-right">{{ formatCurrency(item.discount) }}</td>
                                         <td class="px-3 py-2 text-right">{{ formatCurrency(item.price) }}</td>
+                                        <td class="px-3 py-2 text-center">
+                                            <span v-if="item.warranty_months > 0" class="text-orange-600 font-medium">{{ item.warranty_months }}</span>
+                                            <span v-else class="text-gray-400">-</span>
+                                            <div v-if="item.warranty_expires_at" class="text-[10px] text-gray-400">đến {{ new Date(item.warranty_expires_at).toLocaleDateString('vi-VN') }}</div>
+                                        </td>
                                         <td class="px-3 py-2 text-right font-medium pr-4">{{ formatCurrency(item.subtotal) }}</td>
                                     </tr>
                                     <!-- Serial/IMEI -->
                                     <tr v-if="item.serials && item.serials.length > 0">
-                                        <td colspan="7" class="px-6 py-1.5 bg-gray-50/50">
+                                        <td colspan="8" class="px-6 py-1.5 bg-gray-50/50">
                                             <div class="flex flex-wrap gap-1.5">
                                                 <span v-for="serial in item.serials" :key="serial.id"
                                                     class="inline-flex items-center bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-medium px-2 py-0.5 rounded">

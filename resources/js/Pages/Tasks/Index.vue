@@ -44,6 +44,11 @@ const createError = ref("");
 const serialSearch = ref("");
 const serialResults = ref([]);
 const selectedSerial = ref(null);
+const batchMode = ref(false);
+const productSearch = ref("");
+const productResults = ref([]);
+const selectedProduct = ref(null);
+const productSerials = ref([]);
 
 // ── Assign modal ──
 const showAssignModal = ref(false);
@@ -98,12 +103,39 @@ const selectSerial = (serial) => {
     serialResults.value = [];
 };
 
+// ── Product search (for batch repair) ──
+let productTimeout;
+watch(productSearch, (val) => {
+    clearTimeout(productTimeout);
+    if (!val || val.length < 2) { productResults.value = []; return; }
+    productTimeout = setTimeout(async () => {
+        try {
+            const res = await axios.get("/api/tasks/search-products", { params: { q: val } });
+            productResults.value = res.data || [];
+        } catch (e) { productResults.value = []; }
+    }, 300);
+});
+
+const selectProduct = async (product) => {
+    selectedProduct.value = product;
+    productSearch.value = product.sku + ' - ' + product.name;
+    productResults.value = [];
+    try {
+        const res = await axios.get("/api/tasks/product-serials", { params: { product_id: product.id } });
+        productSerials.value = res.data || [];
+    } catch (e) { productSerials.value = []; }
+};
+
 // ── Create ──
 const openCreateModal = (type = "general") => {
     createType.value = type;
     createError.value = "";
     selectedSerial.value = null;
     serialSearch.value = "";
+    batchMode.value = false;
+    selectedProduct.value = null;
+    productSearch.value = "";
+    productSerials.value = [];
     createForm.value = { title: "", description: "", serial_imei_id: null, issue_description: "", category_id: null, priority: "normal", branch_id: null, deadline: "", notes: "", employee_ids: [] };
     showCreateModal.value = true;
 };
@@ -111,6 +143,25 @@ const openCreateModal = (type = "general") => {
 const submitCreate = async () => {
     createError.value = "";
     try {
+        // Batch mode: create multiple repair tasks for all product serials
+        if (createType.value === "repair" && batchMode.value && productSerials.value.length > 0) {
+            const payload = {
+                serial_imei_ids: productSerials.value.map(s => s.id),
+                issue_description: createForm.value.issue_description,
+                title: createForm.value.title,
+                category_id: createForm.value.category_id,
+                priority: createForm.value.priority,
+                branch_id: createForm.value.branch_id,
+                deadline: createForm.value.deadline || null,
+                notes: createForm.value.notes,
+                employee_ids: createForm.value.employee_ids,
+            };
+            await axios.post("/api/tasks/batch-repair", payload);
+            showCreateModal.value = false;
+            loadTasks();
+            return;
+        }
+
         const payload = { type: createType.value };
         if (createType.value === "repair") {
             payload.serial_imei_id = createForm.value.serial_imei_id;
@@ -466,18 +517,54 @@ loadTasks();
 
                     <!-- Serial search (repair) -->
                     <div v-if="createType === 'repair'">
-                        <label class="block font-semibold text-sm mb-1">Serial/IMEI *</label>
-                        <div class="relative">
-                            <input v-model="serialSearch" type="text" placeholder="Nhập serial để tìm..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
-                            <div v-if="serialResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-auto">
-                                <div v-for="s in serialResults" :key="s.id" @click="selectSerial(s)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
-                                    <span>{{ s.serial_number }}</span>
-                                    <span class="text-gray-400">{{ s.product?.name }}</span>
+                        <!-- Toggle: single vs batch -->
+                        <div class="flex items-center gap-3 mb-3">
+                            <label class="flex items-center gap-2 cursor-pointer text-sm">
+                                <input type="radio" :value="false" v-model="batchMode" class="accent-blue-600" />
+                                <span>Từng máy (Serial/IMEI)</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer text-sm">
+                                <input type="radio" :value="true" v-model="batchMode" class="accent-blue-600" />
+                                <span>Theo mã hàng (Batch)</span>
+                            </label>
+                        </div>
+
+                        <!-- Single mode: search serial -->
+                        <div v-if="!batchMode">
+                            <label class="block font-semibold text-sm mb-1">Serial/IMEI *</label>
+                            <div class="relative">
+                                <input v-model="serialSearch" type="text" placeholder="Nhập serial để tìm..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                                <div v-if="serialResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-auto">
+                                    <div v-for="s in serialResults" :key="s.id" @click="selectSerial(s)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
+                                        <span>{{ s.serial_number }}</span>
+                                        <span class="text-gray-400">{{ s.product?.name }}</span>
+                                    </div>
                                 </div>
                             </div>
+                            <div v-if="selectedSerial" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
+                                <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}đ
+                            </div>
                         </div>
-                        <div v-if="selectedSerial" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                            <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}đ
+
+                        <!-- Batch mode: search product -->
+                        <div v-if="batchMode">
+                            <label class="block font-semibold text-sm mb-1">Mã hàng / Tên hàng *</label>
+                            <div class="relative">
+                                <input v-model="productSearch" type="text" placeholder="Nhập mã hàng hoặc tên..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                                <div v-if="productResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-auto">
+                                    <div v-for="p in productResults" :key="p.id" @click="selectProduct(p)" class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between">
+                                        <span>{{ p.sku }} — {{ p.name }}</span>
+                                        <span class="text-gray-400">Tồn: {{ p.stock_quantity }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="selectedProduct" class="mt-2 text-sm bg-blue-50 border border-blue-200 px-3 py-2 rounded">
+                                <div class="font-medium text-blue-800">{{ selectedProduct.sku }} — {{ selectedProduct.name }}</div>
+                                <div class="text-blue-600 mt-1">
+                                    Số serial tồn kho: <strong>{{ productSerials.length }}</strong> máy
+                                </div>
+                                <div v-if="productSerials.length === 0" class="text-orange-600 mt-1 text-xs">Không có serial nào đang tồn kho cho sản phẩm này.</div>
+                            </div>
                         </div>
                     </div>
 
@@ -564,9 +651,9 @@ loadTasks();
                     <button @click="showCreateModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
                     <button
                         @click="submitCreate"
-                        :disabled="createType === 'repair' ? !createForm.serial_imei_id : !createForm.title"
+                        :disabled="createType === 'repair' ? (batchMode ? productSerials.length === 0 : !createForm.serial_imei_id) : !createForm.title"
                         class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
-                    >Tạo</button>
+                    >{{ batchMode && createType === 'repair' ? `Tạo ${productSerials.length} phiếu` : 'Tạo' }}</button>
                 </div>
             </div>
         </div>

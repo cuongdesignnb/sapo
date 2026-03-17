@@ -10,6 +10,8 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
+use App\Models\ProductAttribute;
+use App\Models\ProductVariant;
 
 class ProductController extends Controller
 {
@@ -107,6 +109,7 @@ class ProductController extends Controller
             'brands' => Brand::all(),
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $priceBooks->contains('enable_technician_price', true),
+            'productAttributes' => ProductAttribute::with('values')->orderBy('sort_order')->orderBy('name')->get(),
         ]);
     }
 
@@ -117,6 +120,7 @@ class ProductController extends Controller
             'name' => 'required|string|max:255',
             'sku' => 'nullable|string|unique:products,sku',
             'barcode' => 'nullable|string',
+            'image' => 'nullable|string|max:500',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'cost_price' => 'numeric|min:0',
@@ -125,6 +129,7 @@ class ProductController extends Controller
             'stock_quantity' => 'numeric|min:0',
             'min_stock' => 'numeric|min:0',
             'has_serial' => 'boolean',
+            'has_variants' => 'boolean',
             'sell_directly' => 'boolean',
             'allow_point_accumulation' => 'boolean',
             'weight' => 'nullable|string',
@@ -134,24 +139,38 @@ class ProductController extends Controller
             'units.*.unit_name' => 'required|string',
             'units.*.conversion_rate' => 'required|numeric|min:1',
             'units.*.retail_price' => 'nullable|numeric',
+            'variants' => 'nullable|array',
+            'variants.*.sku' => 'nullable|string',
+            'variants.*.name' => 'required|string|max:255',
+            'variants.*.cost_price' => 'numeric|min:0',
+            'variants.*.retail_price' => 'numeric|min:0',
+            'variants.*.stock_quantity' => 'numeric|min:0',
+            'variants.*.attribute_value_ids' => 'nullable|array',
         ]);
 
         if (empty($validatedData['sku'])) {
-            $validatedData['sku'] = 'SP' . date('ymd') . rand(100, 999);
+            do {
+                $sku = 'SP' . date('ymd') . str_pad(random_int(1000, 99999), 5, '0', STR_PAD_LEFT);
+            } while (Product::where('sku', $sku)->exists());
+            $validatedData['sku'] = $sku;
         }
 
         if (empty($validatedData['barcode']) && \App\Models\Setting::get('product_barcode_auto', true)) {
             $validatedData['barcode'] = $validatedData['sku'];
         }
+        if (!empty($validatedData['barcode']) && Product::where('barcode', $validatedData['barcode'])->exists()) {
+            $validatedData['barcode'] = $validatedData['sku'] . '-' . random_int(10, 99);
+        }
 
         $technicianPrice = $validatedData['technician_price'] ?? 0;
         unset($validatedData['technician_price']);
 
-        $product = Product::create($validatedData);
+        $units = $validatedData['units'] ?? [];
+        $baseUnitName = $validatedData['base_unit_name'] ?? null;
+        $variants = $validatedData['variants'] ?? [];
+        unset($validatedData['units'], $validatedData['base_unit_name'], $validatedData['variants']);
 
-        // Save technician_price to active price books if provided
-        if ($technicianPrice > 0) {
-            $activeBooks = PriceBook::where('is_active', true)
+        $product = Product::create($validatedData);
                 ->where('enable_technician_price', true)->get();
             foreach ($activeBooks as $book) {
                 PriceBookProduct::updateOrCreate(
@@ -162,9 +181,9 @@ class ProductController extends Controller
         }
 
         // Handle Units
-        if (!empty($validatedData['base_unit_name'])) {
+        if (!empty($baseUnitName)) {
             $product->units()->create([
-                'unit_name' => $validatedData['base_unit_name'],
+                'unit_name' => $baseUnitName,
                 'conversion_rate' => 1,
                 'is_base_unit' => true,
                 'retail_price' => $product->retail_price,
@@ -172,14 +191,31 @@ class ProductController extends Controller
             ]);
         }
 
-        if (!empty($validatedData['units'])) {
-            foreach ($validatedData['units'] as $unit) {
+        if (!empty($units)) {
+            foreach ($units as $unit) {
                 $product->units()->create([
                     'unit_name' => $unit['unit_name'],
                     'conversion_rate' => $unit['conversion_rate'],
                     'retail_price' => $unit['retail_price'] ?? $product->retail_price * $unit['conversion_rate'],
                     'is_base_unit' => false,
                 ]);
+            }
+        }
+
+        // Handle Variants
+        if (!empty($variants) && ($product->has_variants ?? false)) {
+            foreach ($variants as $vData) {
+                $variantSku = $vData['sku'] ?? ($product->sku . '-V' . random_int(100, 999));
+                $variant = $product->variants()->create([
+                    'sku' => $variantSku,
+                    'name' => $vData['name'],
+                    'cost_price' => $vData['cost_price'] ?? $product->cost_price,
+                    'retail_price' => $vData['retail_price'] ?? $product->retail_price,
+                    'stock_quantity' => $vData['stock_quantity'] ?? 0,
+                ]);
+                if (!empty($vData['attribute_value_ids'])) {
+                    $variant->attributeValues()->sync($vData['attribute_value_ids']);
+                }
             }
         }
 
@@ -210,11 +246,17 @@ class ProductController extends Controller
         $validatedData['is_active'] = true;
 
         if (empty($validatedData['sku'])) {
-            $validatedData['sku'] = 'SP' . date('ymd') . rand(100, 999);
+            do {
+                $sku = 'SP' . date('ymd') . str_pad(random_int(1000, 99999), 5, '0', STR_PAD_LEFT);
+            } while (Product::where('sku', $sku)->exists());
+            $validatedData['sku'] = $sku;
         }
 
         if (empty($validatedData['barcode']) && \App\Models\Setting::get('product_barcode_auto', true)) {
             $validatedData['barcode'] = $validatedData['sku'];
+        }
+        if (!empty($validatedData['barcode']) && Product::where('barcode', $validatedData['barcode'])->exists()) {
+            $validatedData['barcode'] = $validatedData['sku'] . '-' . random_int(10, 99);
         }
 
         $technicianPriceQuick = $validatedData['technician_price'] ?? 0;
@@ -242,6 +284,7 @@ class ProductController extends Controller
 
     public function edit(Product $product)
     {
+        $product->load(['variants.attributeValues']);
         $priceBooks = PriceBook::where('is_active', true)->get();
         $showTechnician = $priceBooks->contains('enable_technician_price', true);
 
@@ -260,6 +303,7 @@ class ProductController extends Controller
             'showRetailPrice' => $priceBooks->contains('enable_retail_price', true),
             'showTechnicianPrice' => $showTechnician,
             'technicianPrice' => $technicianPrice,
+            'productAttributes' => ProductAttribute::with('values')->orderBy('sort_order')->orderBy('name')->get(),
         ]);
     }
 
@@ -277,14 +321,24 @@ class ProductController extends Controller
             'stock_quantity' => 'numeric|min:0',
             'min_stock' => 'numeric|min:0',
             'has_serial' => 'boolean',
+            'has_variants' => 'boolean',
             'sell_directly' => 'boolean',
             'allow_point_accumulation' => 'boolean',
             'weight' => 'nullable|string',
             'location' => 'nullable|string',
+            'variants' => 'nullable|array',
+            'variants.*.id' => 'nullable|integer',
+            'variants.*.sku' => 'nullable|string',
+            'variants.*.name' => 'required|string|max:255',
+            'variants.*.cost_price' => 'numeric|min:0',
+            'variants.*.retail_price' => 'numeric|min:0',
+            'variants.*.stock_quantity' => 'numeric|min:0',
+            'variants.*.attribute_value_ids' => 'nullable|array',
         ]);
 
         $technicianPrice = $validated['technician_price'] ?? null;
-        unset($validated['technician_price']);
+        $variants = $validated['variants'] ?? [];
+        unset($validated['technician_price'], $validated['variants']);
 
         $product->update($validated);
 
@@ -298,6 +352,43 @@ class ProductController extends Controller
                     ['technician_price' => $technicianPrice, 'price' => $product->retail_price ?? 0]
                 );
             }
+        }
+
+        // Handle Variants sync
+        if ($product->has_variants) {
+            $keepIds = [];
+            foreach ($variants as $vData) {
+                if (!empty($vData['id'])) {
+                    $variant = ProductVariant::where('id', $vData['id'])->where('product_id', $product->id)->first();
+                    if ($variant) {
+                        $variant->update([
+                            'sku' => $vData['sku'] ?? $variant->sku,
+                            'name' => $vData['name'],
+                            'cost_price' => $vData['cost_price'] ?? $variant->cost_price,
+                            'retail_price' => $vData['retail_price'] ?? $variant->retail_price,
+                            'stock_quantity' => $vData['stock_quantity'] ?? $variant->stock_quantity,
+                        ]);
+                        if (isset($vData['attribute_value_ids'])) {
+                            $variant->attributeValues()->sync($vData['attribute_value_ids']);
+                        }
+                        $keepIds[] = $variant->id;
+                        continue;
+                    }
+                }
+                $variantSku = $vData['sku'] ?? ($product->sku . '-V' . random_int(100, 999));
+                $variant = $product->variants()->create([
+                    'sku' => $variantSku,
+                    'name' => $vData['name'],
+                    'cost_price' => $vData['cost_price'] ?? $product->cost_price,
+                    'retail_price' => $vData['retail_price'] ?? $product->retail_price,
+                    'stock_quantity' => $vData['stock_quantity'] ?? 0,
+                ]);
+                if (!empty($vData['attribute_value_ids'])) {
+                    $variant->attributeValues()->sync($vData['attribute_value_ids']);
+                }
+                $keepIds[] = $variant->id;
+            }
+            $product->variants()->whereNotIn('id', $keepIds)->delete();
         }
 
         return redirect()->route('products.index')->with('success', 'Cập nhật hàng hóa thành công!');

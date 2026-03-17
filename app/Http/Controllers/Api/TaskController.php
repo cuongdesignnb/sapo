@@ -345,4 +345,70 @@ class TaskController extends Controller
 
         return response()->json($products);
     }
+
+    /**
+     * Lấy danh sách serial/IMEI tồn kho (in_stock) theo product_id — dùng cho batch repair.
+     */
+    public function productSerials(Request $request)
+    {
+        $productId = $request->get('product_id');
+        if (!$productId) return response()->json([]);
+
+        $serials = SerialImei::where('product_id', $productId)
+            ->where('status', 'in_stock')
+            ->whereNull('repair_status')
+            ->get(['id', 'serial_number', 'product_id', 'status', 'cost_price']);
+
+        return response()->json($serials);
+    }
+
+    /**
+     * Tạo batch repair tasks cho nhiều serial cùng 1 sản phẩm.
+     */
+    public function batchCreateRepair(Request $request)
+    {
+        $data = $request->validate([
+            'serial_imei_ids'    => 'required|array|min:1',
+            'serial_imei_ids.*'  => 'exists:serial_imeis,id',
+            'issue_description'  => 'nullable|string|max:2000',
+            'title'              => 'nullable|string|max:255',
+            'category_id'        => 'nullable|exists:task_categories,id',
+            'priority'           => 'nullable|in:low,normal,high,urgent',
+            'branch_id'          => 'nullable|exists:branches,id',
+            'notes'              => 'nullable|string|max:2000',
+            'deadline'           => 'nullable|date',
+            'employee_ids'       => 'nullable|array',
+            'employee_ids.*'     => 'exists:employees,id',
+        ]);
+
+        $createdTasks = [];
+        $assignerName = $request->user()?->name ?? 'Hệ thống';
+
+        foreach ($data['serial_imei_ids'] as $serialId) {
+            $taskData = [
+                'type' => Task::TYPE_REPAIR,
+                'serial_imei_id' => $serialId,
+                'issue_description' => $data['issue_description'] ?? null,
+                'title' => $data['title'] ?? null,
+                'category_id' => $data['category_id'] ?? null,
+                'priority' => $data['priority'] ?? 'normal',
+                'branch_id' => $data['branch_id'] ?? null,
+                'notes' => $data['notes'] ?? null,
+                'deadline' => $data['deadline'] ?? null,
+                'created_by' => $request->user()?->id,
+            ];
+            $task = $this->service->createTask($taskData);
+
+            if (!empty($data['employee_ids'])) {
+                $this->service->assignEmployees($task, $data['employee_ids'], $request->user()?->id, $assignerName);
+            }
+
+            $createdTasks[] = $task->id;
+        }
+
+        return response()->json([
+            'message' => 'Đã tạo ' . count($createdTasks) . ' phiếu sửa chữa',
+            'task_ids' => $createdTasks,
+        ], 201);
+    }
 }

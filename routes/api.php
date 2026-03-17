@@ -284,6 +284,8 @@ Route::prefix('tasks')->group(function () {
     Route::get('/performance', [\App\Http\Controllers\Api\TaskController::class, 'performance']);
     Route::get('/search-serials', [\App\Http\Controllers\Api\TaskController::class, 'searchSerials']);
     Route::get('/search-products', [\App\Http\Controllers\Api\TaskController::class, 'searchProducts']);
+    Route::get('/product-serials', [\App\Http\Controllers\Api\TaskController::class, 'productSerials']);
+    Route::post('/batch-repair', [\App\Http\Controllers\Api\TaskController::class, 'batchCreateRepair']);
     Route::post('/', [\App\Http\Controllers\Api\TaskController::class, 'store']);
     Route::get('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'show']);
     Route::put('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'update']);
@@ -334,4 +336,20 @@ Route::prefix('users')->group(function () {
     Route::post('/', [\App\Http\Controllers\Api\UserController::class, 'store']);
     Route::put('/{user}', [\App\Http\Controllers\Api\UserController::class, 'update']);
     Route::delete('/{user}', [\App\Http\Controllers\Api\UserController::class, 'destroy']);
+});
+
+// 📁 MEDIA LIBRARY
+Route::prefix('media')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\MediaController::class, 'index']);
+    Route::post('/', [\App\Http\Controllers\Api\MediaController::class, 'store']);
+    Route::delete('/{media}', [\App\Http\Controllers\Api\MediaController::class, 'destroy']);
+});
+
+// 🏷️ PRODUCT ATTRIBUTES
+Route::prefix('product-attributes')->group(function () {
+    Route::get('/', [\App\Http\Controllers\Api\ProductAttributeController::class, 'index']);
+    Route::post('/', [\App\Http\Controllers\Api\ProductAttributeController::class, 'store']);
+    Route::post('/{attribute}/values', [\App\Http\Controllers\Api\ProductAttributeController::class, 'storeValue']);
+    Route::delete('/{attribute}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroy']);
+    Route::delete('/values/{value}', [\App\Http\Controllers\Api\ProductAttributeController::class, 'destroyValue']);
 });

@@ -10,7 +10,15 @@ const props = defineProps({
     metrics: Object,
     subjects: Object,
     bankAccounts: Array,
+    savedReceiptCategories: Array,
+    savedPaymentCategories: Array,
 });
+
+const mergeUnique = (defaults, saved) => {
+    const set = new Set(defaults);
+    (saved || []).forEach(c => set.add(c));
+    return [...set];
+};
 
 const search = ref(props.filters?.search || "");
 
@@ -49,18 +57,14 @@ const form = useForm({
 const selectedFlowObj = ref(null);
 const getSelectedFlow = () => selectedFlowObj.value;
 
-const receiptCategories = ref([
-    "Thu tiền khách trả",
-    "Thu nhập khác",
-    "Chuyển/Rút",
-    "Bán đồng nát",
-]);
-const paymentCategories = ref([
-    "Chi trả lương NV",
-    "Chi tiền trả NCC",
-    "Chi phí điện nước",
-    "Chi khác",
-]);
+const receiptCategories = ref(mergeUnique(
+    ["Thu tiền khách trả", "Thu nhập khác", "Chuyển/Rút", "Bán đồng nát"],
+    props.savedReceiptCategories
+));
+const paymentCategories = ref(mergeUnique(
+    ["Chi trả lương NV", "Chi tiền trả NCC", "Chi phí điện nước", "Chi khác"],
+    props.savedPaymentCategories
+));
 const targetTypes = [
     "Khách hàng",
     "Nhà cung cấp",

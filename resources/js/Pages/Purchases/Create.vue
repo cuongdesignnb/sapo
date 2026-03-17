@@ -6,6 +6,7 @@ import axios from 'axios';
 const props = defineProps({
     products: Array,
     suppliers: Array,
+    employees: Array,
     categories: Array,
     brands: Array,
     purchaseCode: String,
@@ -52,6 +53,8 @@ const showCreateDropdown = ref(false);
 const items = ref([]);
 
 const selectedSupplierId = ref('');
+const selectedEmployeeId = ref('');
+const purchaseDate = ref(new Date().toISOString().slice(0, 16));
 const status = ref('completed');
 const discount = ref(0);
 const paidAmount = ref(0);
@@ -96,6 +99,7 @@ const selectProduct = (product) => {
             serials: [],
             serialInput: '',
             showSerialArea: !!product.has_serial,
+            warranty_months: 0,
         });
     } else {
         if (!existing.has_serial) existing.quantity++;
@@ -157,6 +161,8 @@ const save = async () => {
             code: props.purchaseCode,
             status: status.value,
             supplier_id: selectedSupplierId.value || null,
+            employee_id: selectedEmployeeId.value || null,
+            purchase_date: purchaseDate.value || null,
             note: note.value,
             discount: discount.value,
             paid_amount: paidAmount.value,
@@ -168,6 +174,7 @@ const save = async () => {
                 technician_price: item.technician_price || 0,
                 discount: item.discount,
                 serials: item.serials || [],
+                warranty_months: item.warranty_months || 0,
             }))
         });
     } catch (e) {
@@ -410,6 +417,7 @@ const quickCreateBrand = async () => {
                                 <th v-if="showRetailPrice" class="p-3 w-[120px] text-right">Giá bán lẻ</th>
                                 <th v-if="showTechnicianPrice" class="p-3 w-[120px] text-right">Giá bán thợ</th>
                                 <th class="p-3 w-[100px] text-right">Giảm giá</th>
+                                <th class="p-3 w-[80px] text-center">BH (tháng)</th>
                                 <th class="p-3 w-[140px] text-right pr-6">Thành tiền</th>
                             </tr>
                         </thead>
@@ -447,11 +455,14 @@ const quickCreateBrand = async () => {
                                 <td class="p-3 w-[100px]">
                                     <input type="text" :value="formatCurrencyInput(item.discount)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'discount', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50">
                                 </td>
+                                <td class="p-3 w-[80px] text-center">
+                                    <input type="number" v-model.number="item.warranty_months" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-orange-500 text-[13px] hover:bg-orange-50" placeholder="0">
+                                </td>
                                 <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(getItemTotal(item)) }}</td>
                             </tr>
                             <!-- Serial/IMEI input row -->
                             <tr v-if="item.has_serial" class="bg-gray-50/50">
-                                <td :colspan="8 + (showRetailPrice ? 1 : 0) + (showTechnicianPrice ? 1 : 0)" class="px-6 py-2">
+                                <td :colspan="9 + (showRetailPrice ? 1 : 0) + (showTechnicianPrice ? 1 : 0)" class="px-6 py-2">
                                     <div class="flex items-center gap-2 mb-2">
                                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
                                         <input
@@ -494,9 +505,12 @@ const quickCreateBrand = async () => {
                         <div class="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center">
                             <svg class="w-4 h-4 text-gray-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
                         </div>
-                        <span class="font-medium text-[13px] text-gray-700">Trần Văn Tiến</span>
+                        <select v-model="selectedEmployeeId" class="text-[13px] text-gray-700 font-medium bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 pr-4">
+                            <option value="">-- Nhân viên nhập --</option>
+                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
+                        </select>
                     </div>
-                    <div class="text-[13px] text-gray-500">{{ new Date().toLocaleString('vi-VN', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}) }}</div>
+                    <input type="datetime-local" v-model="purchaseDate" class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 w-[170px]" />
                 </div>
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">

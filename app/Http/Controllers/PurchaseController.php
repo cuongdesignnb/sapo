@@ -86,6 +86,7 @@ class PurchaseController extends Controller
         return Inertia::render('Purchases/Create', [
             'suppliers' => $suppliers,
             'products' => $products,
+            'employees' => \App\Models\Employee::where('status', 'active')->get(['id', 'name', 'code']),
             'categories' => \App\Models\Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => \App\Models\Brand::all(),
             'purchaseCode' => 'PN' . date('YmdHis'),
@@ -99,6 +100,8 @@ class PurchaseController extends Controller
     {
         $request->validate([
             'supplier_id' => 'required|exists:customers,id',
+            'employee_id' => 'nullable|exists:employees,id',
+            'purchase_date' => 'nullable|date',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:0',
@@ -108,6 +111,7 @@ class PurchaseController extends Controller
             'items.*.technician_price' => 'nullable|numeric|min:0',
             'items.*.serials' => 'nullable|array',
             'items.*.serials.*' => 'string|max:100',
+            'items.*.warranty_months' => 'nullable|integer|min:0',
             'discount' => 'nullable|numeric|min:0',
             'paid_amount' => 'nullable|numeric|min:0',
             'note' => 'nullable|string',
@@ -145,16 +149,23 @@ class PurchaseController extends Controller
                 'code' => $request->code ?? 'PN' . time(),
                 'supplier_id' => $request->supplier_id,
                 'user_id' => auth()->id(),
+                'employee_id' => $request->employee_id,
                 'total_amount' => $total_amount,
                 'discount' => $discount,
                 'paid_amount' => $paid_amount,
                 'debt_amount' => $debt_amount,
                 'note' => $request->note,
                 'status' => $request->status ?? 'completed',
+                'purchase_date' => $request->purchase_date ?? now(),
             ]);
 
             foreach ($request->items as $item) {
                 $product = Product::find($item['product_id']);
+
+                $warrantyMonths = $item['warranty_months'] ?? 0;
+                $warrantyExpiresAt = $warrantyMonths > 0
+                    ? ($purchase->purchase_date ?? now())->copy()->addMonths($warrantyMonths)->toDateString()
+                    : null;
 
                 // Add item
                 $purchase->items()->create([
@@ -165,6 +176,8 @@ class PurchaseController extends Controller
                     'price' => $item['price'],
                     'discount' => $item['discount'] ?? 0,
                     'subtotal' => $item['quantity'] * $item['price'] - ($item['discount'] ?? 0),
+                    'warranty_months' => $warrantyMonths,
+                    'warranty_expires_at' => $warrantyExpiresAt,
                 ]);
 
                 if ($purchase->status === 'completed') {
@@ -254,7 +267,7 @@ class PurchaseController extends Controller
 
     public function show(Purchase $purchase)
     {
-        $purchase->load(['supplier', 'items.product', 'user']);
+        $purchase->load(['supplier', 'items.product', 'user', 'employee']);
 
         // Fix quantity for serial products (old bug: saved as 0)
         $recalcTotal = false;
@@ -275,7 +288,7 @@ class PurchaseController extends Controller
             $purchase->debt_amount = ($purchase->total_amount - $purchase->discount) - $purchase->paid_amount;
             $purchase->save();
             $purchase->refresh();
-            $purchase->load(['supplier', 'items.product', 'user']);
+            $purchase->load(['supplier', 'items.product', 'user', 'employee']);
         }
 
         // Load serials for each item (after save, to avoid dirty attributes)

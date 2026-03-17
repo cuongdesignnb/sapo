@@ -26,6 +26,7 @@ class Product extends Model
         'min_stock',
         'max_stock',
         'has_serial',
+        'has_variants',
         'is_active',
         'allow_point_accumulation',
         'sell_directly',
@@ -37,6 +38,7 @@ class Product extends Model
 
     protected $casts = [
         'has_serial' => 'boolean',
+        'has_variants' => 'boolean',
         'is_active' => 'boolean',
         'allow_point_accumulation' => 'boolean',
         'sell_directly' => 'boolean',
@@ -75,5 +77,10 @@ class Product extends Model
     public function warranties(): HasMany
     {
         return $this->hasMany(Warranty::class);
+    }
+
+    public function variants(): HasMany
+    {
+        return $this->hasMany(ProductVariant::class);
     }
 }

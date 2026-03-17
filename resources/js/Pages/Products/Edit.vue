@@ -11,6 +11,7 @@ const props = defineProps({
     showRetailPrice: Boolean,
     showTechnicianPrice: Boolean,
     technicianPrice: { type: Number, default: 0 },
+    productAttributes: { type: Array, default: () => [] },
 });
 
 // ===== Serial/IMEI Management =====
@@ -137,10 +138,20 @@ const form = useForm({
     stock_quantity: props.product.stock_quantity || 0,
     min_stock: props.product.min_stock || 0,
     has_serial: !!props.product.has_serial,
+    has_variants: !!props.product.has_variants,
     sell_directly: !!props.product.sell_directly,
     allow_point_accumulation: !!props.product.allow_point_accumulation,
     weight: props.product.weight || '',
     location: props.product.location || '',
+    variants: (props.product.variants || []).map(v => ({
+        id: v.id,
+        sku: v.sku || '',
+        name: v.name,
+        cost_price: v.cost_price || 0,
+        retail_price: v.retail_price || 0,
+        stock_quantity: v.stock_quantity || 0,
+        attribute_value_ids: (v.attribute_values || []).map(av => av.id),
+    })),
 });
 
 // Reactive local copies for inline creation
@@ -216,6 +227,132 @@ const quickCreateBrand = async () => {
 const submit = () => {
     form.put(`/products/${props.product.id}`);
 };
+
+// === VARIANTS / ATTRIBUTES ===
+const allAttributes = ref([...(props.productAttributes || [])]);
+const selectedAttributes = ref([]);
+const newAttrName = ref('');
+const newValueInputs = ref({});
+
+const availableAttributes = computed(() => {
+    const usedIds = selectedAttributes.value.map(a => a.attribute_id);
+    return allAttributes.value.filter(a => !usedIds.includes(a.id));
+});
+
+// Initialize selectedAttributes from existing variants
+const initVariantAttributes = () => {
+    if (!props.product.has_variants || !props.product.variants?.length) return;
+    const attrMap = {};
+    for (const v of props.product.variants) {
+        for (const av of (v.attribute_values || [])) {
+            if (!attrMap[av.attribute_id]) {
+                const globalAttr = allAttributes.value.find(a => a.id === av.attribute_id);
+                attrMap[av.attribute_id] = {
+                    attribute_id: av.attribute_id,
+                    attribute_name: globalAttr?.name || av.attribute?.name || 'Thuộc tính',
+                    values: globalAttr?.values || [],
+                    selectedValues: [],
+                };
+            }
+            if (!attrMap[av.attribute_id].selectedValues.includes(av.id)) {
+                attrMap[av.attribute_id].selectedValues.push(av.id);
+            }
+        }
+    }
+    selectedAttributes.value = Object.values(attrMap);
+};
+initVariantAttributes();
+
+const addAttribute = (attrId) => {
+    const attr = allAttributes.value.find(a => a.id === attrId);
+    if (!attr) return;
+    selectedAttributes.value.push({
+        attribute_id: attr.id,
+        attribute_name: attr.name,
+        values: attr.values || [],
+        selectedValues: [],
+    });
+};
+
+const quickCreateAttribute = async () => {
+    const name = newAttrName.value.trim();
+    if (!name) return;
+    try {
+        const res = await axios.post('/api/product-attributes', { name });
+        const attr = { ...res.data, values: res.data.values || [] };
+        allAttributes.value.push(attr);
+        selectedAttributes.value.push({
+            attribute_id: attr.id,
+            attribute_name: attr.name,
+            values: attr.values,
+            selectedValues: [],
+        });
+        newAttrName.value = '';
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo thuộc tính'); }
+};
+
+const quickCreateValue = async (sAttr) => {
+    const text = (newValueInputs.value[sAttr.attribute_id] || '').trim();
+    if (!text) return;
+    try {
+        const res = await axios.post(`/api/product-attributes/${sAttr.attribute_id}/values`, { value: text });
+        sAttr.values.push(res.data);
+        sAttr.selectedValues.push(res.data.id);
+        const globalAttr = allAttributes.value.find(a => a.id === sAttr.attribute_id);
+        if (globalAttr) globalAttr.values.push(res.data);
+        newValueInputs.value[sAttr.attribute_id] = '';
+        generateVariants();
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo giá trị'); }
+};
+
+const toggleValue = (sAttr, valueId) => {
+    const idx = sAttr.selectedValues.indexOf(valueId);
+    if (idx >= 0) sAttr.selectedValues.splice(idx, 1);
+    else sAttr.selectedValues.push(valueId);
+    generateVariants();
+};
+
+const removeAttribute = (index) => {
+    selectedAttributes.value.splice(index, 1);
+    generateVariants();
+};
+
+const generateVariants = () => {
+    const attrs = selectedAttributes.value.filter(a => a.selectedValues.length > 0);
+    if (attrs.length === 0) { form.variants = []; return; }
+    const combos = attrs.reduce((acc, attr) => {
+        if (acc.length === 0) return attr.selectedValues.map(vId => [{ attribute_id: attr.attribute_id, value_id: vId }]);
+        const result = [];
+        for (const combo of acc) {
+            for (const vId of attr.selectedValues) {
+                result.push([...combo, { attribute_id: attr.attribute_id, value_id: vId }]);
+            }
+        }
+        return result;
+    }, []);
+    const oldVariants = [...form.variants];
+    form.variants = combos.map(combo => {
+        const attrValueIds = combo.map(c => c.value_id);
+        const name = combo.map(c => {
+            const attr = attrs.find(a => a.attribute_id === c.attribute_id);
+            const val = attr?.values.find(v => v.id === c.value_id);
+            return val?.value || '';
+        }).join(' - ');
+        const existing = oldVariants.find(v =>
+            v.attribute_value_ids?.length === attrValueIds.length &&
+            v.attribute_value_ids.every(id => attrValueIds.includes(id))
+        );
+        return {
+            id: existing?.id || null,
+            sku: existing?.sku || '',
+            name: (form.name ? form.name + ' - ' : '') + name,
+            cost_price: existing?.cost_price ?? form.cost_price,
+            retail_price: existing?.retail_price ?? form.retail_price,
+            stock_quantity: existing?.stock_quantity ?? 0,
+            attribute_value_ids: attrValueIds,
+        };
+    });
+};
 </script>
 
 <template>
@@ -262,6 +399,10 @@ const submit = () => {
                                 <label v-if="props.product.type === 'standard'" class="flex items-center gap-2 text-sm text-gray-700 font-medium pt-2 border-t border-gray-100 cursor-pointer">
                                     <input type="checkbox" v-model="form.has_serial" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
                                     Quản lý Serial/IMEI
+                                </label>
+                                <label v-if="props.product.type === 'standard'" class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
+                                    <input type="checkbox" v-model="form.has_variants" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
+                                    Có biến thể (màu sắc, kích thước...)
                                 </label>
                             </div>
                         </div>
@@ -385,6 +526,70 @@ const submit = () => {
                                         <div>
                                             <label class="block text-sm font-semibold text-gray-700 mb-1">Định mức tồn ít nhất</label>
                                             <input type="number" v-model="form.min_stock" class="w-full border border-gray-300 rounded p-2 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow">
+                                        </div>
+                                    </template>
+
+                                    <!-- BIẾN THỂ / THUỘC TÍNH -->
+                                    <template v-if="form.has_variants && props.product.type === 'standard'">
+                                        <div class="col-span-2 border-t border-gray-200 pt-4 mt-2">
+                                            <h4 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                                                <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path></svg>
+                                                Thuộc tính biến thể
+                                            </h4>
+                                            <div class="flex gap-2 mb-3">
+                                                <select @change="addAttribute(Number($event.target.value)); $event.target.value = ''" class="flex-1 border border-gray-300 rounded p-2 text-sm bg-white">
+                                                    <option value="">-- Chọn thuộc tính --</option>
+                                                    <option v-for="attr in availableAttributes" :key="attr.id" :value="attr.id">{{ attr.name }}</option>
+                                                </select>
+                                                <div class="flex gap-1">
+                                                    <input type="text" v-model="newAttrName" placeholder="Hoặc tạo mới..." @keyup.enter="quickCreateAttribute" class="border border-gray-300 rounded px-2 py-1 text-sm w-40">
+                                                    <button type="button" @click="quickCreateAttribute" class="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-700">+</button>
+                                                </div>
+                                            </div>
+                                            <div v-for="(sAttr, idx) in selectedAttributes" :key="sAttr.attribute_id" class="mb-3 bg-gray-50 border border-gray-200 rounded p-3">
+                                                <div class="flex justify-between items-center mb-2">
+                                                    <span class="text-sm font-semibold text-gray-700">{{ sAttr.attribute_name }}</span>
+                                                    <button type="button" @click="removeAttribute(idx)" class="text-red-500 hover:text-red-700 text-xs">Xóa</button>
+                                                </div>
+                                                <div class="flex flex-wrap gap-1.5 mb-2">
+                                                    <button v-for="val in sAttr.values" :key="val.id" type="button"
+                                                        @click="toggleValue(sAttr, val.id)"
+                                                        :class="sAttr.selectedValues.includes(val.id) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-700 border-gray-300 hover:border-purple-400'"
+                                                        class="px-2.5 py-1 text-xs rounded-full border font-medium transition-colors">
+                                                        {{ val.value }}
+                                                    </button>
+                                                </div>
+                                                <div class="flex gap-1">
+                                                    <input type="text" v-model="newValueInputs[sAttr.attribute_id]" placeholder="Thêm giá trị mới..." @keyup.enter="quickCreateValue(sAttr)" class="flex-1 border border-gray-300 rounded px-2 py-1 text-xs">
+                                                    <button type="button" @click="quickCreateValue(sAttr)" class="px-2 py-1 bg-gray-600 text-white rounded text-xs hover:bg-gray-700">+</button>
+                                                </div>
+                                            </div>
+                                            <div v-if="form.variants.length > 0" class="mt-4">
+                                                <h5 class="text-xs font-bold text-gray-500 uppercase mb-2">Danh sách biến thể ({{ form.variants.length }})</h5>
+                                                <div class="overflow-x-auto">
+                                                    <table class="w-full text-sm border border-gray-200">
+                                                        <thead class="bg-gray-50">
+                                                            <tr>
+                                                                <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600">Tên biến thể</th>
+                                                                <th class="px-2 py-1.5 text-left text-xs font-semibold text-gray-600 w-28">SKU</th>
+                                                                <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá vốn</th>
+                                                                <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-28">Giá bán</th>
+                                                                <th class="px-2 py-1.5 text-right text-xs font-semibold text-gray-600 w-20">Tồn kho</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <tr v-for="(v, vi) in form.variants" :key="vi" class="border-t border-gray-100">
+                                                                <td class="px-2 py-1"><input type="text" v-model="v.name" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
+                                                                <td class="px-2 py-1"><input type="text" v-model="v.sku" placeholder="Tự động" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
+                                                                <td class="px-2 py-1"><input type="number" v-model="v.cost_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                                <td class="px-2 py-1"><input type="number" v-model="v.retail_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                                <td class="px-2 py-1"><input type="number" v-model="v.stock_quantity" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                            <p v-else class="text-xs text-gray-400 italic mt-2">Chọn thuộc tính và giá trị để tạo biến thể tự động.</p>
                                         </div>
                                     </template>
                                 </div>

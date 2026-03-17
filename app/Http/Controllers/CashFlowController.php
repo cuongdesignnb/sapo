@@ -32,6 +32,14 @@ class CashFlowController extends Controller
         $customers = \App\Models\Customer::where('is_supplier', false)->get(['id', 'name', 'phone']);
         $suppliers = \App\Models\Customer::where('is_supplier', true)->get(['id', 'name', 'phone']);
 
+        // Load user-created categories from existing records
+        $savedReceiptCategories = CashFlow::where('type', 'receipt')
+            ->whereNotNull('category')->where('category', '!=', '')
+            ->distinct()->pluck('category')->toArray();
+        $savedPaymentCategories = CashFlow::where('type', 'payment')
+            ->whereNotNull('category')->where('category', '!=', '')
+            ->distinct()->pluck('category')->toArray();
+
         return Inertia::render('CashFlows/Index', [
             'cashFlows' => $cashFlows,
             'filters' => ['search' => $search],
@@ -45,6 +53,8 @@ class CashFlowController extends Controller
                 'suppliers' => $suppliers,
             ],
             'bankAccounts' => BankAccount::where('status', 'active')->orderBy('bank_name')->get(),
+            'savedReceiptCategories' => $savedReceiptCategories,
+            'savedPaymentCategories' => $savedPaymentCategories,
         ]);
     }
 
