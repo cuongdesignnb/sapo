@@ -151,7 +151,7 @@ const addAttribute = (attrId) => {
     selectedAttributes.value.push({
         attribute_id: attr.id,
         attribute_name: attr.name,
-        values: attr.values || [],
+        values: [...(attr.values || [])],
         selectedValues: [],
     });
 };
@@ -180,9 +180,9 @@ const quickCreateValue = async (sAttr) => {
         const res = await axios.post(`/api/product-attributes/${sAttr.attribute_id}/values`, { value: text });
         sAttr.values.push(res.data);
         sAttr.selectedValues.push(res.data.id);
-        // Also update allAttributes
+        // Also update allAttributes (only if different reference)
         const globalAttr = allAttributes.value.find(a => a.id === sAttr.attribute_id);
-        if (globalAttr) globalAttr.values.push(res.data);
+        if (globalAttr && globalAttr.values !== sAttr.values) globalAttr.values.push(res.data);
         newValueInputs.value[sAttr.attribute_id] = '';
         generateVariants();
     } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo giá trị'); }
