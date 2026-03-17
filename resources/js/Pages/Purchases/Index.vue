@@ -323,6 +323,7 @@ const printPurchase = (order) => {
                             <th class="px-4 py-2 text-right">Tổng cộng</th>
                             <th class="px-4 py-2 text-right">Cần trả NCC</th>
                             <th class="px-4 py-2 text-right">Đã trả NCC</th>
+                            <th class="px-4 py-2 text-right">Còn nợ</th>
                             <th class="px-4 py-2 text-center w-24">
                                 Trạng thái
                             </th>
@@ -339,11 +340,12 @@ const printPurchase = (order) => {
                             <td class="px-4 py-2 text-right text-gray-700">{{ formatCurrency(summary?.total_amount) }}</td>
                             <td class="px-4 py-2 text-right text-gray-700">{{ formatCurrency((summary?.total_amount || 0) - (summary?.total_discount || 0)) }}</td>
                             <td class="px-4 py-2 text-right text-green-600">{{ formatCurrency(summary?.total_paid) }}</td>
+                            <td class="px-4 py-2 text-right text-red-600">{{ formatCurrency(summary?.total_debt) }}</td>
                             <td></td>
                         </tr>
                         <tr v-if="purchases.data.length === 0">
                             <td
-                                colspan="9"
+                                colspan="10"
                                 class="p-16 text-center text-gray-500"
                             >
                                 <div
@@ -430,6 +432,9 @@ const printPurchase = (order) => {
                                 >
                                     {{ formatCurrency(order.paid_amount) }}
                                 </td>
+                                <td class="px-4 py-2 text-right font-medium" :class="order.debt_amount > 0 ? 'text-red-600' : 'text-gray-400'">
+                                    {{ formatCurrency(order.debt_amount) }}
+                                </td>
                                 <td class="px-4 py-2 text-center">
                                     <span
                                         class="inline-block px-2 text-[11px] py-0.5 rounded border font-medium bg-green-50 text-green-700 border-green-200"
@@ -447,7 +452,7 @@ const printPurchase = (order) => {
                                 class="border-b-4 border-blue-50"
                             >
                                 <td
-                                    colspan="9"
+                                    colspan="10"
                                     class="p-0 border-0 bg-white shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)]"
                                 >
                                     <div

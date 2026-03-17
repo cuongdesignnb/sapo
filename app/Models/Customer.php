@@ -69,4 +69,9 @@ class Customer extends Model
     {
         return $this->hasMany(Order::class);
     }
+
+    public function purchases()
+    {
+        return $this->hasMany(Purchase::class, 'supplier_id');
+    }
 }

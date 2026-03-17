@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\Purchase;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use Illuminate\Support\Facades\DB;
 
 class SupplierController extends Controller
 {
@@ -48,12 +50,42 @@ class SupplierController extends Controller
 
         $suppliers = $query->latest()->paginate(50)->withQueryString();
 
+        // Recalculate supplier_debt_amount from actual purchase data
+        $supplierIds = $suppliers->pluck('id');
+        $debts = Purchase::whereIn('supplier_id', $supplierIds)
+            ->where('status', 'completed')
+            ->groupBy('supplier_id')
+            ->select('supplier_id', DB::raw('SUM(debt_amount) as real_debt'), DB::raw('SUM(total_amount) as real_total'))
+            ->pluck('real_debt', 'supplier_id');
+        $totals = Purchase::whereIn('supplier_id', $supplierIds)
+            ->where('status', 'completed')
+            ->groupBy('supplier_id')
+            ->select('supplier_id', DB::raw('SUM(total_amount) as real_total'))
+            ->pluck('real_total', 'supplier_id');
+
+        $suppliers->getCollection()->transform(function ($s) use ($debts, $totals) {
+            $s->supplier_debt_amount = $debts[$s->id] ?? 0;
+            $s->total_bought = $totals[$s->id] ?? 0;
+            return $s;
+        });
+
+        // Summary totals
+        $summary = [
+            'total_debt' => Purchase::where('status', 'completed')
+                ->whereHas('supplier', fn($q) => $q->where('is_supplier', true))
+                ->sum('debt_amount'),
+            'total_bought' => Purchase::where('status', 'completed')
+                ->whereHas('supplier', fn($q) => $q->where('is_supplier', true))
+                ->sum('total_amount'),
+        ];
+
         $groups = Customer::where('is_supplier', true)->whereNotNull('customer_group')->distinct()->pluck('customer_group');
 
         return Inertia::render('Suppliers/Index', [
             'suppliers' => $suppliers,
             'groups' => $groups,
-            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type'])
+            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type']),
+            'summary' => $summary,
         ]);
     }
 

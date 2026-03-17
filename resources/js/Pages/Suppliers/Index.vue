@@ -8,6 +8,7 @@ const props = defineProps({
     suppliers: Object,
     groups: Array,
     filters: Object,
+    summary: Object,
 });
 
 const search = ref(props.filters?.search || "");
@@ -493,6 +494,16 @@ const submit = () => {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200 text-gray-800">
+                        <!-- Summary row -->
+                        <tr class="bg-gray-50 border-b border-gray-200 font-semibold text-sm">
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td class="px-4 py-3 text-right text-red-600">{{ Number(summary?.total_debt || 0).toLocaleString() }}</td>
+                            <td class="px-4 py-3 text-right text-gray-700">{{ Number(summary?.total_bought || 0).toLocaleString() }}</td>
+                        </tr>
                         <tr v-if="suppliers.data.length === 0">
                             <td
                                 colspan="7"
