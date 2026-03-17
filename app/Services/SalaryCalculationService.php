@@ -590,6 +590,13 @@ class SalaryCalculationService
                 }
             }
 
+            // Tổng số phút (cho per_minute calc_type)
+            $totalMinutes = 0;
+            if ($calcType === 'per_minute') {
+                if ($category === 'late') $totalMinutes = $lateTotalMinutes;
+                elseif ($category === 'early_leave') $totalMinutes = $earlyTotalMinutes;
+            }
+
             $amount += $dedAmount;
             $details[] = [
                 'name' => data_get($deduction, 'name'),
@@ -597,6 +604,7 @@ class SalaryCalculationService
                 'calc_type' => $calcType ?? 'fixed_per_month',
                 'config_amount' => $amt,
                 'occurrences' => $occurrences,
+                'total_minutes' => $totalMinutes,
                 'calculated' => round($dedAmount),
             ];
         }

@@ -872,13 +872,17 @@
                                                             </td>
                                                         </tr>
 
-                                                        <tr
+                                                        <template
                                                             v-for="slip in detailPayslips"
                                                             :key="slip.id"
-                                                            class="border-b border-gray-200 hover:bg-gray-50"
+                                                        >
+                                                        <tr
+                                                            class="border-b border-gray-200 hover:bg-gray-50 cursor-pointer"
+                                                            @click="toggleSlipDetail(slip.id)"
                                                         >
                                                             <td
                                                                 class="px-4 py-2.5"
+                                                                @click.stop
                                                             >
                                                                 <input
                                                                     type="checkbox"
@@ -933,6 +937,117 @@
                                                                 }}
                                                             </td>
                                                         </tr>
+
+                                                        <!-- Chi tiết phiếu lương -->
+                                                        <tr v-if="expandedSlipId === slip.id">
+                                                            <td colspan="6" class="bg-gray-50 px-6 py-4">
+                                                                <div class="grid grid-cols-2 gap-6 text-sm">
+                                                                    <!-- Cột trái: Thông tin cơ bản -->
+                                                                    <div class="space-y-2">
+                                                                        <h4 class="font-semibold text-gray-700 mb-2">Thông tin lương</h4>
+                                                                        <div class="flex justify-between">
+                                                                            <span class="text-gray-500">Lương cơ bản:</span>
+                                                                            <span class="font-medium">{{ formatMoney(slip.base_salary) }}</span>
+                                                                        </div>
+                                                                        <div class="flex justify-between" v-if="slip.details?.work_units !== undefined">
+                                                                            <span class="text-gray-500">Ngày công:</span>
+                                                                            <span class="font-medium">{{ slip.details?.work_units ?? slip.work_units }} / {{ slip.details?.standard_work_units ?? '-' }}</span>
+                                                                        </div>
+                                                                        <div class="flex justify-between" v-if="slip.bonus > 0">
+                                                                            <span class="text-gray-500">Thưởng:</span>
+                                                                            <span class="font-medium text-green-600">+{{ formatMoney(slip.bonus) }}</span>
+                                                                        </div>
+                                                                        <div class="flex justify-between" v-if="slip.commission > 0">
+                                                                            <span class="text-gray-500">Hoa hồng:</span>
+                                                                            <span class="font-medium text-green-600">+{{ formatMoney(slip.commission) }}</span>
+                                                                        </div>
+                                                                        <div class="flex justify-between" v-if="slip.allowances > 0">
+                                                                            <span class="text-gray-500">Phụ cấp:</span>
+                                                                            <span class="font-medium text-green-600">+{{ formatMoney(slip.allowances) }}</span>
+                                                                        </div>
+                                                                        <div class="flex justify-between border-t pt-2 mt-2">
+                                                                            <span class="text-gray-700 font-semibold">Tổng giảm trừ:</span>
+                                                                            <span class="font-semibold text-red-600">-{{ formatMoney(slip.deductions) }}</span>
+                                                                        </div>
+                                                                        <div class="flex justify-between border-t pt-2">
+                                                                            <span class="text-gray-800 font-bold">Thực lãnh:</span>
+                                                                            <span class="font-bold text-blue-600">{{ formatMoney(slip.total_salary) }}</span>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <!-- Cột phải: Chi tiết giảm trừ -->
+                                                                    <div class="space-y-2" v-if="slip.details?.details?.deductions?.length || slip.details?.details?.late_penalty?.length">
+                                                                        <h4 class="font-semibold text-gray-700 mb-2">Chi tiết giảm trừ</h4>
+
+                                                                        <!-- Template deductions -->
+                                                                        <div v-for="(ded, i) in (slip.details?.details?.deductions || [])" :key="'ded-'+i"
+                                                                            class="bg-white rounded-md border border-gray-200 px-3 py-2">
+                                                                            <div class="flex justify-between items-start">
+                                                                                <div>
+                                                                                    <span class="font-medium text-gray-800">{{ ded.name }}</span>
+                                                                                    <span class="ml-2 text-xs text-gray-400">({{ categoryLabel(ded.category) }})</span>
+                                                                                </div>
+                                                                                <span class="font-semibold text-red-600">-{{ formatMoney(ded.calculated) }}</span>
+                                                                            </div>
+                                                                            <div class="text-xs text-gray-500 mt-1">
+                                                                                <template v-if="ded.calc_type === 'per_minute'">
+                                                                                    {{ calcTypeLabel(ded.calc_type) }}: <span class="font-medium text-gray-700">{{ ded.total_minutes || (ded.config_amount > 0 ? Math.round(ded.calculated / ded.config_amount) : 0) }} phút</span>
+                                                                                    × {{ formatMoney(ded.config_amount) }}/phút
+                                                                                </template>
+                                                                                <template v-else-if="ded.calc_type === 'per_occurrence'">
+                                                                                    {{ calcTypeLabel(ded.calc_type) }}: <span class="font-medium text-gray-700">{{ ded.occurrences }} lần</span>
+                                                                                    × {{ formatMoney(ded.config_amount) }}/lần
+                                                                                </template>
+                                                                                <template v-else>
+                                                                                    {{ calcTypeLabel(ded.calc_type) }}: {{ formatMoney(ded.config_amount) }}
+                                                                                </template>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        <!-- Tier-based late penalties -->
+                                                                        <template v-if="slip.details?.details?.late_penalty?.length">
+                                                                            <h5 class="font-medium text-gray-600 mt-3 mb-1">Phạt đi muộn theo mức</h5>
+                                                                            <div class="bg-white rounded-md border border-gray-200 overflow-hidden">
+                                                                                <table class="w-full text-xs">
+                                                                                    <thead class="bg-gray-100">
+                                                                                        <tr>
+                                                                                            <th class="px-2 py-1.5 text-left text-gray-500">Ngày</th>
+                                                                                            <th class="px-2 py-1.5 text-right text-gray-500">Muộn (phút)</th>
+                                                                                            <th class="px-2 py-1.5 text-right text-gray-500">Mức phạt</th>
+                                                                                        </tr>
+                                                                                    </thead>
+                                                                                    <tbody>
+                                                                                        <tr v-for="(lp, j) in slip.details.details.late_penalty" :key="'lp-'+j" class="border-t border-gray-100">
+                                                                                            <td class="px-2 py-1.5 text-gray-700">{{ lp.date }}</td>
+                                                                                            <td class="px-2 py-1.5 text-right text-gray-700">{{ lp.late_minutes }}</td>
+                                                                                            <td class="px-2 py-1.5 text-right text-red-600 font-medium">-{{ formatMoney(lp.penalty) }}</td>
+                                                                                        </tr>
+                                                                                    </tbody>
+                                                                                    <tfoot class="bg-gray-50 font-medium">
+                                                                                        <tr>
+                                                                                            <td class="px-2 py-1.5">Tổng</td>
+                                                                                            <td class="px-2 py-1.5 text-right">{{ slip.details?.late_minutes || slip.details?.details?.late_penalty?.reduce((s, lp) => s + lp.late_minutes, 0) }} phút</td>
+                                                                                            <td class="px-2 py-1.5 text-right text-red-600">-{{ formatMoney(slip.details?.late_penalty || slip.details?.details?.late_penalty?.reduce((s, lp) => s + lp.penalty, 0)) }}</td>
+                                                                                        </tr>
+                                                                                    </tfoot>
+                                                                                </table>
+                                                                            </div>
+                                                                        </template>
+
+                                                                        <!-- Tổng hợp đi muộn -->
+                                                                        <div v-if="slip.details?.late_count > 0 && !slip.details?.details?.late_penalty?.length"
+                                                                            class="text-xs text-gray-500 mt-1">
+                                                                            Đi muộn: {{ slip.details.late_count }} lần, tổng {{ slip.details.late_minutes }} phút
+                                                                        </div>
+                                                                    </div>
+                                                                    <div v-else class="space-y-2">
+                                                                        <h4 class="font-semibold text-gray-700 mb-2">Chi tiết giảm trừ</h4>
+                                                                        <p class="text-gray-400 text-xs">Không có giảm trừ.</p>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                        </template>
                                                     </tbody>
                                                 </table>
 
@@ -1361,6 +1476,21 @@ const editNotes = ref("");
 const selectedSlipIds = ref([]);
 const selectAllSlips = ref(false);
 const isPaying = ref(false);
+const expandedSlipId = ref(null);
+
+const toggleSlipDetail = (slipId) => {
+    expandedSlipId.value = expandedSlipId.value === slipId ? null : slipId;
+};
+
+const calcTypeLabel = (type) => {
+    const map = { per_occurrence: 'Theo lần', per_minute: 'Theo số phút', fixed_per_month: 'Cố định/tháng' };
+    return map[type] || type;
+};
+
+const categoryLabel = (cat) => {
+    const map = { late: 'Đi muộn', early_leave: 'Về sớm', absence: 'Vắng mặt', violation: 'Vi phạm', fixed: 'Cố định' };
+    return map[cat] || cat;
+};
 
 const detailTabs = [
     { key: "info", label: "Thông tin" },
