@@ -19,6 +19,7 @@ class CashFlowController extends Controller
                 ->orWhere('description', 'LIKE', "%{$search}%")
                 ->orWhere('reference_code', 'LIKE', "%{$search}%");
         })
+            ->orderBy('time', 'desc')
             ->orderBy('created_at', 'desc')
             ->paginate(15)
             ->withQueryString();
@@ -157,7 +158,7 @@ class CashFlowController extends Controller
     {
         $flows = CashFlow::query()
             ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%")->orWhere('description', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+            ->orderBy('time', 'desc')->orderBy('id', 'desc')->get();
 
         return \App\Services\CsvService::export(
             ['Mã phiếu', 'Thời gian', 'Loại', 'Giá trị', 'Người nộp/nhận', 'Hạng mục', 'Phương thức', 'Ghi chú'],
