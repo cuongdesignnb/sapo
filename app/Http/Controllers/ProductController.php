@@ -171,6 +171,10 @@ class ProductController extends Controller
         unset($validatedData['units'], $validatedData['base_unit_name'], $validatedData['variants']);
 
         $product = Product::create($validatedData);
+
+        // Save technician_price to active price books if provided
+        if ($technicianPrice > 0) {
+            $activeBooks = PriceBook::where('is_active', true)
                 ->where('enable_technician_price', true)->get();
             foreach ($activeBooks as $book) {
                 PriceBookProduct::updateOrCreate(
