@@ -179,7 +179,11 @@ const selectProduct = (product) => {
 };
 
 const hideSuggestions = () => {
-    setTimeout(() => { if(activeTab.value) activeTab.value.showSuggestions = false; }, 200);
+    window.setTimeout(() => { if(activeTab.value) activeTab.value.showSuggestions = false; }, 200);
+};
+
+const hideCustomerDropdown = () => {
+    window.setTimeout(() => { if(activeTab.value) activeTab.value.showCustomerDropdown = false; }, 200);
 };
 
 const removeItem = (index) => {
@@ -551,7 +555,7 @@ onUnmounted(() => {
                         <!-- Search dropdown -->
                        <div class="relative flex-1">
                           <i class="fas fa-search absolute left-2 top-2 text-gray-400"></i>
-                          <input v-model="activeTab.searchCustomer" @focus="activeTab.showCustomerDropdown = true" @blur="setTimeout(()=>activeTab.showCustomerDropdown = false, 200)" placeholder="Tìm khách hàng (F4)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 pl-7 pr-6 text-[13px]" />
+                           <input v-model="activeTab.searchCustomer" @focus="activeTab.showCustomerDropdown = true" @blur="hideCustomerDropdown" placeholder="Tìm khách hàng (F4)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 pl-7 pr-6 text-[13px]" />
                           <button class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
                           
                           <!-- Dropdown Results -->
