@@ -303,6 +303,16 @@ const filteredCategories = computed(() => {
     return (props.categories || []).filter(c => c.type === createType.value || c.type === 'general');
 });
 
+const adminComplete = async (taskId) => {
+    if (!confirm("Xác nhận hoàn thành công việc này?")) return;
+    try {
+        await axios.post(`/api/tasks/${taskId}/complete`);
+        loadTasks();
+    } catch (e) {
+        alert(e.response?.data?.message || "Lỗi khi hoàn thành.");
+    }
+};
+
 loadTasks();
 </script>
 
@@ -430,7 +440,10 @@ loadTasks();
                                 <span v-else class="text-gray-300">-</span>
                             </td>
                             <td class="px-4 py-3 text-center" @click.stop>
-                                <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="openAssignModal(t.id)" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Giao NV</button>
+                                <div class="flex items-center justify-center gap-2">
+                                    <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="openAssignModal(t.id)" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Giao NV</button>
+                                    <button v-if="t.status !== 'completed' && t.status !== 'cancelled'" @click.stop="adminComplete(t.id)" class="text-green-600 hover:text-green-800 text-xs font-semibold">Hoàn thành</button>
+                                </div>
                             </td>
                         </tr>
                     </tbody>

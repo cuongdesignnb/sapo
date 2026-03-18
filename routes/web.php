@@ -55,6 +55,7 @@ Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
 Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
 Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
+Route::put('/purchases/{purchase}', [PurchaseController::class, 'update'])->name('purchases.update');
 Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
 Route::get('/products/create/{type?}', [ProductController::class, 'create'])->name('products.create');
 Route::get('/products/document-detail', [ProductController::class, 'documentDetail'])->name('products.document-detail');
@@ -72,6 +73,7 @@ Route::delete('/products/{product}/serials/{serial}', [ProductController::class,
 Route::get('/products/{product}/warranties', [ProductController::class, 'warranties'])->name('products.warranties');
 Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
 Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');
+Route::post('/products/bulk-update-category', [ProductController::class, 'bulkUpdateCategory'])->name('products.bulk-update-category');
 
 Route::get('/price-settings/export', [PriceSettingController::class, 'export'])->name('price-settings.export');
 Route::post('/price-settings/import', [PriceSettingController::class, 'import'])->name('price-settings.import');

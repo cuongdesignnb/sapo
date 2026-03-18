@@ -90,7 +90,8 @@ class ProductController extends Controller
             'products' => $products,
             'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
-            'filters' => $request->only('search')
+            'filters' => $request->only('search'),
+            'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
         ]);
     }
 
@@ -819,5 +820,28 @@ class ProductController extends Controller
         $serial->delete();
 
         return response()->json(['message' => 'Đã xóa serial.']);
+    }
+
+    /**
+     * POST /products/bulk-update-category
+     * Chuyển nhóm hàng hàng loạt
+     */
+    public function bulkUpdateCategory(Request $request)
+    {
+        $validated = $request->validate([
+            'product_ids' => 'required|array|min:1',
+            'product_ids.*' => 'exists:products,id',
+            'category_id' => 'required|exists:categories,id',
+        ]);
+
+        $count = Product::whereIn('id', $validated['product_ids'])
+            ->update(['category_id' => $validated['category_id']]);
+
+        $category = Category::find($validated['category_id']);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Đã chuyển {$count} sản phẩm sang nhóm \"{$category->name}\".",
+        ]);
     }
 }

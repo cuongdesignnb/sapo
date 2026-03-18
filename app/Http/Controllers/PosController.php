@@ -10,7 +10,10 @@ class PosController extends Controller
 {
     public function index()
     {
-        return Inertia::render('POS/Index');
+        return Inertia::render('POS/Index', [
+            'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
+            'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+        ]);
     }
 
     public function searchProducts(Request $request)
@@ -39,6 +42,10 @@ class PosController extends Controller
             'discount' => 'required|numeric|min:0',
             'total' => 'required|numeric|min:0',
             'customer_paid' => 'required|numeric|min:0',
+            'employee_id' => 'nullable|exists:employees,id',
+            'sale_time' => 'nullable|date',
+            'payment_method' => 'nullable|string|in:cash,transfer',
+            'bank_account_info' => 'nullable|string',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
@@ -54,6 +61,10 @@ class PosController extends Controller
                 'discount' => $validated['discount'],
                 'total' => $validated['total'],
                 'customer_paid' => $validated['customer_paid'],
+                'employee_id' => $validated['employee_id'] ?? null,
+                'sale_time' => $validated['sale_time'] ?? now(),
+                'payment_method' => $validated['payment_method'] ?? 'cash',
+                'bank_account_info' => ($validated['payment_method'] ?? 'cash') === 'transfer' ? ($validated['bank_account_info'] ?? null) : null,
             ]);
 
             foreach ($validated['items'] as $item) {

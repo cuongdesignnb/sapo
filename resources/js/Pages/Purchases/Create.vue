@@ -13,6 +13,7 @@ const props = defineProps({
     purchaseOrderInfo: Object,
     showRetailPrice: Boolean,
     showTechnicianPrice: Boolean,
+    bankAccounts: Array,
 });
 
 // Local mutable copy of products list (to add newly created products)
@@ -54,12 +55,18 @@ const items = ref([]);
 
 const selectedSupplierId = ref('');
 const selectedEmployeeId = ref('');
-const purchaseDate = ref(new Date().toISOString().slice(0, 16));
+// Use local time (not UTC) for datetime-local input
+const pad = (n) => String(n).padStart(2, '0');
+const nowLocal = new Date();
+const localNow = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth()+1)}-${pad(nowLocal.getDate())}T${pad(nowLocal.getHours())}:${pad(nowLocal.getMinutes())}`;
+const purchaseDate = ref(localNow);
 const status = ref('completed');
 const discount = ref(0);
 const paidAmount = ref(0);
 const note = ref('');
 const submitRef = ref(false);
+const paymentMethod = ref('cash');
+const bankAccountInfo = ref('');
 
 onMounted(() => {
     if (props.purchaseOrderInfo) {
@@ -166,6 +173,8 @@ const save = async () => {
             note: note.value,
             discount: discount.value,
             paid_amount: paidAmount.value,
+            payment_method: paymentMethod.value,
+            bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
             items: items.value.map(item => ({
                 product_id: item.product_id,
                 quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
@@ -565,6 +574,30 @@ const quickCreateBrand = async () => {
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium text-gray-500">Tính vào công nợ</label>
                                  <div class="w-[150px] text-right font-bold text-gray-500 tracking-wide">{{ formatCurrency(debtAmount) }}</div>
+                            </div>
+
+                            <!-- Payment Method -->
+                            <div class="pt-3 border-t border-gray-200 mt-2">
+                                <label class="block text-[13px] text-gray-700 font-medium mb-2">Phương thức thanh toán</label>
+                                <div class="flex items-center gap-4 text-[13px]">
+                                    <label class="flex items-center gap-1.5 cursor-pointer">
+                                        <input type="radio" v-model="paymentMethod" value="cash" class="text-green-600 focus:ring-green-500 w-4 h-4" />
+                                        <span>Tiền mặt</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 cursor-pointer">
+                                        <input type="radio" v-model="paymentMethod" value="transfer" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                        <span>Chuyển khoản</span>
+                                    </label>
+                                </div>
+                                <div v-if="paymentMethod === 'transfer'" class="mt-2">
+                                    <select v-model="bankAccountInfo" class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] outline-none focus:border-blue-500 bg-white">
+                                        <option value="">-- Chọn tài khoản ngân hàng --</option>
+                                        <option v-for="ba in bankAccounts" :key="ba.id" :value="ba.bank_name + ' - ' + ba.account_number + ' - ' + ba.account_holder">
+                                            {{ ba.bank_name }} - {{ ba.account_number }} ({{ ba.account_holder }})
+                                        </option>
+                                    </select>
+                                    <input v-if="!bankAccounts?.length" type="text" v-model="bankAccountInfo" class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] outline-none focus:border-blue-500 mt-1" placeholder="Nhập số tài khoản ngân hàng" />
+                                </div>
                             </div>
 
                             <div class="pt-2">

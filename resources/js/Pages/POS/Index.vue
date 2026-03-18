@@ -1,7 +1,12 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
+
+const props = defineProps({
+    employees: Array,
+    bankAccounts: Array,
+});
 
 // State for search and products
 const query = ref('');
@@ -11,21 +16,37 @@ const isSearching = ref(false);
 // State for the cart (giỏ hàng)
 const cart = ref([]);
 
-// Payment details
-const discount = ref(0);
-const taxRate = ref(0.1); // 10% VAT
-const customerPaid = ref(0);
+// Employee & time
+const selectedEmployeeId = ref('');
+const currentTime = ref('');
 
-const currentTime = computed(() => {
+const updateTime = () => {
     const now = new Date();
-    return now.toLocaleString('vi-VN', {
+    currentTime.value = now.toLocaleString('vi-VN', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        second: '2-digit',
     });
+};
+
+let timeInterval;
+onMounted(() => {
+    updateTime();
+    timeInterval = setInterval(updateTime, 1000);
+    searchProducts();
 });
+onUnmounted(() => {
+    clearInterval(timeInterval);
+});
+
+// Payment details
+const discount = ref(0);
+const customerPaid = ref(0);
+const paymentMethod = ref('cash');
+const bankAccountInfo = ref('');
 
 // Fetch products based on search query
 const searchProducts = async () => {
@@ -41,11 +62,6 @@ const searchProducts = async () => {
         isSearching.value = false;
     }
 };
-
-onMounted(() => {
-    // Load initial products (default without query)
-    searchProducts();
-});
 
 // Watch input changes with debounce for search
 let timeout;
@@ -79,7 +95,6 @@ const removeFromCart = (index) => {
 const updateQuantity = (index, delta) => {
     const newQty = cart.value[index].quantity + delta;
     if (newQty > 0) {
-        // Option to check stock quantity here
         cart.value[index].quantity = newQty;
     } else {
         removeFromCart(index);
@@ -122,6 +137,10 @@ const processCheckout = async () => {
             discount: discount.value,
             total: totalAmount.value,
             customer_paid: customerPaid.value,
+            employee_id: selectedEmployeeId.value || null,
+            sale_time: new Date().toISOString(),
+            payment_method: paymentMethod.value,
+            bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
             items: cart.value.map(item => ({
                 product_id: item.product.id,
                 quantity: item.quantity,
@@ -132,16 +151,15 @@ const processCheckout = async () => {
         const response = await axios.post('/api/pos/checkout', payload);
         
         if (response.data.success) {
-            // Show toast message
             toastMsg.value = `${response.data.message} - Phiếu ${response.data.invoice_code}`;
             setTimeout(() => toastMsg.value = '', 4000);
 
-            // Reset cart
             cart.value = [];
             discount.value = 0;
             customerPaid.value = 0;
+            paymentMethod.value = 'cash';
+            bankAccountInfo.value = '';
             
-            // Reload query logic to see if stock quantities have updated.
             searchProducts(); 
         } else {
             alert("Lỗi: " + response.data.message);
@@ -193,14 +211,22 @@ const processCheckout = async () => {
             </div>
             
             <div class="flex items-center gap-3">
+                <!-- Employee Selector -->
+                <div class="flex items-center gap-2 bg-blue-700/50 rounded px-3 py-1">
+                    <svg class="w-4 h-4 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    <select v-model="selectedEmployeeId" class="bg-transparent text-white text-sm outline-none border-none font-medium appearance-none pr-4 cursor-pointer min-w-[120px]">
+                        <option value="" class="text-gray-800">-- Nhân viên bán --</option>
+                        <option v-for="emp in employees" :key="emp.id" :value="emp.id" class="text-gray-800">{{ emp.name }}</option>
+                    </select>
+                </div>
+                <!-- Real-time clock -->
+                <div class="text-sm font-medium text-blue-100 bg-blue-700/50 rounded px-3 py-1 tabular-nums tracking-tight">
+                    {{ currentTime }}
+                </div>
                 <Link href="/" class="text-sm font-medium hover:bg-blue-700 px-3 py-1.5 rounded bg-blue-500 transition-colors flex items-center gap-1">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
                     Về Quản lý
                 </Link>
-                <div class="flex items-center gap-2 cursor-pointer ml-2">
-                    <div class="w-8 h-8 bg-blue-800 rounded-full flex items-center justify-center text-white font-bold text-sm">A</div>
-                    <span class="text-sm font-medium">Admin</span>
-                </div>
             </div>
         </header>
 
@@ -327,6 +353,29 @@ const processCheckout = async () => {
                     <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
                         <span>Tiền thừa trả khách</span>
                         <span>{{ changeDue.toLocaleString() }}</span>
+                    </div>
+
+                    <!-- Payment Method -->
+                    <div class="border-t border-gray-200 pt-3">
+                        <div class="flex items-center gap-4 text-sm">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" v-model="paymentMethod" value="cash" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                <span class="font-medium">Tiền mặt</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" v-model="paymentMethod" value="transfer" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                <span class="font-medium">Chuyển khoản</span>
+                            </label>
+                        </div>
+                        <div v-if="paymentMethod === 'transfer'" class="mt-2">
+                            <select v-model="bankAccountInfo" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-500 bg-white">
+                                <option value="">-- Chọn tài khoản --</option>
+                                <option v-for="ba in bankAccounts" :key="ba.id" :value="ba.bank_name + ' - ' + ba.account_number + ' - ' + ba.account_holder">
+                                    {{ ba.bank_name }} - {{ ba.account_number }} ({{ ba.account_holder }})
+                                </option>
+                            </select>
+                            <input v-if="!bankAccounts?.length" type="text" v-model="bankAccountInfo" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" placeholder="Nhập số tài khoản" />
+                        </div>
                     </div>
                     
                     <div class="mt-4 flex gap-2 w-full justify-between pb-6">

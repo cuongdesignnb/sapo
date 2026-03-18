@@ -404,7 +404,7 @@ const printPurchase = (order) => {
                                 <td class="px-2 py-2">
                                     {{
                                         new Date(
-                                            order.created_at,
+                                            order.purchase_date || order.created_at,
                                         ).toLocaleString("vi-VN", {
                                             day: "2-digit",
                                             month: "2-digit",

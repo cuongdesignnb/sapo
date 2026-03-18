@@ -238,7 +238,7 @@ loadTask();
                     <div class="flex gap-2">
                         <button v-if="isActive" @click="openAssignModal" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">Giao NV</button>
                         <button v-if="isActive && task.type === 'repair'" @click="showPartModal = true; partError = ''; selectedProduct = null; productSearch = ''; partForm = { product_id: null, quantity: 1, notes: '' }" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">+ Linh kiện</button>
-                        <button v-if="task.status === 'in_progress'" @click="markComplete" class="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700">Hoàn thành</button>
+                        <button v-if="isActive" @click="markComplete" class="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700">Hoàn thành</button>
                         <button v-if="isActive" @click="cancelTask" class="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm font-semibold hover:bg-red-100 border border-red-200">Hủy</button>
                     </div>
                 </div>

@@ -52,6 +52,7 @@ class Role extends Model
                         'products.delete' => 'Xóa hàng hóa',
                         'products.import' => 'Import hàng hóa',
                         'products.export' => 'Xuất file hàng hóa',
+                        'products.view_cost_price' => 'Xem giá vốn (giá nhập)',
                     ],
                     'Thiết lập giá' => [
                         'price_settings.view'   => 'Xem thiết lập giá',

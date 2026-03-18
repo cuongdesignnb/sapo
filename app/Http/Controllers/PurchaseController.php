@@ -102,6 +102,7 @@ class PurchaseController extends Controller
             'purchaseOrderInfo' => $purchaseOrderInfo,
             'showRetailPrice' => $showRetailPrice,
             'showTechnicianPrice' => $showTechnicianPrice,
+            'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
         ]);
     }
 
@@ -124,6 +125,8 @@ class PurchaseController extends Controller
             'discount' => 'nullable|numeric|min:0',
             'paid_amount' => 'nullable|numeric|min:0',
             'note' => 'nullable|string',
+            'payment_method' => 'nullable|string|in:cash,transfer',
+            'bank_account_info' => 'nullable|string',
         ]);
 
         // Validate serial products have quantity matching serials count
@@ -166,6 +169,8 @@ class PurchaseController extends Controller
                 'note' => $request->note,
                 'status' => $request->status ?? 'completed',
                 'purchase_date' => $request->purchase_date ?? now(),
+                'payment_method' => $request->payment_method ?? 'cash',
+                'bank_account_info' => $request->bank_account_info,
             ]);
 
             foreach ($request->items as $item) {
@@ -319,7 +324,75 @@ class PurchaseController extends Controller
 
         return Inertia::render('Purchases/Show', [
             'purchase' => $purchase,
+            'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
+            'employees' => \App\Models\Employee::where('is_active', true)->get(['id', 'name', 'code']),
         ]);
+    }
+
+    public function update(Request $request, Purchase $purchase)
+    {
+        $request->validate([
+            'note' => 'nullable|string',
+            'purchase_date' => 'nullable|date',
+            'discount' => 'nullable|numeric|min:0',
+            'paid_amount' => 'nullable|numeric|min:0',
+            'payment_method' => 'nullable|string|in:cash,transfer',
+            'bank_account_info' => 'nullable|string',
+            'employee_id' => 'nullable|exists:employees,id',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $oldPaidAmount = $purchase->paid_amount;
+            $oldDebt = $purchase->debt_amount;
+
+            $discount = $request->discount ?? $purchase->discount;
+            $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
+            $payAmount = $purchase->total_amount - $discount;
+            $debtAmount = $payAmount - $paidAmount;
+
+            $purchase->update([
+                'note' => $request->note ?? $purchase->note,
+                'purchase_date' => $request->purchase_date ?? $purchase->purchase_date,
+                'discount' => $discount,
+                'paid_amount' => $paidAmount,
+                'debt_amount' => $debtAmount,
+                'payment_method' => $request->payment_method ?? $purchase->payment_method,
+                'bank_account_info' => $request->bank_account_info,
+                'employee_id' => $request->employee_id ?? $purchase->employee_id,
+            ]);
+
+            // Update supplier debt if paid amount changed
+            if ($paidAmount != $oldPaidAmount && $purchase->supplier) {
+                $debtDiff = $debtAmount - $oldDebt;
+                $purchase->supplier->supplier_debt_amount += $debtDiff;
+                $purchase->supplier->save();
+
+                // Create cash flow for additional payment
+                $additionalPayment = $paidAmount - $oldPaidAmount;
+                if ($additionalPayment > 0) {
+                    CashFlow::create([
+                        'code' => 'PC' . date('YmdHis') . rand(10,99),
+                        'type' => 'payment',
+                        'amount' => $additionalPayment,
+                        'time' => now(),
+                        'category' => 'Chi tiền trả NCC',
+                        'target_type' => 'Nhà cung cấp',
+                        'target_name' => $purchase->supplier->name ?? 'Nhà cung cấp',
+                        'reference_type' => 'Purchase',
+                        'reference_code' => $purchase->code,
+                        'description' => 'Trả thêm tiền NCC cho phiếu ' . $purchase->code,
+                    ]);
+                }
+            }
+
+            DB::commit();
+            return redirect()->route('purchases.show', $purchase->id)->with('success', 'Cập nhật phiếu nhập hàng thành công!');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage());
+        }
     }
 
     public function destroy(Purchase $purchase)

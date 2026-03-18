@@ -18,6 +18,8 @@ class Purchase extends Model
         'note',
         'status',
         'purchase_date',
+        'payment_method',
+        'bank_account_info',
     ];
 
     protected $casts = [

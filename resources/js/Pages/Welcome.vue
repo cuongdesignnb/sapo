@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "../Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
@@ -10,9 +10,75 @@ const props = defineProps({
     categories: Array,
     brands: Array,
     filters: Object,
+    canViewCostPrice: { type: Boolean, default: false },
 });
 
 const search = ref(props.filters?.search || "");
+
+// Bulk selection state
+const selectedProductIds = ref([]);
+const showTransferModal = ref(false);
+const transferCategoryId = ref('');
+const transferLoading = ref(false);
+
+const allSelected = computed(() => {
+    const data = props.products?.data || [];
+    return data.length > 0 && data.every(p => selectedProductIds.value.includes(p.id));
+});
+
+const toggleSelectAll = () => {
+    const data = props.products?.data || [];
+    if (allSelected.value) {
+        selectedProductIds.value = [];
+    } else {
+        selectedProductIds.value = data.map(p => p.id);
+    }
+};
+
+const toggleProductSelect = (id) => {
+    const idx = selectedProductIds.value.indexOf(id);
+    if (idx >= 0) {
+        selectedProductIds.value.splice(idx, 1);
+    } else {
+        selectedProductIds.value.push(id);
+    }
+};
+
+const openTransferModal = () => {
+    transferCategoryId.value = '';
+    showTransferModal.value = true;
+};
+
+const flatCategories = computed(() => {
+    const result = [];
+    const flatten = (cats, prefix = '') => {
+        (cats || []).forEach(c => {
+            result.push({ id: c.id, name: prefix + c.name });
+            if (c.children?.length) flatten(c.children, prefix + c.name + ' > ');
+        });
+    };
+    flatten(props.categories);
+    return result;
+});
+
+const submitTransfer = async () => {
+    if (!transferCategoryId.value || selectedProductIds.value.length === 0) return;
+    transferLoading.value = true;
+    try {
+        const res = await axios.post('/products/bulk-update-category', {
+            product_ids: selectedProductIds.value,
+            category_id: transferCategoryId.value,
+        });
+        alert(res.data.message);
+        showTransferModal.value = false;
+        selectedProductIds.value = [];
+        router.reload();
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi khi chuyển nhóm.');
+    } finally {
+        transferLoading.value = false;
+    }
+};
 
 let searchTimeout;
 watch(search, (value) => {
@@ -252,6 +318,15 @@ const formatDate = (val) => {
                 </div>
 
                 <div class="flex gap-2">
+                    <!-- Chuyển nhóm hàng button -->
+                    <button
+                        v-if="selectedProductIds.length > 0"
+                        @click="openTransferModal"
+                        class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                        Chuyển nhóm ({{ selectedProductIds.length }})
+                    </button>
                     <div class="relative items-center" @click.stop>
                         <button
                             @click="toggleDropdown"
@@ -331,14 +406,17 @@ const formatDate = (val) => {
                             <th class="p-3 w-10 text-center">
                                 <input
                                     type="checkbox"
+                                    :checked="allSelected"
+                                    @change="toggleSelectAll"
                                     class="rounded border-gray-300"
                                 />
                             </th>
                             <th class="p-3 w-16">Ảnh</th>
                             <th class="p-3">Mã hàng</th>
                             <th class="p-3">Tên hàng</th>
+                            <th class="p-3">Nhóm hàng</th>
                             <th class="p-3 text-right">Giá bán</th>
-                            <th class="p-3 text-right">Giá vốn</th>
+                            <th v-if="canViewCostPrice" class="p-3 text-right">Giá vốn</th>
                             <th class="p-3 text-right">Tồn kho</th>
                         </tr>
                     </thead>
@@ -354,6 +432,8 @@ const formatDate = (val) => {
                                 <td class="p-3 text-center" @click.stop>
                                     <input
                                         type="checkbox"
+                                        :checked="selectedProductIds.includes(product.id)"
+                                        @change="toggleProductSelect(product.id)"
                                         class="rounded border-gray-300"
                                     />
                                 </td>
@@ -384,6 +464,9 @@ const formatDate = (val) => {
                                 <td class="p-3 font-medium text-gray-800">
                                     {{ product.name }}
                                 </td>
+                                <td class="p-3 text-gray-600 text-sm">
+                                    {{ product.category?.name || '---' }}
+                                </td>
                                 <td class="p-3 text-right">
                                     {{
                                         Number(
@@ -391,7 +474,7 @@ const formatDate = (val) => {
                                         ).toLocaleString()
                                     }}
                                 </td>
-                                <td class="p-3 text-right text-gray-500">
+                                <td v-if="canViewCostPrice" class="p-3 text-right text-gray-500">
                                     {{
                                         Number(
                                             product.cost_price || 0,
@@ -408,7 +491,7 @@ const formatDate = (val) => {
                                 v-if="product.expanded"
                                 class="group transition-colors bg-gray-50/30"
                             >
-                                <td colspan="7" class="p-0">
+                                <td :colspan="canViewCostPrice ? 8 : 7" class="p-0">
                                     <div
                                         class="px-6 py-4 bg-[#f8fbff] shadow-inner border-y border-blue-100"
                                     >
@@ -1685,5 +1768,41 @@ const formatDate = (val) => {
                 </div>
             </div>
         </Teleport>
+
+        <!-- Bulk Category Transfer Modal -->
+        <Teleport to="body">
+            <div v-if="showTransferModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
+                    <div class="flex items-center justify-between px-6 py-4 border-b">
+                        <h2 class="text-lg font-bold text-gray-800">Chuyển nhóm hàng</h2>
+                        <button @click="showTransferModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                    </div>
+                    <div class="px-6 py-5 space-y-4">
+                        <p class="text-sm text-gray-600">
+                            Chuyển <strong>{{ selectedProductIds.length }}</strong> sản phẩm đã chọn sang nhóm hàng mới.
+                        </p>
+                        <div>
+                            <label class="block font-semibold text-sm mb-2">Nhóm hàng đích *</label>
+                            <select v-model="transferCategoryId" class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:border-blue-500 outline-none bg-white">
+                                <option value="">-- Chọn nhóm hàng --</option>
+                                <option v-for="c in flatCategories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
+                        <button @click="showTransferModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold hover:bg-gray-50">Hủy</button>
+                        <button
+                            @click="submitTransfer"
+                            :disabled="!transferCategoryId || transferLoading"
+                            class="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 disabled:opacity-50 flex items-center gap-2"
+                        >
+                            <svg v-if="transferLoading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                            {{ transferLoading ? 'Đang chuyển...' : 'Chuyển nhóm' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
     </AppLayout>
 </template>
+
