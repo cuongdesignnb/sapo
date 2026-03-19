@@ -525,6 +525,28 @@ class ProductController extends Controller
             });
         $transactions = $transactions->concat($transfers);
 
+        // 7. Xuất sửa chữa (Repair Parts)
+        $repairParts = \App\Models\TaskPart::with(['task', 'task.product'])
+            ->where('product_id', $product->id)
+            ->get()
+            ->map(function ($part) {
+                $task = $part->task;
+                $repairedName = $task?->product?->name ?? $task?->title ?? 'Sửa chữa';
+                return [
+                    'date' => $part->created_at,
+                    'code' => $task?->code ?? ('TP-' . $part->id),
+                    'doc_type' => 'repair_part',
+                    'doc_id' => $task?->id,
+                    'type' => 'Xuất sửa chữa',
+                    'partner' => $repairedName,
+                    'sell_price' => 0,
+                    'cost_price' => (float) ($part->unit_cost ?? 0),
+                    'change' => -$part->quantity,
+                    'method' => 'Trừ kho',
+                ];
+            });
+        $transactions = $transactions->concat($repairParts);
+
         // Sort by date ASC and compute running balance
         $sorted = $transactions->sortBy('date')->values();
         $balance = 0;
