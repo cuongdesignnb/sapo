@@ -525,27 +525,7 @@ class ProductController extends Controller
             });
         $transactions = $transactions->concat($transfers);
 
-        // 7. Xuất sửa chữa (Repair Parts)
-        $repairParts = \App\Models\TaskPart::with(['task', 'task.product'])
-            ->where('product_id', $product->id)
-            ->get()
-            ->map(function ($part) {
-                $task = $part->task;
-                $repairedName = $task?->product?->name ?? $task?->title ?? 'Sửa chữa';
-                return [
-                    'date' => $part->created_at,
-                    'code' => $task?->code ?? ('TP-' . $part->id),
-                    'doc_type' => 'repair_part',
-                    'doc_id' => $task?->id,
-                    'type' => 'Xuất sửa chữa',
-                    'partner' => $repairedName,
-                    'sell_price' => 0,
-                    'cost_price' => (float) ($part->unit_cost ?? 0),
-                    'change' => -$part->quantity,
-                    'method' => 'Trừ kho',
-                ];
-            });
-        $transactions = $transactions->concat($repairParts);
+
 
         // Sort by date ASC and compute running balance
         $sorted = $transactions->sortBy('date')->values();
@@ -574,30 +554,7 @@ class ProductController extends Controller
         return response()->json($query->orderBy('created_at', 'desc')->get());
     }
 
-    /**
-     * GET /products/{product}/warranties
-     */
-    public function warranties(Product $product)
-    {
-        $warranties = \App\Models\Warranty::where('product_id', $product->id)
-            ->orderByDesc('created_at')
-            ->get()
-            ->map(function ($w) {
-                return [
-                    'id' => $w->id,
-                    'invoice_code' => $w->invoice_code,
-                    'customer_name' => $w->customer_name,
-                    'serial_imei' => $w->serial_imei,
-                    'warranty_period' => $w->warranty_period,
-                    'purchase_date' => $w->purchase_date?->format('d/m/Y'),
-                    'warranty_end_date' => $w->warranty_end_date?->format('d/m/Y'),
-                    'status' => $w->warranty_end_date && $w->warranty_end_date->isFuture() ? 'active' : 'expired',
-                    'maintenance_note' => $w->maintenance_note,
-                ];
-            });
 
-        return response()->json($warranties);
-    }
 
     /**
      * GET /products/document-detail?type=invoice&id=123

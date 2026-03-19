@@ -1,11 +1,2 @@
 <?php
-
-namespace App\Models;
-
-/**
- * @deprecated Use App\Models\TaskPart instead.
- */
-class DeviceRepairPart extends TaskPart
-{
-    //
-}
+// Removed: PC/Laptop repair management feature

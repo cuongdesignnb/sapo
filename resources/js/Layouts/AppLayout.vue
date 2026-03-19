@@ -125,15 +125,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     class="block px-4 py-3 hover:bg-gray-100"
                                     >Thiết lập giá</Link
                                 >
-                                <Link
-                                    v-if="
-                                        $page.props.app_settings
-                                            ?.warranty_enabled ?? true
-                                    "
-                                    href="/warranties"
-                                    class="block px-4 py-3 hover:bg-gray-100"
-                                    >Bảo hành, bảo trì</Link
-                                >
+
                             </div>
 
                             <!-- Col 2: Kho hàng -->
@@ -256,11 +248,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
                                     >Trả hàng</Link
                                 >
-                                <Link
-                                    href="#"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Yêu cầu sửa chữa</Link
-                                >
+
                                 <Link
                                     href="#"
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
@@ -339,39 +327,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         }"
                         >Sổ quỹ</Link
                     >
-                    <!-- Công việc — chỉ hiện khi module bật + có quyền -->
-                    <div v-if="($page.props.app_settings?.task_module_enabled || $page.props.app_settings?.repair_tracking_enabled) && canAny(['tasks.view', 'repairs.view'])" class="relative group">
-                        <button
-                            class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
-                            :class="{
-                                'bg-[#005bb5]':
-                                    $page.url.startsWith('/tasks') || $page.url.startsWith('/my-tasks'),
-                            }"
-                        >
-                            Công việc
-                        </button>
-                        <div
-                            class="absolute left-0 mt-0 w-48 bg-white rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pt-1 border border-gray-100"
-                        >
-                            <div class="bg-white rounded py-1">
-                                <Link
-                                    href="/tasks"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Danh sách công việc</Link
-                                >
-                                <Link
-                                    href="/my-tasks"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Việc của tôi</Link
-                                >
-                                <Link
-                                    href="/tasks/performance"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Báo cáo năng suất</Link
-                                >
-                            </div>
-                        </div>
-                    </div>
+
                     <Link href="#" class="px-3 py-2 hover:bg-[#005bb5] rounded"
                         >Phân tích</Link
                     >

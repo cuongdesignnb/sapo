@@ -256,47 +256,9 @@ Route::prefix('paysheets')->group(function () {
     Route::delete('/{id}', [PaysheetController::class, 'destroy']);
 });
 
-// =======================
-// 🔧 DEVICE REPAIR
-// =======================
 
-Route::prefix('device-repairs')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\DeviceRepairController::class, 'index']);
-    Route::get('/performance', [\App\Http\Controllers\Api\DeviceRepairController::class, 'performance']);
-    Route::get('/search-serials', [\App\Http\Controllers\Api\DeviceRepairController::class, 'searchSerials']);
-    Route::get('/search-products', [\App\Http\Controllers\Api\DeviceRepairController::class, 'searchProducts']);
-    Route::post('/', [\App\Http\Controllers\Api\DeviceRepairController::class, 'store']);
-    Route::get('/{deviceRepair}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'show']);
-    Route::put('/{deviceRepair}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'update']);
-    Route::post('/{deviceRepair}/assign', [\App\Http\Controllers\Api\DeviceRepairController::class, 'assign']);
-    Route::post('/{deviceRepair}/parts', [\App\Http\Controllers\Api\DeviceRepairController::class, 'addPart']);
-    Route::delete('/{deviceRepair}/parts/{partId}', [\App\Http\Controllers\Api\DeviceRepairController::class, 'removePart']);
-    Route::post('/{deviceRepair}/complete', [\App\Http\Controllers\Api\DeviceRepairController::class, 'complete']);
-});
 
-// =======================
-// 📋 TASKS (unified: repairs + general)
-// =======================
 
-Route::prefix('tasks')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\TaskController::class, 'index']);
-    Route::get('/categories', [\App\Http\Controllers\Api\TaskController::class, 'categories']);
-    Route::get('/performance', [\App\Http\Controllers\Api\TaskController::class, 'performance']);
-    Route::get('/search-serials', [\App\Http\Controllers\Api\TaskController::class, 'searchSerials']);
-    Route::get('/search-products', [\App\Http\Controllers\Api\TaskController::class, 'searchProducts']);
-    Route::get('/product-serials', [\App\Http\Controllers\Api\TaskController::class, 'productSerials']);
-    Route::post('/batch-repair', [\App\Http\Controllers\Api\TaskController::class, 'batchCreateRepair']);
-    Route::post('/', [\App\Http\Controllers\Api\TaskController::class, 'store']);
-    Route::get('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'show']);
-    Route::put('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'update']);
-    Route::delete('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'destroy']);
-    Route::post('/{task}/assign', [\App\Http\Controllers\Api\TaskController::class, 'assign']);
-    Route::post('/{task}/parts', [\App\Http\Controllers\Api\TaskController::class, 'addPart']);
-    Route::delete('/{task}/parts/{partId}', [\App\Http\Controllers\Api\TaskController::class, 'removePart']);
-    Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete']);
-    Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress']);
-    Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment']);
-});
 
 // 🔔 NOTIFICATIONS
 Route::prefix('notifications')->middleware('auth:sanctum')->group(function () {
@@ -306,19 +268,9 @@ Route::prefix('notifications')->middleware('auth:sanctum')->group(function () {
     Route::post('/read-all', [\App\Http\Controllers\Api\NotificationController::class, 'markAllAsRead']);
 });
 
-// 👤 MY TASKS (employee portal)
-Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
-    Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
-    Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
-});
 
-Route::prefix('repair-performance-tiers')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'index']);
-    Route::post('/', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'store']);
-    Route::put('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'update']);
-    Route::delete('/{tier}', [\App\Http\Controllers\Api\RepairPerformanceTierController::class, 'destroy']);
-});
+
+
 
 // ── Roles & Users ──
 Route::prefix('roles')->group(function () {

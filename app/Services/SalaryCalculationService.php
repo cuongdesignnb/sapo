@@ -151,17 +151,7 @@ class SalaryCalculationService
 
         $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount - $deductionAmount;
 
-        // ===== ĐÁNH GIÁ NĂNG SUẤT SỬA CHỮA (chỉ khi module bật) =====
-        $repairPerformance = null;
-        if (Setting::get('repair_performance_salary_enabled', false)) {
-            $repairService = new RepairService();
-            $repairPerformance = $repairService->getEmployeePerformance($employee->id, $from->toDateString(), $to->toDateString());
-            if ($repairPerformance['assigned'] > 0) {
-                $factor = $repairPerformance['salary_percent'] / 100;
-                $baseSalary = $baseSalary * $factor;
-                $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount - $deductionAmount;
-            }
-        }
+
 
         return [
             'base' => round($baseSalary),
@@ -179,7 +169,7 @@ class SalaryCalculationService
             'early_leave_count' => $earlyLeaveCount,
             'early_minutes' => $earlyTotalMinutes,
             'personal_revenue' => $personalRevenue,
-            'repair_performance' => $repairPerformance,
+
             'total' => round(max(0, $totalSalary)),
             'late_penalty' => round($latePenaltyAmount),
             'details' => [

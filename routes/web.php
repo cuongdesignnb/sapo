@@ -8,7 +8,7 @@ use App\Http\Controllers\SupplierController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\PriceSettingController;
-use App\Http\Controllers\WarrantyController;
+
 use App\Http\Controllers\StockTransferController;
 use App\Http\Controllers\StockTakeController;
 use App\Http\Controllers\DamageController;
@@ -19,7 +19,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\CashFlowController;
 use App\Http\Controllers\OrderReturnController;
 use App\Http\Controllers\SettingController;
-use App\Http\Controllers\TaskPageController;
+
 
 // Auth routes (guest)
 Route::middleware('guest')->group(function () {
@@ -70,7 +70,7 @@ Route::post('/products/{product}/serials', [ProductController::class, 'storeSeri
 Route::post('/products/{product}/serials/bulk', [ProductController::class, 'bulkStoreSerials'])->name('products.serials.bulk');
 Route::put('/products/{product}/serials/{serial}', [ProductController::class, 'updateSerial'])->name('products.serials.update');
 Route::delete('/products/{product}/serials/{serial}', [ProductController::class, 'destroySerial'])->name('products.serials.destroy');
-Route::get('/products/{product}/warranties', [ProductController::class, 'warranties'])->name('products.warranties');
+
 Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
 Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');
 Route::post('/products/bulk-update-category', [ProductController::class, 'bulkUpdateCategory'])->name('products.bulk-update-category');
@@ -85,8 +85,7 @@ Route::put('/price-settings/price-books/{priceBook}', [PriceSettingController::c
 Route::delete('/price-settings/price-books/{priceBook}', [PriceSettingController::class, 'destroyPriceBook'])->name('price-books.destroy');
 Route::put('/price-settings/price-books/{priceBook}/products/{product}', [PriceSettingController::class, 'updateBookPrice'])->name('price-books.update-price');
 
-Route::get('/warranties', [WarrantyController::class, 'index'])->name('warranties.index');
-Route::put('/warranties/{warranty}', [WarrantyController::class, 'update'])->name('warranties.update');
+
 
 Route::get('/stock-transfers', [StockTransferController::class, 'index'])->name('stock-transfers.index');
 Route::get('/stock-transfers/create', [StockTransferController::class, 'create'])->name('stock-transfers.create');
@@ -228,7 +227,7 @@ Route::get('/purchase-orders/{purchase_order}/print', [\App\Http\Controllers\Pur
 Route::get('/stock-takes/{stock_take}/print', [\App\Http\Controllers\StockTakeController::class, 'print'])->name('stock_takes.print');
 Route::get('/stock-transfers/{stock_transfer}/print', [\App\Http\Controllers\StockTransferController::class, 'print'])->name('stock_transfers.print');
 Route::get('/damages/{damage}/print', [\App\Http\Controllers\DamageController::class, 'print'])->name('damages.print');
-Route::get('/warranties/{warranty}/print', [\App\Http\Controllers\WarrantyController::class, 'print'])->name('warranties.print');
+
 Route::get('/paysheets/{paysheet}/print', [\App\Http\Controllers\PaysheetController::class, 'print'])->name('paysheets.print');
 Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy');
 
@@ -334,20 +333,9 @@ Route::get('/purchase-orders/export', [App\Http\Controllers\PurchaseOrderControl
 Route::get('/stock-takes/export', [App\Http\Controllers\StockTakeController::class, 'export'])->name('stock-takes.export');
 Route::get('/stock-transfers/export', [App\Http\Controllers\StockTransferController::class, 'export'])->name('stock-transfers.export');
 Route::get('/damages/export', [App\Http\Controllers\DamageController::class, 'export'])->name('damages.export');
-Route::get('/warranties/export', [App\Http\Controllers\WarrantyController::class, 'export'])->name('warranties.export');
+
 Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class, 'export'])->name('paysheets.export');
 
-// =======================
-// � TASKS (unified: repairs + general)
-// =======================
-Route::get('/tasks', [TaskPageController::class, 'index'])->middleware('permission:tasks.view')->name('tasks.index');
-Route::get('/tasks/performance', [TaskPageController::class, 'performance'])->middleware('permission:tasks.view')->name('tasks.performance');
-Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->middleware('permission:tasks.view')->name('tasks.show');
-Route::get('/my-tasks', [TaskPageController::class, 'myTasks'])->name('my-tasks');
 
-// Backward compat: redirect old repair routes
-Route::get('/repairs', fn () => redirect('/tasks?type=repair'));
-Route::get('/repairs/performance', fn () => redirect('/tasks/performance'));
-Route::get('/repairs/{id}', fn ($id) => redirect("/tasks/$id"));
 
 }); // end auth middleware

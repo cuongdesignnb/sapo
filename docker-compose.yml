@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kiotviet-app
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./database:/var/www/database
+      - ./storage:/var/www/storage
+    env_file:
+      - .env.docker
+    restart: unless-stopped
+
+  # Optional: Vite dev server for hot-reload during development
+  # Uncomment below if you need HMR (Hot Module Replacement)
+  # vite:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: kiotviet-vite
+  #   command: npm run dev -- --host 0.0.0.0
+  #   ports:
+  #     - "5173:5173"
+  #   volumes:
+  #     - .:/var/www
+  #     - /var/www/node_modules
+  #   env_file:
+  #     - .env.docker

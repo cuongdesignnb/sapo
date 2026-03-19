@@ -164,17 +164,7 @@ const setTab = async (product, tab) => {
             product.loadingSerials = false;
         }
     }
-    if (tab === "warranties" && !product.warrantiesData) {
-        product.loadingWarranties = true;
-        try {
-            const res = await axios.get(`/products/${product.id}/warranties`);
-            product.warrantiesData = res.data;
-        } catch (e) {
-            console.error(e);
-        } finally {
-            product.loadingWarranties = false;
-        }
-    }
+
 };
 
 const reloadSerials = async (product) => {
@@ -575,23 +565,7 @@ const formatDate = (val) => {
                                             >
                                                 Serial/IMEI
                                             </button>
-                                            <button
-                                                @click="
-                                                    setTab(
-                                                        product,
-                                                        'warranties',
-                                                    )
-                                                "
-                                                :class="[
-                                                    'pb-2 text-sm font-bold transition-all border-b-2',
-                                                    product.activeTab ===
-                                                    'warranties'
-                                                        ? 'border-blue-600 text-blue-600'
-                                                        : 'border-transparent text-gray-400 hover:text-gray-600',
-                                                ]"
-                                            >
-                                                Bảo hành, bảo trì
-                                            </button>
+
                                         </div>
 
                                         <!-- Info Tab -->
