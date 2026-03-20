@@ -60,19 +60,14 @@ const removeItem = (index) => {
     items.value.splice(index, 1);
 };
 
-const itemsComputed = computed(() => {
-    return items.value.map(item => {
-        const qty = parseInt(item.qty) || 0;
-        const price = parseFloat(item.price) || 0;
-        const itemDiscount = parseFloat(item.discount) || 0;
-        return {
-            ...item,
-            total_value: (qty * price) - itemDiscount
-        };
-    });
-});
+const getItemTotal = (item) => {
+    const qty = parseInt(item.qty) || 0;
+    const price = parseFloat(item.price) || 0;
+    const itemDiscount = parseFloat(item.discount) || 0;
+    return (qty * price) - itemDiscount;
+};
 
-const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.total_value, 0));
+const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
 const totalPayment = computed(() => totalAmount.value - Number(discount.value) + Number(importFee.value) + Number(otherImportFee.value));
 
 const save = async (saveStatus) => {
@@ -173,7 +168,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             </tr>
                         </thead>
                         <tbody v-if="items.length > 0">
-                            <tr v-for="(item, index) in itemsComputed" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f8fafc] transition-colors">
+                            <tr v-for="(item, index) in items" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f8fafc] transition-colors">
                                 <td class="p-3 text-center text-gray-500 group relative w-12">
                                     <span class="group-hover:hidden">{{ index + 1 }}</span>
                                     <button @click="removeItem(index)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
@@ -192,7 +187,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                                 <td class="p-3 w-[100px]">
                                     <input type="number" v-model="item.discount" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50">
                                 </td>
-                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(item.total_value) }}</td>
+                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(getItemTotal(item)) }}</td>
                             </tr>
                         </tbody>
                     </table>
