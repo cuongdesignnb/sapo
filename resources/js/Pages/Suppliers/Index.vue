@@ -1,8 +1,9 @@
 <script setup>
-import { ref, watch } from "vue";
+import { ref, watch, reactive } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import axios from "axios";
 
 const props = defineProps({
     suppliers: Object,
@@ -15,25 +16,35 @@ const search = ref(props.filters?.search || "");
 const customerGroup = ref(props.filters?.customer_group || "");
 const dateFilter = ref(props.filters?.date_filter || "all");
 const partnerType = ref(props.filters?.partner_type || "all");
-const expandedRows = ref([]); // array of expanded supplier IDs
+const expandedRows = ref([]);
+
+// Per-supplier detail state
+const supplierDetail = reactive({});
+
+const getDetail = (id) => {
+    if (!supplierDetail[id]) {
+        supplierDetail[id] = {
+            activeTab: 'info',
+            purchaseHistory: null,
+            loadingHistory: false,
+            debtData: null,
+            loadingDebt: false,
+            debtFilter: 'all',
+        };
+    }
+    return supplierDetail[id];
+};
 
 let searchTimeout;
 const updateFilters = () => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
-        router.get(
-            "/suppliers",
-            {
-                search: search.value,
-                customer_group: customerGroup.value,
-                date_filter: dateFilter.value,
-                partner_type: partnerType.value,
-            },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
+        router.get("/suppliers", {
+            search: search.value,
+            customer_group: customerGroup.value,
+            date_filter: dateFilter.value,
+            partner_type: partnerType.value,
+        }, { preserveState: true, replace: true });
     }, 500);
 };
 
@@ -45,61 +56,101 @@ const toggleExpand = (supplierId) => {
         expandedRows.value.splice(index, 1);
     } else {
         expandedRows.value.push(supplierId);
+        getDetail(supplierId);
     }
 };
 
-const isExpanded = (supplierId) => {
-    return expandedRows.value.includes(supplierId);
+const isExpanded = (supplierId) => expandedRows.value.includes(supplierId);
+
+const setTab = async (supplierId, tab) => {
+    const d = getDetail(supplierId);
+    d.activeTab = tab;
+    if (tab === 'history' && !d.purchaseHistory) await loadPurchaseHistory(supplierId);
+    if (tab === 'debt' && !d.debtData) await loadDebtDetails(supplierId);
 };
 
-// Modal for CREATE CUSTOMER
+const loadPurchaseHistory = async (supplierId) => {
+    const d = getDetail(supplierId);
+    d.loadingHistory = true;
+    try {
+        const res = await axios.get(`/suppliers/${supplierId}/purchase-history`);
+        d.purchaseHistory = res.data;
+    } catch (e) { console.error(e); }
+    finally { d.loadingHistory = false; }
+};
+
+const loadDebtDetails = async (supplierId, filter) => {
+    const d = getDetail(supplierId);
+    d.loadingDebt = true;
+    if (filter !== undefined) d.debtFilter = filter;
+    try {
+        const res = await axios.get(`/suppliers/${supplierId}/debt-details`, {
+            params: { transaction_type: d.debtFilter }
+        });
+        d.debtData = res.data;
+    } catch (e) { console.error(e); }
+    finally { d.loadingDebt = false; }
+};
+
+// Payment modal
+const paymentModal = ref({ show: false, supplierId: null, purchase: null, amount: 0, loading: false });
+const openPaymentModal = (supplierId, item) => {
+    paymentModal.value = { show: true, supplierId, purchase: item, amount: item.debt, loading: false };
+};
+const submitPayment = async () => {
+    const m = paymentModal.value;
+    if (!m.amount || m.amount <= 0) return;
+    m.loading = true;
+    try {
+        await axios.post(`/suppliers/${m.supplierId}/payment`, { purchase_id: m.purchase.id, amount: m.amount });
+        paymentModal.value.show = false;
+        await loadDebtDetails(m.supplierId);
+        router.reload({ only: ['suppliers', 'summary'] });
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi thanh toán'); }
+    finally { m.loading = false; }
+};
+
+// Adjust modal
+const adjustModal = ref({ show: false, supplierId: null, purchase: null, newDebt: 0, reason: '', loading: false });
+const openAdjustModal = (supplierId, item) => {
+    adjustModal.value = { show: true, supplierId, purchase: item, newDebt: item.debt, reason: '', loading: false };
+};
+const submitAdjust = async () => {
+    const m = adjustModal.value;
+    m.loading = true;
+    try {
+        await axios.post(`/suppliers/${m.supplierId}/adjust-debt`, { purchase_id: m.purchase.id, new_debt: m.newDebt, reason: m.reason });
+        adjustModal.value.show = false;
+        await loadDebtDetails(m.supplierId);
+        router.reload({ only: ['suppliers', 'summary'] });
+    } catch (e) { alert(e.response?.data?.message || 'Lỗi điều chỉnh'); }
+    finally { m.loading = false; }
+};
+
+const formatCurrency = (val) => Number(val || 0).toLocaleString();
+const formatDate = (val) => { if (!val) return ""; return new Date(val).toLocaleString("vi-VN"); };
+const statusLabel = (s) => ({ completed: 'Đã nhập hàng', pending: 'Chờ nhập', draft: 'Nháp', cancelled: 'Đã hủy' }[s] || s);
+const statusColor = (s) => ({ completed: 'text-green-600', pending: 'text-yellow-600', draft: 'text-gray-500', cancelled: 'text-red-500' }[s] || 'text-gray-600');
+
+// Modal for CREATE
 const showCreateModal = ref(false);
 const form = useForm({
-    name: "",
-    code: "",
-    phone: "",
-    phone2: "",
-    birthday: "",
-    gender: "none",
-    email: "",
-    facebook: "",
-
-    address: "",
-    city: "",
-    district: "",
-    ward: "",
-
-    customer_group: "",
-    note: "",
-
-    type: "individual",
-    invoice_name: "",
-    id_card: "",
-    passport: "",
-    tax_code: "",
-
-    invoice_address: "",
-    invoice_city: "",
-    invoice_district: "",
-    invoice_ward: "",
-
-    invoice_email: "",
-    invoice_phone: "",
-    bank_name: "",
-    bank_account: "",
-
+    name: "", code: "", phone: "", phone2: "", birthday: "", gender: "none", email: "", facebook: "",
+    address: "", city: "", district: "", ward: "",
+    customer_group: "", note: "",
+    type: "individual", invoice_name: "", id_card: "", passport: "", tax_code: "",
+    invoice_address: "", invoice_city: "", invoice_district: "", invoice_ward: "",
+    invoice_email: "", invoice_phone: "", bank_name: "", bank_account: "",
     is_supplier: false,
 });
 
 const submit = () => {
     form.post("/suppliers", {
-        onSuccess: () => {
-            showCreateModal.value = false;
-            form.reset();
-        },
+        onSuccess: () => { showCreateModal.value = false; form.reset(); },
     });
 };
 </script>
+
 
 <template>
     <Head title="Nhà cung cấp - KiotViet Clone" />
@@ -582,235 +633,199 @@ const submit = () => {
                                             class="flex text-[13.5px] font-semibold text-gray-600 border-b border-gray-200 sticky top-0 bg-white z-0 pt-2 mb-4"
                                         >
                                             <button
-                                                class="px-4 pb-2 border-b-2 border-blue-600 text-blue-600"
+                                                @click.stop="setTab(supplier.id, 'info')"
+                                                :class="getDetail(supplier.id).activeTab === 'info' ? 'px-4 pb-2 border-b-2 border-blue-600 text-blue-600' : 'px-4 pb-2 hover:text-blue-500 transition'"
                                             >
                                                 Thông tin
                                             </button>
                                             <button
-                                                class="px-4 pb-2 hover:text-blue-500 transition"
+                                                @click.stop="setTab(supplier.id, 'history')"
+                                                :class="getDetail(supplier.id).activeTab === 'history' ? 'px-4 pb-2 border-b-2 border-blue-600 text-blue-600' : 'px-4 pb-2 hover:text-blue-500 transition'"
+                                            >
+                                                Lịch sử nhập/trả hàng
+                                            </button>
+                                            <button
+                                                @click.stop="setTab(supplier.id, 'debt')"
+                                                :class="getDetail(supplier.id).activeTab === 'debt' ? 'px-4 pb-2 border-b-2 border-blue-600 text-blue-600' : 'px-4 pb-2 hover:text-blue-500 transition'"
                                             >
                                                 Nợ cần trả nhà cung cấp
                                             </button>
                                         </div>
 
-                                        <!-- Content Tab: Thông tin -->
-                                        <!-- Top Profile -->
-                                        <div
-                                            class="flex items-start gap-4 mb-6"
-                                        >
-                                            <!-- Avatar Mock -->
-                                            <div
-                                                class="w-24 h-24 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center flex-shrink-0 relative overflow-hidden"
-                                            >
-                                                <svg
-                                                    class="w-16 h-16 mt-4"
-                                                    fill="currentColor"
-                                                    viewBox="0 0 20 20"
-                                                >
-                                                    <path
-                                                        fill-rule="evenodd"
-                                                        d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                                                        clip-rule="evenodd"
-                                                    ></path>
-                                                </svg>
-                                            </div>
-
-                                            <div class="flex-1 mt-1">
-                                                <div
-                                                    class="flex gap-2 items-end mb-2"
-                                                >
-                                                    <h2
-                                                        class="text-xl font-bold text-gray-800"
-                                                    >
-                                                        {{ supplier.name }}
-                                                    </h2>
-                                                    <span
-                                                        class="text-gray-500 font-medium mb-0.5"
-                                                        >{{
-                                                            supplier.code
-                                                        }}</span
-                                                    >
+                                        <!-- ═══ TAB: Thông tin ═══ -->
+                                        <div v-show="getDetail(supplier.id).activeTab === 'info'">
+                                            <!-- Top Profile -->
+                                            <div class="flex items-start gap-4 mb-6">
+                                                <div class="w-24 h-24 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                                                    <svg class="w-16 h-16 mt-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
                                                 </div>
-                                                <div
-                                                    class="text-[13px] text-gray-500 space-y-1 mb-2"
-                                                >
-                                                    <div
-                                                        class="flex items-center gap-1 border-r border-gray-300 pr-3 mr-2 inline-block"
-                                                    >
-                                                        Người tạo:
-                                                        <span
-                                                            class="text-gray-700"
-                                                            >Admin</span
-                                                        >
+                                                <div class="flex-1 mt-1">
+                                                    <div class="flex gap-2 items-end mb-2">
+                                                        <h2 class="text-xl font-bold text-gray-800">{{ supplier.name }}</h2>
+                                                        <span class="text-gray-500 font-medium mb-0.5">{{ supplier.code }}</span>
                                                     </div>
-                                                    <div
-                                                        class="flex items-center gap-1 border-r border-gray-300 pr-3 mr-2 inline-block"
-                                                    >
-                                                        Ngày tạo:
-                                                        <span
-                                                            class="text-gray-700"
-                                                            >{{
-                                                                new Date(
-                                                                    supplier.created_at,
-                                                                ).toLocaleDateString(
-                                                                    "vi-VN",
-                                                                )
-                                                            }}</span
-                                                        >
-                                                    </div>
-                                                    <div
-                                                        class="flex items-center gap-1 inline-block"
-                                                    >
-                                                        Nhóm nhà cung cấp:
-                                                        <span
-                                                            class="text-gray-700"
-                                                            >{{
-                                                                supplier.customer_group ||
-                                                                "Chưa có"
-                                                            }}</span
-                                                        >
+                                                    <div class="text-[13px] text-gray-500 space-y-1 mb-2">
+                                                        <div class="flex items-center gap-1 border-r border-gray-300 pr-3 mr-2 inline-block">Người tạo: <span class="text-gray-700">Admin</span></div>
+                                                        <div class="flex items-center gap-1 border-r border-gray-300 pr-3 mr-2 inline-block">Ngày tạo: <span class="text-gray-700">{{ new Date(supplier.created_at).toLocaleDateString("vi-VN") }}</span></div>
+                                                        <div class="flex items-center gap-1 inline-block">Nhóm nhà cung cấp: <span class="text-gray-700">{{ supplier.customer_group || "Chưa có" }}</span></div>
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div
-                                                class="text-[13px] text-gray-500 font-medium mt-1 pr-4"
-                                            >
-                                                Laptopplus.vn
-                                            </div>
-                                        </div>
 
-                                        <!-- Grid Info -->
-                                        <div
-                                            class="grid grid-cols-2 gap-y-4 gap-x-8 text-[13.5px] border-b border-gray-200 pb-4 mb-4"
-                                        >
-                                            <!-- Col 1 -->
-                                            <div>
-                                                <div
-                                                    class="text-gray-500 mb-0.5 font-medium"
-                                                >
-                                                    Điện thoại
+                                            <!-- Grid Info -->
+                                            <div class="grid grid-cols-2 gap-y-4 gap-x-8 text-[13.5px] border-b border-gray-200 pb-4 mb-4">
+                                                <div>
+                                                    <div class="text-gray-500 mb-0.5 font-medium">Điện thoại</div>
+                                                    <div class="text-gray-800 font-medium">{{ supplier.phone || "Chưa có" }}</div>
                                                 </div>
-                                                <div
-                                                    class="text-gray-800 font-medium"
-                                                >
-                                                    {{
-                                                        supplier.phone ||
-                                                        "Chưa có"
-                                                    }}
+                                                <div>
+                                                    <div class="text-gray-500 mb-0.5 font-medium">Email</div>
+                                                    <div class="text-gray-400">{{ supplier.email || "Chưa có" }}</div>
                                                 </div>
-                                            </div>
-                                            <!-- Col 2 -->
-                                            <div>
-                                                <div
-                                                    class="text-gray-500 mb-0.5 font-medium"
-                                                >
-                                                    Email
-                                                </div>
-                                                <div class="text-gray-400">
-                                                    {{
-                                                        supplier.email ||
-                                                        "Chưa có"
-                                                    }}
+                                                <div class="col-span-2">
+                                                    <div class="text-gray-500 mb-0.5 font-medium">Địa chỉ</div>
+                                                    <div class="text-gray-400">{{ supplier.address || "Chưa có" }}</div>
                                                 </div>
                                             </div>
 
-                                            <!-- Row 2 full width -->
-                                            <div class="col-span-2">
-                                                <div
-                                                    class="text-gray-500 mb-0.5 font-medium"
-                                                >
-                                                    Địa chỉ
-                                                </div>
-                                                <div class="text-gray-400">
-                                                    {{
-                                                        supplier.address ||
-                                                        "Chưa có"
-                                                    }}
+                                            <!-- Hóa đơn / Ghi chú -->
+                                            <div class="bg-gray-50/50 rounded p-4 border border-gray-200 mb-4 text-[13.5px]">
+                                                <div class="font-bold text-blue-600 mb-1 cursor-pointer hover:underline">Thêm thông tin xuất hóa đơn</div>
+                                                <div class="flex items-center gap-2 text-gray-600 mt-2">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                                    {{ supplier.note || "Chưa có ghi chú" }}
                                                 </div>
                                             </div>
-                                        </div>
 
-                                        <!-- Hóa đơn / Ghi chú -->
-                                        <div
-                                            class="bg-gray-50/50 rounded p-4 border border-gray-200 mb-4 text-[13.5px]"
-                                        >
-                                            <div
-                                                class="font-bold text-blue-600 mb-1 cursor-pointer hover:underline"
-                                            >
-                                                Thêm thông tin xuất hóa đơn
-                                            </div>
-
-                                            <div
-                                                class="flex items-center gap-2 text-gray-600 mt-2"
-                                            >
-                                                <svg
-                                                    class="w-4 h-4"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    viewBox="0 0 24 24"
-                                                >
-                                                    <path
-                                                        stroke-linecap="round"
-                                                        stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                                                    ></path>
-                                                </svg>
-                                                {{
-                                                    supplier.note ||
-                                                    "Chưa có ghi chú"
-                                                }}
-                                            </div>
-                                        </div>
-
-                                        <!-- Footer Actions in Detail -->
-                                        <div
-                                            class="flex items-center justify-between"
-                                        >
-                                            <button
-                                                class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13.5px] font-semibold hover:bg-gray-50 flex items-center gap-1 shadow-sm"
-                                            >
-                                                <svg
-                                                    class="w-4 h-4 text-gray-500"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    viewBox="0 0 24 24"
-                                                >
-                                                    <path
-                                                        stroke-linecap="round"
-                                                        stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                                                    ></path></svg
-                                                >Xóa
-                                            </button>
-                                            <div
-                                                class="flex gap-2 text-[13.5px]"
-                                            >
-                                                <button
-                                                    class="text-white bg-blue-600 rounded px-4 py-1.5 font-bold hover:bg-blue-700 flex items-center gap-1 shadow-sm"
-                                                >
-                                                    <svg
-                                                        class="w-4 h-4"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        viewBox="0 0 24 24"
-                                                    >
-                                                        <path
-                                                            stroke-linecap="round"
-                                                            stroke-linejoin="round"
-                                                            stroke-width="2"
-                                                            d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                                        ></path></svg
-                                                    >Cập nhật
+                                            <!-- Footer Actions -->
+                                            <div class="flex items-center justify-between">
+                                                <button class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13.5px] font-semibold hover:bg-gray-50 flex items-center gap-1 shadow-sm">
+                                                    <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>Xóa
                                                 </button>
-                                                <button
-                                                    class="text-gray-700 bg-white border border-gray-300 rounded px-4 py-1.5 font-bold hover:bg-gray-50 shadow-sm"
-                                                >
-                                                    Ngừng hoạt động
+                                                <div class="flex gap-2 text-[13.5px]">
+                                                    <button class="text-white bg-blue-600 rounded px-4 py-1.5 font-bold hover:bg-blue-700 flex items-center gap-1 shadow-sm">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>Cập nhật
+                                                    </button>
+                                                    <button class="text-gray-700 bg-white border border-gray-300 rounded px-4 py-1.5 font-bold hover:bg-gray-50 shadow-sm">Ngừng hoạt động</button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- ═══ TAB: Lịch sử nhập/trả hàng ═══ -->
+                                        <div v-show="getDetail(supplier.id).activeTab === 'history'">
+                                            <div v-if="getDetail(supplier.id).loadingHistory" class="text-center py-8 text-gray-400">Đang tải...</div>
+                                            <div v-else-if="getDetail(supplier.id).purchaseHistory">
+                                                <table class="w-full text-sm text-left border border-gray-200 rounded overflow-hidden mb-3">
+                                                    <thead class="bg-gray-50 text-gray-600 text-[13px] font-bold">
+                                                        <tr>
+                                                            <th class="px-3 py-2">MÃ PHIẾU</th>
+                                                            <th class="px-3 py-2">THỜI GIAN</th>
+                                                            <th class="px-3 py-2">NGƯỜI TẠO</th>
+                                                            <th class="px-3 py-2">CHI NHÁNH</th>
+                                                            <th class="px-3 py-2 text-right">TỔNG CỘNG</th>
+                                                            <th class="px-3 py-2 text-center">TRẠNG THÁI</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody class="divide-y divide-gray-100">
+                                                        <tr v-if="!getDetail(supplier.id).purchaseHistory.data?.length">
+                                                            <td colspan="6" class="px-3 py-6 text-center text-gray-400">Không có lịch sử nhập hàng</td>
+                                                        </tr>
+                                                        <tr v-for="p in getDetail(supplier.id).purchaseHistory.data" :key="p.id" class="hover:bg-gray-50">
+                                                            <td class="px-3 py-2">
+                                                                <Link :href="`/purchases/${p.id}`" class="text-blue-600 hover:underline font-medium">{{ p.code }}</Link>
+                                                            </td>
+                                                            <td class="px-3 py-2 text-gray-600">{{ formatDate(p.purchase_date || p.created_at) }}</td>
+                                                            <td class="px-3 py-2">{{ p.user?.name || 'Admin' }}</td>
+                                                            <td class="px-3 py-2 text-gray-500">Laptopplus.vn</td>
+                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(p.total_amount) }}</td>
+                                                            <td class="px-3 py-2 text-center">
+                                                                <span :class="statusColor(p.status)" class="font-medium text-[13px]">{{ statusLabel(p.status) }}</span>
+                                                            </td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                                <button @click.stop class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13px] font-semibold hover:bg-gray-50 flex items-center gap-1 shadow-sm">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                    Xuất file
                                                 </button>
                                             </div>
                                         </div>
+
+                                        <!-- ═══ TAB: Nợ cần trả NCC ═══ -->
+                                        <div v-show="getDetail(supplier.id).activeTab === 'debt'" @click.stop>
+                                            <!-- Filter dropdown -->
+                                            <div class="flex justify-end mb-3">
+                                                <select
+                                                    :value="getDetail(supplier.id).debtFilter"
+                                                    @change="loadDebtDetails(supplier.id, $event.target.value)"
+                                                    class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-500"
+                                                >
+                                                    <option value="all">Tất cả giao dịch</option>
+                                                    <option value="debt_only">Còn nợ</option>
+                                                    <option value="paid">Đã thanh toán</option>
+                                                </select>
+                                            </div>
+
+                                            <div v-if="getDetail(supplier.id).loadingDebt" class="text-center py-8 text-gray-400">Đang tải...</div>
+                                            <div v-else-if="getDetail(supplier.id).debtData">
+                                                <table class="w-full text-sm text-left border border-gray-200 rounded overflow-hidden mb-3">
+                                                    <thead class="bg-gray-50 text-gray-600 text-[13px] font-bold">
+                                                        <tr>
+                                                            <th class="px-3 py-2">MÃ PHIẾU</th>
+                                                            <th class="px-3 py-2">THỜI GIAN</th>
+                                                            <th class="px-3 py-2">LOẠI</th>
+                                                            <th class="px-3 py-2 text-right">GIÁ TRỊ</th>
+                                                            <th class="px-3 py-2 text-right">NỢ CẦN TRẢ NCC</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody class="divide-y divide-gray-100">
+                                                        <tr v-if="!getDetail(supplier.id).debtData.items?.length">
+                                                            <td colspan="5" class="px-3 py-6 text-center text-gray-400">Không có dữ liệu công nợ</td>
+                                                        </tr>
+                                                        <tr v-for="item in getDetail(supplier.id).debtData.items" :key="item.id" class="hover:bg-gray-50">
+                                                            <td class="px-3 py-2">
+                                                                <Link :href="`/purchases/${item.id}`" class="text-blue-600 hover:underline font-medium">{{ item.code }}</Link>
+                                                            </td>
+                                                            <td class="px-3 py-2 text-gray-600">{{ item.date }}</td>
+                                                            <td class="px-3 py-2">{{ item.type }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold">{{ formatCurrency(item.total) }}</td>
+                                                            <td class="px-3 py-2 text-right font-semibold" :class="item.debt > 0 ? 'text-red-600' : 'text-green-600'">{{ formatCurrency(item.debt) }}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+
+                                                <!-- Bottom actions -->
+                                                <div class="flex items-center justify-between flex-wrap gap-2">
+                                                    <button class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13px] font-semibold hover:bg-gray-50 flex items-center gap-1 shadow-sm">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                        Xuất file công nợ
+                                                    </button>
+                                                    <div class="flex gap-2">
+                                                        <button
+                                                            v-if="getDetail(supplier.id).debtData.items.find(i => i.debt > 0)"
+                                                            @click="openAdjustModal(supplier.id, getDetail(supplier.id).debtData.items.find(i => i.debt > 0))"
+                                                            class="bg-yellow-500 hover:bg-yellow-600 text-white rounded px-4 py-1.5 text-[13px] font-bold shadow-sm flex items-center gap-1 transition"
+                                                        >
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                                            Điều chỉnh
+                                                        </button>
+                                                        <button
+                                                            v-if="getDetail(supplier.id).debtData.items.find(i => i.debt > 0)"
+                                                            @click="openPaymentModal(supplier.id, getDetail(supplier.id).debtData.items.find(i => i.debt > 0))"
+                                                            class="bg-green-600 hover:bg-green-700 text-white rounded px-4 py-1.5 text-[13px] font-bold shadow-sm flex items-center gap-1 transition"
+                                                        >
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                                                            Thanh toán
+                                                        </button>
+                                                        <button class="bg-blue-100 text-blue-700 hover:bg-blue-200 rounded px-4 py-1.5 text-[13px] font-bold shadow-sm flex items-center gap-1 transition">
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
+                                                            Chiết khấu TT
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
                                     </div>
                                 </td>
                             </tr>
@@ -1375,7 +1390,60 @@ const submit = () => {
                     </button>
                 </div>
             </div>
+
+        <!-- PAYMENT MODAL -->
+        <div v-if="paymentModal.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+                <h3 class="text-lg font-bold text-gray-800 mb-4">Thanh toán công nợ</h3>
+                <div class="mb-3 text-sm text-gray-600">
+                    Phiếu: <span class="font-semibold text-blue-600">{{ paymentModal.purchase?.code }}</span>
+                </div>
+                <div class="mb-3 text-sm text-gray-600">
+                    Nợ hiện tại: <span class="font-semibold text-red-600">{{ formatCurrency(paymentModal.purchase?.debt) }}đ</span>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-semibold mb-1">Số tiền thanh toán</label>
+                    <input v-model.number="paymentModal.amount" type="number" min="0" :max="paymentModal.purchase?.debt"
+                        class="w-full border border-gray-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+                <div class="flex justify-end gap-2">
+                    <button @click="paymentModal.show = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 text-sm font-bold hover:bg-gray-50">Hủy</button>
+                    <button @click="submitPayment" :disabled="paymentModal.loading"
+                        class="px-6 py-2 bg-green-600 text-white rounded text-sm font-bold hover:bg-green-700 disabled:opacity-50">
+                        {{ paymentModal.loading ? 'Đang xử lý...' : 'Thanh toán' }}
+                    </button>
+                </div>
+            </div>
         </div>
+
+        <!-- ADJUST MODAL -->
+        <div v-if="adjustModal.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+                <h3 class="text-lg font-bold text-gray-800 mb-4">Điều chỉnh công nợ</h3>
+                <div class="mb-3 text-sm text-gray-600">
+                    Phiếu: <span class="font-semibold text-blue-600">{{ adjustModal.purchase?.code }}</span>
+                </div>
+                <div class="mb-3">
+                    <label class="block text-sm font-semibold mb-1">Nợ mới</label>
+                    <input v-model.number="adjustModal.newDebt" type="number" min="0"
+                        class="w-full border border-gray-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-semibold mb-1">Lý do</label>
+                    <textarea v-model="adjustModal.reason" rows="2"
+                        class="w-full border border-gray-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
+                        placeholder="Nhập lý do điều chỉnh"></textarea>
+                </div>
+                <div class="flex justify-end gap-2">
+                    <button @click="adjustModal.show = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 text-sm font-bold hover:bg-gray-50">Hủy</button>
+                    <button @click="submitAdjust" :disabled="adjustModal.loading"
+                        class="px-6 py-2 bg-yellow-500 text-white rounded text-sm font-bold hover:bg-yellow-600 disabled:opacity-50">
+                        {{ adjustModal.loading ? 'Đang xử lý...' : 'Điều chỉnh' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
     </AppLayout>
 </template>
 

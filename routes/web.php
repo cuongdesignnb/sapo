@@ -50,6 +50,10 @@ Route::get('/customers/{customer}/sales-history', [CustomerController::class, 's
 Route::get('/customers/{customer}/debt-history', [CustomerController::class, 'debtHistory']);
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index');
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store');
+Route::get('/suppliers/{id}/purchase-history', [SupplierController::class, 'purchaseHistory']);
+Route::get('/suppliers/{id}/debt-details', [SupplierController::class, 'debtDetails']);
+Route::post('/suppliers/{id}/payment', [SupplierController::class, 'makePayment']);
+Route::post('/suppliers/{id}/adjust-debt', [SupplierController::class, 'adjustDebt']);
 
 Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
