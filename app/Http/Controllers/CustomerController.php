@@ -33,7 +33,14 @@ class CustomerController extends Controller
                     $q->where('branch_id', auth()->user()->branch_id);
                 }
             })
-            ->orderBy('id', 'desc')
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'name', 'phone', 'debt_amount', 'total_spent', 'created_at'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            })
             ->paginate(15)
             ->withQueryString();
 
@@ -46,7 +53,7 @@ class CustomerController extends Controller
 
         return Inertia::render('Customers/Index', [
             'customers' => $customers,
-            'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender],
+            'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
             'customerSettings' => $customerSettings,
         ]);
     }
@@ -92,7 +99,35 @@ class CustomerController extends Controller
 
         $validated['is_supplier'] = $request->input('is_supplier', false);
 
-        Customer::create($validated);
+        if ($request->filled('link_existing_id')) {
+            $existing = Customer::findOrFail($request->link_existing_id);
+            $existing->update([
+                'name' => $validated['name'],
+                'phone' => $validated['phone'] ?? $existing->phone,
+                'is_customer' => true,
+                'is_supplier' => true,
+                'address' => $validated['address'] ?? $existing->address,
+                'note' => $validated['note'] ?? $existing->note,
+            ]);
+            $customer = $existing;
+        } elseif ($request->input('supplier_linking_mode') === 'link_existing' && $request->filled('linked_supplier_id')) {
+            $existing = Customer::findOrFail($request->linked_supplier_id);
+            $existing->update([
+                'name' => $validated['name'],
+                'phone' => $validated['phone'] ?? $existing->phone,
+                'is_customer' => true,
+                'is_supplier' => true,
+                'address' => $validated['address'] ?? $existing->address,
+                'note' => $validated['note'] ?? $existing->note,
+            ]);
+            $customer = $existing;
+        } else {
+            $customer = Customer::create($validated);
+        }
+
+        if ($request->wantsJson()) {
+            return response()->json(['customer' => $customer]);
+        }
 
         return redirect()->route('customers.index')->with('success', 'Tạo khách hàng thành công.');
     }
@@ -118,9 +153,50 @@ class CustomerController extends Controller
             'invoice_name' => 'nullable|string|max:255',
             'invoice_address' => 'nullable|string',
             'status' => 'nullable|in:active,inactive',
+            'is_supplier' => 'boolean',
         ]);
 
-        $customer->update($validated);
+        if (array_key_exists('is_supplier', $validated) && $validated['is_supplier']) {
+             $validated['is_supplier'] = true;
+        } else {
+             $validated['is_supplier'] = false;
+        }
+
+        if ($request->input('supplier_linking_mode') === 'link_existing' && $request->filled('linked_supplier_id') && $request->linked_supplier_id != $customer->id) {
+            $existing = Customer::findOrFail($request->linked_supplier_id);
+            
+            // Merge relations
+            Invoice::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
+            OrderReturn::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
+            
+            CashFlow::where('target_id', $customer->id)->whereIn('target_type', ['Khách hàng', 'Nhà cung cấp'])->update([
+                'target_id' => $existing->id,
+                'target_name' => collect([$existing->name])->implode(''),
+            ]);
+
+            // Merge financial figures
+            $existing->debt_amount += $customer->debt_amount;
+            $existing->total_spent += $customer->total_spent;
+            $existing->total_returns += $customer->total_returns;
+            $existing->supplier_debt_amount += $customer->supplier_debt_amount;
+            $existing->total_bought += $customer->total_bought;
+            
+            $existing->is_customer = true;
+            $existing->is_supplier = true;
+            $existing->name = $validated['name'];
+            if (!empty($validated['phone'])) {
+                $existing->phone = $validated['phone'];
+            }
+            if (!empty($validated['address'])) {
+                $existing->address = $validated['address'];
+            }
+            $existing->save();
+            
+            $customer->delete();
+            return back()->with('success', 'Cập nhật và gộp vào nhà cung cấp thành công.');
+        } else {
+            $customer->update($validated);
+        }
 
         return back()->with('success', 'Cập nhật khách hàng thành công.');
     }

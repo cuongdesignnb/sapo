@@ -30,10 +30,10 @@ const syncProducts = () => {
         updateSuccess: false,
         editPrice: activePriceBookId.value ? (p.book_price ?? '') : p.retail_price,
         editRetailPrice: activePriceBookId.value ? (p.book_retail_price ?? '') : '',
-        editTechnicianPrice: activePriceBookId.value ? (p.book_technician_price ?? '') : '',
+        editTechnicianPrice: activePriceBookId.value ? (p.book_technician_price ?? '') : (p.technician_price ?? ''),
         originalEditPrice: activePriceBookId.value ? (p.book_price ?? '') : p.retail_price,
         originalEditRetailPrice: activePriceBookId.value ? (p.book_retail_price ?? '') : '',
-        originalEditTechnicianPrice: activePriceBookId.value ? (p.book_technician_price ?? '') : '',
+        originalEditTechnicianPrice: activePriceBookId.value ? (p.book_technician_price ?? '') : (p.technician_price ?? ''),
     }));
 };
 
@@ -69,7 +69,7 @@ const activePriceBook = computed(() => {
 });
 
 const activePriceBookName = computed(() => {
-    return activePriceBook.value?.name || 'Bảng giá chung';
+    return activePriceBook.value?.name || 'Giá bán lẻ';
 });
 
 const canEditActivePriceBook = computed(() => {
@@ -91,10 +91,12 @@ const handleEditActivePriceBook = () => {
 };
 
 const showRetailColumn = computed(() => {
+    if (!activePriceBookId.value) return false;
     return Boolean(activePriceBook.value?.enable_retail_price);
 });
 
 const showTechnicianColumn = computed(() => {
+    if (!activePriceBookId.value) return true;
     return Boolean(activePriceBook.value?.enable_technician_price);
 });
 
@@ -173,10 +175,6 @@ const updatePrice = async (product, index) => {
 };
 
 const updateOptionalBookPrice = async (product, index, field) => {
-    if (!activePriceBookId.value) {
-        return;
-    }
-
     const editField = field === 'retail_price' ? 'editRetailPrice' : 'editTechnicianPrice';
     const originalField = field === 'retail_price' ? 'originalEditRetailPrice' : 'originalEditTechnicianPrice';
 
@@ -190,9 +188,15 @@ const updateOptionalBookPrice = async (product, index, field) => {
     const normalizedValue = normalizePriceValue(product[editField]);
 
     try {
-        await axios.put(`/price-settings/price-books/${activePriceBookId.value}/products/${product.id}`, {
-            [field]: normalizedValue
-        });
+        if (activePriceBookId.value) {
+            await axios.put(`/price-settings/price-books/${activePriceBookId.value}/products/${product.id}`, {
+                [field]: normalizedValue
+            });
+        } else {
+            await axios.put(`/price-settings/${product.id}`, {
+                [field]: normalizedValue
+            });
+        }
 
         localProducts.value[index][editField] = normalizedValue;
         localProducts.value[index][originalField] = normalizedValue;
@@ -278,6 +282,11 @@ const isPriceBookModalOpen = ref(false);
 const pbModalTab = ref('info');
 const editingPriceBook = ref(null);
 
+const getLocalIsoTime = (d = new Date()) => {
+    const date = new Date(d);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
 const pbForm = ref({
     name: '',
     start_date: '',
@@ -300,8 +309,8 @@ const pbForm = ref({
 const resetPbForm = () => {
     pbForm.value = {
         name: '',
-        start_date: new Date().toISOString().slice(0, 16),
-        end_date: new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 16),
+        start_date: getLocalIsoTime(),
+        end_date: getLocalIsoTime(Date.now() + 365 * 86400000),
         status: 'active',
         formula_base: '',
         formula_operator: '+',

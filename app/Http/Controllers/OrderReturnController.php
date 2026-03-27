@@ -22,14 +22,21 @@ class OrderReturnController extends Controller
                             ->orWhere('code', 'LIKE', "%{$search}%");
                     });
             })
-            ->orderBy('created_at', 'desc')
+            ->when($request->filled('sort_by'), function ($query) use ($request) {
+                $allowed = ['code', 'created_at', 'total', 'paid_to_customer', 'status'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $query->orderBy($sortBy, $dir);
+            }, function ($query) {
+                $query->orderBy('created_at', 'desc');
+            })
             ->paginate(15)
             ->withQueryString();
 
         return Inertia::render('Returns/Index', [
             'returns' => $returns,
             'branches' => \App\Models\Branch::all(),
-            'filters' => ['search' => $search]
+            'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction]
         ]);
     }
     public function store(Request $request)
@@ -109,6 +116,11 @@ class OrderReturnController extends Controller
                     'partner_type' => 'customer',
                     'partner_id' => $return->customer_id,
                 ]);
+            }
+
+            // Cho phép chọn ngày trả hàng (kế toán nhập sau)
+            if (request()->filled('order_date')) {
+                $return->update(['created_at' => \Carbon\Carbon::parse(request()->order_date)]);
             }
         });
 

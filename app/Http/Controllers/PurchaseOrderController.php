@@ -16,7 +16,15 @@ class PurchaseOrderController extends Controller
 {
     public function index(Request $request)
     {
-        $query = PurchaseOrder::with(['items.product', 'branch', 'supplier'])->orderBy('id', 'desc');
+        $query = PurchaseOrder::with(['items.product', 'branch', 'supplier'])
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'created_at', 'total_amount', 'total_payment', 'status'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('id', 'desc');
+            });
 
         if ($request->filled('search')) {
             $query->where('code', 'like', "%{$request->search}%");
@@ -59,13 +67,16 @@ class PurchaseOrderController extends Controller
         return Inertia::render('PurchaseOrders/Index', [
             'purchaseOrders' => $purchaseOrders,
             'branches' => $branches,
-            'filters' => $request->only([
+            'filters' => array_merge($request->only([
                 'search',
                 'status',
                 'branch_id',
                 'created_by_name',
                 'ordered_by_name',
                 'date_filter'
+            ]), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
             ])
         ]);
     }
@@ -152,6 +163,11 @@ class PurchaseOrderController extends Controller
             }
 
             DB::commit();
+
+            // Cho phép chọn ngày đặt hàng (kế toán nhập sau)
+            if ($request->filled('order_date')) {
+                $purchaseOrder->update(['created_at' => \Carbon\Carbon::parse($request->order_date)]);
+            }
 
             return redirect()->route('purchase-orders.index')->with('success', 'Tạo phiếu đặt hàng nhập thành công.');
         } catch (\Exception $e) {

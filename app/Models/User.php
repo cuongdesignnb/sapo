@@ -55,7 +55,10 @@ class User extends Authenticatable
         return $this->hasOne(Employee::class);
     }
 
-
+    public function taskComments()
+    {
+        return $this->hasMany(TaskComment::class);
+    }
 
     // ── Permission helpers ──
 
@@ -64,8 +67,9 @@ class User extends Authenticatable
      */
     public function isAdmin(): bool
     {
+        // Only the root user (id=1) is admin without a role
         if ($this->role_id === null) {
-            return true;
+            return $this->id === 1;
         }
         return $this->role && $this->role->hasPermission('*');
     }

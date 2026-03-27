@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Purchase;
-use App\Models\CashFlow;
+use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
@@ -49,7 +49,16 @@ class SupplierController extends Controller
             }
         }
 
-        $suppliers = $query->latest()->paginate(50)->withQueryString();
+        $suppliers = $query
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'name', 'phone', 'email', 'created_at'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->latest();
+            })
+            ->paginate(50)->withQueryString();
 
         // Recalculate supplier_debt_amount from actual purchase data
         $supplierIds = $suppliers->pluck('id');
@@ -85,13 +94,27 @@ class SupplierController extends Controller
         return Inertia::render('Suppliers/Index', [
             'suppliers' => $suppliers,
             'groups' => $groups,
-            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type']),
+            'filters' => array_merge($request->only(['search', 'customer_group', 'date_filter', 'partner_type']), [
+                'sort_by' => $request->sort_by,
+                'sort_direction' => $request->sort_direction,
+            ]),
             'summary' => $summary,
         ]);
     }
 
     public function store(Request $request)
     {
+        if ($request->filled('link_existing_id')) {
+            $customer = Customer::find($request->input('link_existing_id'));
+            if ($customer) {
+                $customer->update(['is_supplier' => true]);
+                if ($request->wantsJson()) {
+                    return response()->json(['supplier' => $customer]);
+                }
+                return redirect()->route('suppliers.index')->with('success', 'Đã liên kết nhà cung cấp thành công.');
+            }
+        }
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
@@ -111,7 +134,11 @@ class SupplierController extends Controller
         // If the toggle 'is_customer' is false, it means they are only a supplier.
         $validated['is_customer'] = $request->input('is_customer', false);
 
-        Customer::create($validated);
+        $customer = Customer::create($validated);
+
+        if ($request->wantsJson()) {
+            return response()->json(['supplier' => $customer]);
+        }
 
         return redirect()->route('suppliers.index')->with('success', 'Tạo nhà cung cấp thành công.');
     }
@@ -120,14 +147,41 @@ class SupplierController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
+            'code' => 'nullable|string|max:255|unique:customers,code',
             'phone' => 'nullable|string|max:255',
+            'phone2' => 'nullable|string|max:255',
+            'birthday' => 'nullable|date',
+            'gender' => 'nullable|in:none,male,female',
             'email' => 'nullable|email|max:255',
+            'facebook' => 'nullable|string|max:255',
             'address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'district' => 'nullable|string',
+            'ward' => 'nullable|string',
+            'customer_group' => 'nullable|string',
+            'note' => 'nullable|string',
+            'type' => 'nullable|in:individual,company',
+            'invoice_name' => 'nullable|string|max:255',
+            'id_card' => 'nullable|string|max:255',
+            'passport' => 'nullable|string|max:255',
+            'tax_code' => 'nullable|string|max:255',
+            'invoice_address' => 'nullable|string',
+            'invoice_city' => 'nullable|string',
+            'invoice_district' => 'nullable|string',
+            'invoice_ward' => 'nullable|string',
+            'invoice_email' => 'nullable|email|max:255',
+            'invoice_phone' => 'nullable|string|max:255',
+            'bank_name' => 'nullable|string|max:255',
+            'bank_account' => 'nullable|string|max:255',
+            'is_customer' => 'boolean',
         ]);
 
-        $validated['code'] = 'NCC' . time() . rand(10, 99);
+        if (empty($validated['code'])) {
+            $validated['code'] = 'NCC' . time() . rand(10, 99);
+        }
+
         $validated['is_supplier'] = true;
-        $validated['is_customer'] = false;
+        $validated['is_customer'] = $request->input('is_customer', false);
 
         $supplier = Customer::create($validated);
 
@@ -162,148 +216,204 @@ class SupplierController extends Controller
         return back()->with('success', "Đã nhập {$count} nhà cung cấp từ file.");
     }
 
-    /**
-     * Lịch sử nhập / trả hàng của nhà cung cấp
-     */
-    public function purchaseHistory(Request $request, $id)
+    // ===== API METHODS =====
+
+    public function apiSearch(Request $request)
     {
-        $supplier = Customer::where('is_supplier', true)->findOrFail($id);
+        $search = $request->input('search');
+        $suppliers = Customer::where('is_supplier', true)
+            ->when($search, function($q) use ($search) {
+                $q->where(function($query) use ($search) {
+                    $query->where('name', 'like', "%{$search}%")
+                          ->orWhere('code', 'like', "%{$search}%")
+                          ->orWhere('phone', 'like', "%{$search}%");
+                });
+            })
+            ->take(20)
+            ->get(['id', 'name', 'phone']);
+            
+        return response()->json($suppliers);
+    }
 
-        $query = Purchase::where('supplier_id', $supplier->id)
+    /**
+     * Lịch sử nhập/trả hàng
+     */
+    public function purchaseHistory($id)
+    {
+        $purchases = Purchase::where('supplier_id', $id)
             ->with(['user:id,name'])
-            ->latest('purchase_date');
-
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        }
-
-        $purchases = $query->paginate(20);
+            ->orderByDesc('purchase_date')
+            ->get()
+            ->map(function ($p) {
+                return [
+                    'id' => $p->id,
+                    'code' => $p->code,
+                    'date' => $p->purchase_date ? $p->purchase_date->format('d/m/Y H:i') : ($p->created_at ? $p->created_at->format('d/m/Y H:i') : ''),
+                    'user_name' => $p->user->name ?? 'Admin',
+                    'branch' => 'Laptopplus.vn',
+                    'total' => $p->total_amount,
+                    'status' => $p->status,
+                    'status_label' => $p->status === 'completed' ? 'Đã nhập hàng' : ($p->status === 'returned' ? 'Đã trả hàng' : ucfirst($p->status)),
+                ];
+            });
 
         return response()->json($purchases);
     }
 
     /**
-     * Chi tiết công nợ nhà cung cấp
+     * Nợ cần trả NCC - lịch sử công nợ
      */
-    public function debtDetails(Request $request, $id)
+    public function debtTransactions($id)
     {
-        $supplier = Customer::where('is_supplier', true)->findOrFail($id);
+        // Seed debt transactions from purchases if empty
+        $this->seedDebtTransactions($id);
 
-        $query = Purchase::where('supplier_id', $supplier->id)
-            ->where('status', 'completed')
-            ->latest('purchase_date');
+        $transactions = SupplierDebtTransaction::where('supplier_id', $id)
+            ->orderBy('created_at')
+            ->get()
+            ->map(function ($t) {
+                $typeLabels = [
+                    'purchase' => 'Nhập hàng',
+                    'return' => 'Trả hàng',
+                    'payment' => 'Thanh toán',
+                    'adjustment' => 'Điều chỉnh',
+                    'discount' => 'Chiết khấu TT',
+                ];
+                return [
+                    'id' => $t->id,
+                    'code' => $t->code,
+                    'date' => $t->created_at->format('d/m/Y H:i'),
+                    'type' => $t->type,
+                    'type_label' => $typeLabels[$t->type] ?? $t->type,
+                    'amount' => $t->amount,
+                    'debt_remain' => $t->debt_remain,
+                    'note' => $t->note,
+                ];
+            });
 
-        $filter = $request->input('transaction_type', 'all');
-
-        if ($filter === 'debt_only') {
-            $query->where('debt_amount', '>', 0);
-        } elseif ($filter === 'paid') {
-            $query->where('debt_amount', 0);
-        }
-
-        $purchases = $query->get()->map(function ($p) {
-            return [
-                'id'         => $p->id,
-                'code'       => $p->code,
-                'date'       => $p->purchase_date?->format('d/m/Y H:i') ?? $p->created_at->format('d/m/Y H:i'),
-                'type'       => 'Nhập hàng',
-                'total'      => (float) $p->total_amount,
-                'paid'       => (float) $p->paid_amount,
-                'debt'       => (float) $p->debt_amount,
-            ];
-        });
-
-        // Tổng nợ hiện tại
-        $totalDebt = Purchase::where('supplier_id', $supplier->id)
-            ->where('status', 'completed')
-            ->sum('debt_amount');
-
-        return response()->json([
-            'items'      => $purchases,
-            'total_debt' => (float) $totalDebt,
-        ]);
+        return response()->json($transactions);
     }
 
     /**
-     * Thanh toán công nợ cho phiếu nhập
+     * Thanh toán công nợ NCC
      */
-    public function makePayment(Request $request, $id)
+    public function recordPayment(Request $request, $id)
     {
-        $request->validate([
-            'purchase_id'    => 'required|exists:purchases,id',
-            'amount'         => 'required|numeric|min:1',
-            'payment_method' => 'nullable|string',
-            'note'           => 'nullable|string',
+        $data = $request->validate([
+            'amount' => 'required|numeric|min:0.01',
+            'note' => 'nullable|string',
         ]);
 
-        $supplier = Customer::where('is_supplier', true)->findOrFail($id);
-        $purchase = Purchase::where('supplier_id', $supplier->id)->findOrFail($request->purchase_id);
+        $supplier = Customer::findOrFail($id);
+        $currentDebt = $this->calculateDebt($id);
 
-        $amount = min($request->amount, $purchase->debt_amount);
-
-        DB::transaction(function () use ($purchase, $amount, $request, $supplier) {
-            $purchase->paid_amount = (float) $purchase->paid_amount + $amount;
-            $purchase->debt_amount = max(0, (float) $purchase->total_amount - (float) $purchase->paid_amount);
-            $purchase->save();
-
-            // Cập nhật tổng nợ NCC
-            $supplier->supplier_debt_amount = Purchase::where('supplier_id', $supplier->id)
-                ->where('status', 'completed')
-                ->sum('debt_amount');
-            $supplier->save();
-
-            // Ghi cash flow nếu model tồn tại
-            try {
-                CashFlow::create([
-                    'type'           => 'expense',
-                    'amount'         => $amount,
-                    'description'    => "Thanh toán NCC {$supplier->name} - Phiếu {$purchase->code}",
-                    'reference_type' => 'purchase_payment',
-                    'reference_id'   => $purchase->id,
-                    'user_id'        => auth()->id(),
-                    'branch_id'      => auth()->user()->branch_id,
-                ]);
-            } catch (\Throwable $e) {
-                // CashFlow table might not exist
-            }
-        });
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Đã thanh toán ' . number_format($amount) . 'đ cho phiếu ' . $purchase->code,
-            'purchase' => $purchase->fresh(),
+        $code = 'PCPN' . date('ymd') . rand(100, 999);
+        SupplierDebtTransaction::create([
+            'supplier_id' => $id,
+            'code' => $code,
+            'type' => 'payment',
+            'amount' => -abs($data['amount']),
+            'debt_remain' => $currentDebt - abs($data['amount']),
+            'note' => $data['note'] ?? 'Thanh toán công nợ',
+            'user_id' => auth()->id(),
         ]);
+
+        // Update cached debt
+        $supplier->update(['supplier_debt_amount' => $currentDebt - abs($data['amount'])]);
+
+        return response()->json(['success' => true, 'message' => 'Đã ghi thanh toán.']);
     }
 
     /**
-     * Điều chỉnh công nợ
+     * Điều chỉnh công nợ NCC
      */
     public function adjustDebt(Request $request, $id)
     {
-        $request->validate([
-            'purchase_id' => 'required|exists:purchases,id',
-            'new_debt'    => 'required|numeric|min:0',
-            'reason'      => 'nullable|string',
+        $data = $request->validate([
+            'amount' => 'required|numeric',
+            'note' => 'nullable|string',
+            'type' => 'nullable|string', // 'adjustment' or 'discount'
         ]);
 
-        $supplier = Customer::where('is_supplier', true)->findOrFail($id);
-        $purchase = Purchase::where('supplier_id', $supplier->id)->findOrFail($request->purchase_id);
+        $supplier = Customer::findOrFail($id);
+        $currentDebt = $this->calculateDebt($id);
+        $type = $data['type'] ?? 'adjustment';
 
-        DB::transaction(function () use ($purchase, $request, $supplier) {
-            $purchase->debt_amount = $request->new_debt;
-            $purchase->paid_amount = (float) $purchase->total_amount - $request->new_debt;
-            $purchase->save();
+        $code = ($type === 'discount' ? 'CKNCC' : 'DCNCC') . date('ymd') . rand(100, 999);
+        $amount = $type === 'discount' ? -abs($data['amount']) : $data['amount'];
 
-            $supplier->supplier_debt_amount = Purchase::where('supplier_id', $supplier->id)
-                ->where('status', 'completed')
-                ->sum('debt_amount');
-            $supplier->save();
-        });
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Đã điều chỉnh công nợ phiếu ' . $purchase->code,
-            'purchase' => $purchase->fresh(),
+        SupplierDebtTransaction::create([
+            'supplier_id' => $id,
+            'code' => $code,
+            'type' => $type,
+            'amount' => $amount,
+            'debt_remain' => $currentDebt + $amount,
+            'note' => $data['note'] ?? ($type === 'discount' ? 'Chiết khấu thanh toán' : 'Điều chỉnh công nợ'),
+            'user_id' => auth()->id(),
         ]);
+
+        $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
+
+        return response()->json(['success' => true, 'message' => 'Đã cập nhật công nợ.']);
+    }
+
+    // Private helpers
+
+    private function calculateDebt($supplierId)
+    {
+        $lastTx = SupplierDebtTransaction::where('supplier_id', $supplierId)
+            ->orderByDesc('created_at')
+            ->first();
+        if ($lastTx) return $lastTx->debt_remain;
+
+        return Purchase::where('supplier_id', $supplierId)
+            ->where('status', 'completed')
+            ->sum('debt_amount');
+    }
+
+    private function seedDebtTransactions($supplierId)
+    {
+        if (SupplierDebtTransaction::where('supplier_id', $supplierId)->exists()) return;
+
+        $purchases = Purchase::where('supplier_id', $supplierId)
+            ->where('status', 'completed')
+            ->orderBy('purchase_date')
+            ->orderBy('created_at')
+            ->get();
+
+        $runningDebt = 0;
+        foreach ($purchases as $p) {
+            // Purchase entry
+            $runningDebt += $p->total_amount;
+            SupplierDebtTransaction::create([
+                'supplier_id' => $supplierId,
+                'code' => $p->code,
+                'type' => 'purchase',
+                'amount' => $p->total_amount,
+                'debt_remain' => $runningDebt,
+                'purchase_id' => $p->id,
+                'user_id' => $p->user_id,
+                'created_at' => $p->purchase_date ?? $p->created_at,
+                'updated_at' => $p->purchase_date ?? $p->created_at,
+            ]);
+
+            // Payment entry (if paid)
+            $paid = $p->paid_amount ?? ($p->total_amount - ($p->debt_amount ?? 0));
+            if ($paid > 0) {
+                $runningDebt -= $paid;
+                SupplierDebtTransaction::create([
+                    'supplier_id' => $supplierId,
+                    'code' => 'PCPN' . substr($p->code, 2),
+                    'type' => 'payment',
+                    'amount' => -$paid,
+                    'debt_remain' => $runningDebt,
+                    'purchase_id' => $p->id,
+                    'user_id' => $p->user_id,
+                    'created_at' => $p->purchase_date ?? $p->created_at,
+                    'updated_at' => $p->purchase_date ?? $p->created_at,
+                ]);
+            }
+        }
     }
 }
+

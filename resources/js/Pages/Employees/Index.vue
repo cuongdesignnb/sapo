@@ -3,6 +3,7 @@ import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import CurrencyInput from "@/Components/CurrencyInput.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -11,6 +12,7 @@ const props = defineProps({
     departments: Array,
     jobTitles: Array,
     salaryTemplates: { type: Array, default: () => [] },
+    availableUsers: { type: Array, default: () => [] },
     filters: Object,
 });
 
@@ -60,8 +62,26 @@ const form = useForm({
     branch_id: null,
     department_id: null,
     job_title_id: null,
+    user_id: null,
     notes: "",
     is_active: true,
+});
+
+// Computed: available users for linking (include current employee's linked user if editing)
+const linkableUsers = computed(() => {
+    const list = [...(props.availableUsers || [])];
+    // If editing and this employee already has a user linked, add it to options
+    if (form.id && form.user_id) {
+        const existing = list.find(u => u.id === form.user_id);
+        if (!existing) {
+            // Find from employees data
+            const emp = (props.employees?.data || []).find(e => e.id === form.id);
+            if (emp?.user) {
+                list.unshift({ id: emp.user.id, name: emp.user.name, email: emp.user.email });
+            }
+        }
+    }
+    return list;
 });
 
 const openCreateModal = () => {
@@ -85,6 +105,7 @@ const openEditModal = (employee) => {
     form.branch_id = employee.branch_id;
     form.department_id = employee.department_id;
     form.job_title_id = employee.job_title_id;
+    form.user_id = employee.user_id || null;
     form.notes = employee.notes;
     form.is_active = employee.is_active;
 
@@ -580,6 +601,7 @@ const bonusCalcLabel = (calc) => {
                             <th class="px-4 py-3">Mã chấm công</th>
                             <th class="px-4 py-3">Tên nhân viên</th>
                             <th class="px-4 py-3">Số điện thoại</th>
+                            <th class="px-4 py-3">Tài khoản</th>
                             <th class="px-4 py-3">Số CMND/CCCD</th>
                             <th class="px-4 py-3 text-right">Nợ và tạm ứng</th>
                             <th class="px-4 py-3">Ghi chú</th>
@@ -588,7 +610,7 @@ const bonusCalcLabel = (calc) => {
                     <tbody class="divide-y divide-gray-200 text-gray-800">
                         <tr v-if="employees.data.length === 0">
                             <td
-                                colspan="9"
+                                colspan="10"
                                 class="px-6 py-12 text-center text-gray-500"
                             >
                                 Không tìm thấy nhân viên nào.
@@ -637,6 +659,15 @@ const bonusCalcLabel = (calc) => {
                                     {{ employee.name }}
                                 </td>
                                 <td class="px-4 py-3">{{ employee.phone }}</td>
+                                <td class="px-4 py-3">
+                                    <template v-if="employee.user">
+                                        <div class="text-xs">
+                                            <span class="font-medium text-indigo-600">{{ employee.user.name }}</span>
+                                            <div class="text-gray-400">{{ employee.user.email }}</div>
+                                        </div>
+                                    </template>
+                                    <span v-else class="text-gray-300">-</span>
+                                </td>
                                 <td class="px-4 py-3">{{ employee.cccd }}</td>
                                 <td class="px-4 py-3 text-right">
                                     {{
@@ -891,6 +922,30 @@ const bonusCalcLabel = (calc) => {
                                         </select>
                                     </div>
 
+                                    <!-- Liên kết tài khoản đăng nhập -->
+                                    <div class="col-span-2">
+                                        <label class="block font-semibold mb-1">
+                                            <span class="inline-flex items-center gap-1">
+                                                <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                                                Liên kết tài khoản đăng nhập
+                                            </span>
+                                        </label>
+                                        <select
+                                            v-model="form.user_id"
+                                            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                                        >
+                                            <option :value="null">-- Không liên kết --</option>
+                                            <option
+                                                v-for="u in linkableUsers"
+                                                :key="u.id"
+                                                :value="u.id"
+                                            >
+                                                {{ u.name }} ({{ u.email }})
+                                            </option>
+                                        </select>
+                                        <p class="text-xs text-gray-400 mt-1">Gán tài khoản đăng nhập cho nhân viên này. Mỗi tài khoản chỉ được gán cho 1 nhân viên.</p>
+                                    </div>
+
                                     <div
                                         class="col-span-2 pt-2 border-t border-gray-100 mt-2 text-center"
                                     >
@@ -942,10 +997,8 @@ const bonusCalcLabel = (calc) => {
                                     <div>
                                         <label class="block font-semibold mb-1 text-gray-500">Mức lương</label>
                                         <div class="flex items-center gap-2">
-                                            <input
-                                                v-model.number="salaryForm.base_salary"
-                                                type="number"
-                                                min="0"
+                                            <CurrencyInput
+                                                v-model="salaryForm.base_salary"
                                                 class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
                                                 placeholder="0"
                                             />
@@ -1070,8 +1123,8 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(b, i) in salaryForm.custom_bonuses" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="b.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
-                                                    <td class="px-2 py-1"><input v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-model="b.revenue_from" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-if="!b.bonus_is_percentage" v-model="b.bonus_value" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /><input v-else v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="b.bonus_is_percentage" class="accent-blue-600" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_bonuses.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1108,14 +1161,14 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(c, i) in salaryForm.custom_commissions" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="c.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-model="c.revenue_from" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1">
                                                         <select v-model="c.commission_table_id" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
                                                             <option :value="null">-- Không --</option>
                                                             <option v-for="ct in commissionTables" :key="ct.id" :value="ct.id">{{ ct.name }}</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-if="!c.commission_is_percentage" v-model="c.commission_value" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /><input v-else v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="c.commission_is_percentage" class="accent-blue-600" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_commissions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1159,7 +1212,7 @@ const bonusCalcLabel = (calc) => {
                                                             <option value="percentage">% lương</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="a.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><CurrencyInput v-if="a.allowance_type !== 'percentage'" v-model="a.amount" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /><input v-else v-model.number="a.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_allowances.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
                                             </tbody>
@@ -1188,9 +1241,10 @@ const bonusCalcLabel = (calc) => {
                                             <thead class="bg-gray-100">
                                                 <tr>
                                                     <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên giảm trừ</th>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Loại giảm trừ</th>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Loại tính</th>
-                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[130px]">Số tiền</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Loại giảm trừ</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[140px]">Loại tính</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[90px]">Mỗi (phút)</th>
+                                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[120px]">Số tiền</th>
                                                     <th class="w-8"></th>
                                                 </tr>
                                             </thead>
@@ -1214,13 +1268,31 @@ const bonusCalcLabel = (calc) => {
                                                             <option v-if="d.deduction_category === 'late' || d.deduction_category === 'early_leave'" value="per_occurrence">Theo số lần</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1">
+                                                        <input
+                                                            v-if="d.calculation_type === 'per_minute'"
+                                                            v-model.number="d.per_minutes"
+                                                            type="number"
+                                                            min="1"
+                                                            class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none"
+                                                            placeholder="15"
+                                                        />
+                                                        <span v-else class="text-gray-300 text-xs">—</span>
+                                                    </td>
+                                                    <td class="px-2 py-1">
+                                                        <div class="relative">
+                                                            <CurrencyInput v-model="d.amount" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                        </div>
+                                                        <div v-if="d.calculation_type === 'per_minute' && d.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
+                                                            Trừ {{ Number(d.amount || 0).toLocaleString() }}đ / {{ d.per_minutes }} phút
+                                                        </div>
+                                                    </td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_deductions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
                                             </tbody>
                                         </table>
                                     </div>
-                                    <button type="button" @click="salaryForm.custom_deductions.push({ name: '', deduction_category: '', calculation_type: 'fixed_per_month', amount: 0 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm giảm trừ</button>
+                                    <button type="button" @click="salaryForm.custom_deductions.push({ name: '', deduction_category: '', calculation_type: 'fixed_per_month', amount: 0, per_minutes: 15 })" class="text-blue-600 text-sm font-semibold hover:underline">+ Thêm giảm trừ</button>
                                 </div>
                             </div>
                             </template>

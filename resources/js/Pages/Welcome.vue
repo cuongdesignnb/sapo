@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "../Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
+import SortableHeader from "@/Components/SortableHeader.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -14,12 +15,17 @@ const props = defineProps({
 });
 
 const search = ref(props.filters?.search || "");
+const sortBy = ref(props.filters?.sort_by || "");
+const sortDirection = ref(props.filters?.sort_direction || "");
 
 // Bulk selection state
 const selectedProductIds = ref([]);
 const showTransferModal = ref(false);
 const transferCategoryId = ref('');
 const transferLoading = ref(false);
+const showNewCategoryInTransfer = ref(false);
+const newTransferCategoryName = ref('');
+const creatingTransferCategory = ref(false);
 
 const allSelected = computed(() => {
     const data = props.products?.data || [];
@@ -49,6 +55,8 @@ const openTransferModal = () => {
     showTransferModal.value = true;
 };
 
+const localCategories = ref([...(props.categories || [])]);
+
 const flatCategories = computed(() => {
     const result = [];
     const flatten = (cats, prefix = '') => {
@@ -57,9 +65,27 @@ const flatCategories = computed(() => {
             if (c.children?.length) flatten(c.children, prefix + c.name + ' > ');
         });
     };
-    flatten(props.categories);
+    flatten(localCategories.value);
     return result;
 });
+
+const quickCreateTransferCategory = async () => {
+    if (!newTransferCategoryName.value.trim()) return;
+    creatingTransferCategory.value = true;
+    try {
+        const res = await axios.post('/categories/quick-store', { name: newTransferCategoryName.value.trim() });
+        if (res.data.success) {
+            const cat = res.data.category;
+            localCategories.value.push({ ...cat, children: [] });
+            transferCategoryId.value = cat.id;
+            newTransferCategoryName.value = '';
+            showNewCategoryInTransfer.value = false;
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || 'Lỗi tạo nhóm hàng');
+    }
+    creatingTransferCategory.value = false;
+};
 
 const submitTransfer = async () => {
     if (!transferCategoryId.value || selectedProductIds.value.length === 0) return;
@@ -80,13 +106,56 @@ const submitTransfer = async () => {
     }
 };
 
+// Delete single product
+const deleteProduct = (product) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa hàng hóa "${product.name}" (${product.sku})?`)) return;
+    router.delete(`/products/${product.id}`, { preserveScroll: true });
+};
+
+// Bulk delete
+const bulkDeleting = ref(false);
+
+const bulkDelete = async () => {
+    if (selectedProductIds.value.length === 0) return;
+    const count = selectedProductIds.value.length;
+    if (!confirm(`Bạn có chắc chắn muốn xóa ${count} hàng hóa đã chọn? Thao tác này không thể hoàn tác.`)) return;
+    bulkDeleting.value = true;
+    try {
+        router.post('/products/bulk-destroy', {
+            product_ids: selectedProductIds.value,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                selectedProductIds.value = [];
+                bulkDeleting.value = false;
+            },
+            onError: () => {
+                bulkDeleting.value = false;
+            },
+        });
+    } catch (e) {
+        alert('Lỗi khi xoá hàng hóa.');
+        bulkDeleting.value = false;
+    }
+};
+
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/products",
+        { search: search.value, sort_by: field, sort_direction: direction },
+        { preserveState: true, replace: true },
+    );
+};
+
 let searchTimeout;
 watch(search, (value) => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
         router.get(
             "/products",
-            { search: value },
+            { search: value, sort_by: sortBy.value, sort_direction: sortDirection.value },
             {
                 preserveState: true,
                 replace: true,
@@ -164,7 +233,17 @@ const setTab = async (product, tab) => {
             product.loadingSerials = false;
         }
     }
-
+    if (tab === "warranties" && !product.warrantiesData) {
+        product.loadingWarranties = true;
+        try {
+            const res = await axios.get(`/products/${product.id}/warranties`);
+            product.warrantiesData = res.data;
+        } catch (e) {
+            console.error(e);
+        } finally {
+            product.loadingWarranties = false;
+        }
+    }
 };
 
 const reloadSerials = async (product) => {
@@ -317,6 +396,16 @@ const formatDate = (val) => {
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
                         Chuyển nhóm ({{ selectedProductIds.length }})
                     </button>
+                    <!-- Xóa hàng loạt button -->
+                    <button
+                        v-if="selectedProductIds.length > 0"
+                        @click="bulkDelete"
+                        :disabled="bulkDeleting"
+                        class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-2 transition-colors shadow-sm disabled:opacity-50"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        {{ bulkDeleting ? 'Đang xóa...' : `Xóa (${selectedProductIds.length})` }}
+                    </button>
                     <div class="relative items-center" @click.stop>
                         <button
                             @click="toggleDropdown"
@@ -402,12 +491,12 @@ const formatDate = (val) => {
                                 />
                             </th>
                             <th class="p-3 w-16">Ảnh</th>
-                            <th class="p-3">Mã hàng</th>
-                            <th class="p-3">Tên hàng</th>
+                            <SortableHeader label="Mã hàng" field="sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3" @sort="handleSort" />
+                            <SortableHeader label="Tên hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3" @sort="handleSort" />
                             <th class="p-3">Nhóm hàng</th>
-                            <th class="p-3 text-right">Giá bán</th>
-                            <th v-if="canViewCostPrice" class="p-3 text-right">Giá vốn</th>
-                            <th class="p-3 text-right">Tồn kho</th>
+                            <SortableHeader label="Giá bán" field="retail_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="canViewCostPrice" label="Giá vốn" field="cost_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tồn kho" field="stock_quantity" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="text-sm divide-y divide-gray-100">
@@ -472,9 +561,23 @@ const formatDate = (val) => {
                                     }}
                                 </td>
                                 <td class="p-3 text-right">
-                                    <span class="font-bold text-gray-800">{{
-                                        product.stock_quantity || 0
-                                    }}</span>
+                                    <!-- Sản phẩm có Serial -->
+                                    <template v-if="product.has_serial">
+                                        <div class="text-[13px] font-bold text-gray-800">{{ product.total_serial_count || 0 }} serial</div>
+                                        <div class="flex flex-col items-end gap-0.5 mt-1">
+                                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold inline-flex items-center gap-0.5">
+                                                <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+                                                Sẵn bán: {{ product.ready_count || 0 }}
+                                            </span>
+                                            <span v-if="product.repairing_count > 0" class="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold inline-flex items-center gap-0.5">
+                                                🔧 Chờ xử lý: {{ product.repairing_count }}
+                                            </span>
+                                        </div>
+                                    </template>
+                                    <!-- Sản phẩm không có Serial -->
+                                    <template v-else>
+                                        <span class="font-bold text-gray-800">{{ product.stock_quantity || 0 }}</span>
+                                    </template>
                                 </td>
                             </tr>
                             <tr
@@ -565,7 +668,23 @@ const formatDate = (val) => {
                                             >
                                                 Serial/IMEI
                                             </button>
-
+                                            <button
+                                                @click="
+                                                    setTab(
+                                                        product,
+                                                        'warranties',
+                                                    )
+                                                "
+                                                :class="[
+                                                    'pb-2 text-sm font-bold transition-all border-b-2',
+                                                    product.activeTab ===
+                                                    'warranties'
+                                                        ? 'border-blue-600 text-blue-600'
+                                                        : 'border-transparent text-gray-400 hover:text-gray-600',
+                                                ]"
+                                            >
+                                                Bảo hành, bảo trì
+                                            </button>
                                         </div>
 
                                         <!-- Info Tab -->
@@ -678,16 +797,13 @@ const formatDate = (val) => {
                                                     <i class="fas fa-edit"></i>
                                                     Cập nhật
                                                 </Link>
-                                                <Link
-                                                    :href="`/products/${product.id}`"
-                                                    method="delete"
-                                                    as="button"
-                                                    preserve-scroll
+                                                <button
+                                                    @click.stop="deleteProduct(product)"
                                                     class="bg-white hover:bg-red-50 text-red-600 border border-red-200 px-5 py-2 rounded text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
                                                 >
                                                     <i class="fas fa-trash"></i>
                                                     Xóa hàng
-                                                </Link>
+                                                </button>
                                             </div>
                                         </div>
 
@@ -1072,12 +1188,16 @@ const formatDate = (val) => {
                                                     <span
                                                         class="font-bold text-[13px] text-gray-700"
                                                         >Danh sách
-                                                        Serial/IMEI</span
-                                                    >
-                                                    <span
-                                                        class="text-[13px] text-gray-500 font-medium"
-                                                        >Trạng thái</span
-                                                    >
+                                                        Serial/IMEI
+                                                        <span class="text-gray-400 font-normal ml-1">({{ product.total_serial_count || 0 }})</span>
+                                                    </span>
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold">✓ Sẵn bán: {{ product.ready_count || 0 }}</span>
+                                                        <span v-if="product.repairing_count > 0" class="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold">🔧 Chờ xử lý: {{ product.repairing_count }}</span>
+                                                        <span
+                                                            class="text-[13px] text-gray-500 font-medium ml-2"
+                                                        >Trạng thái</span>
+                                                    </div>
                                                 </div>
                                                 <!-- Search + Filter -->
                                                 <div
@@ -1134,6 +1254,16 @@ const formatDate = (val) => {
                                                                 Còn hàng
                                                             </option>
                                                             <option
+                                                                value="ready"
+                                                            >
+                                                                ✓ Sẵn bán
+                                                            </option>
+                                                            <option
+                                                                value="repairing"
+                                                            >
+                                                                🔧 Đang sửa/Chờ xử lý
+                                                            </option>
+                                                            <option
                                                                 value="sold"
                                                             >
                                                                 Đã bán
@@ -1164,13 +1294,17 @@ const formatDate = (val) => {
                                                         v-for="s in product.serialsData"
                                                         :key="s.id"
                                                         class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 text-[13px]"
+                                                        :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'bg-yellow-50/50' : ''"
                                                     >
-                                                        <span
-                                                            class="font-medium text-gray-800"
-                                                            >{{
-                                                                s.serial_number
-                                                            }}</span
-                                                        >
+                                                        <div class="flex items-center gap-2">
+                                                            <span
+                                                                class="font-medium"
+                                                                :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'text-orange-700' : 'text-gray-800'"
+                                                            >{{ s.serial_number }}</span>
+                                                            <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
+                                                            <span v-else-if="s.repair_status === 'not_started'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold">⏳ Chờ sửa</span>
+                                                            <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓ Sẵn bán</span>
+                                                        </div>
                                                         <span
                                                             :class="[
                                                                 'text-[12px] font-medium',
@@ -1756,11 +1890,24 @@ const formatDate = (val) => {
                             Chuyển <strong>{{ selectedProductIds.length }}</strong> sản phẩm đã chọn sang nhóm hàng mới.
                         </p>
                         <div>
-                            <label class="block font-semibold text-sm mb-2">Nhóm hàng đích *</label>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block font-semibold text-sm">Nhóm hàng đích *</label>
+                                <button @click="showNewCategoryInTransfer = !showNewCategoryInTransfer" type="button" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                    Thêm nhóm mới
+                                </button>
+                            </div>
                             <select v-model="transferCategoryId" class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:border-blue-500 outline-none bg-white">
                                 <option value="">-- Chọn nhóm hàng --</option>
                                 <option v-for="c in flatCategories" :key="c.id" :value="c.id">{{ c.name }}</option>
                             </select>
+                            <!-- Inline quick create category -->
+                            <div v-if="showNewCategoryInTransfer" class="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                <div class="flex gap-2">
+                                    <input v-model="newTransferCategoryName" @keyup.enter="quickCreateTransferCategory" type="text" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                                    <button @click="quickCreateTransferCategory" :disabled="creatingTransferCategory || !newTransferCategoryName.trim()" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap">Tạo</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
