@@ -23,14 +23,21 @@ class InvoiceController extends Controller
                             ->orWhere('phone', 'LIKE', "%{$search}%");
                     });
             })
-            ->orderBy('created_at', 'desc')
+            ->when($request->filled('sort_by'), function ($query) use ($request) {
+                $allowed = ['code', 'created_at', 'subtotal', 'discount', 'total', 'customer_paid'];
+                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+                $query->orderBy($sortBy, $dir);
+            }, function ($query) {
+                $query->orderBy('created_at', 'desc');
+            })
             ->paginate(15)
             ->withQueryString();
 
         return Inertia::render('Invoices/Index', [
             'invoices' => $invoices,
             'branches' => \App\Models\Branch::all(),
-            'filters' => ['search' => $search]
+            'filters' => ['search' => $search, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction]
         ]);
     }
 
@@ -116,10 +123,12 @@ class InvoiceController extends Controller
         ]);
 
         foreach ($validated['items'] as $item) {
+            $product = \App\Models\Product::find($item['product_id']);
             $invoice->items()->create([
                 'product_id' => $item['product_id'],
                 'quantity' => $item['quantity'],
                 'price' => $item['price'],
+                'cost_price' => (float) ($product->cost_price ?? 0),
                 'discount' => $item['discount'] ?? 0,
                 'subtotal' => ($item['price'] * $item['quantity']) - ($item['discount'] ?? 0),
                 'note' => $item['note'] ?? null,
