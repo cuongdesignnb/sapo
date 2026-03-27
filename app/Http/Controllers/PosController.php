@@ -33,20 +33,11 @@ class PosController extends Controller
         }
 
         // Return top 20 matches for POS search
-        $products = $query
-            ->withCount([
-                'serialImeis as repairing_count' => function ($q) {
-                    $q->where('status', 'in_stock')
-                      ->whereIn('repair_status', ['not_started', 'repairing']);
-                },
-            ])
-            ->limit(20)->get();
+        $products = $query->limit(20)->get();
 
-        // Add sellable_quantity: total stock minus repairing units
+        // Add sellable_quantity: total stock
         $products->each(function ($p) {
-            $p->sellable_quantity = $p->has_serial
-                ? max(0, $p->stock_quantity - $p->repairing_count)
-                : $p->stock_quantity;
+            $p->sellable_quantity = $p->stock_quantity;
         });
 
         return response()->json($products);
@@ -59,10 +50,6 @@ class PosController extends Controller
     {
         $serials = \App\Models\SerialImei::where('product_id', $product->id)
             ->where('status', 'in_stock')
-            ->where(function ($q) {
-                $q->whereNull('repair_status')
-                  ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
-            })
             ->with('variant:id,name,sku,cost_price,retail_price')
             ->orderBy('serial_number')
             ->get(['id', 'serial_number', 'status', 'variant_id', 'cost_price', 'warranty_expires_at']);

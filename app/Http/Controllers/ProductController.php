@@ -91,18 +91,7 @@ class ProductController extends Controller
             ->withCount([
                 'serialImeis as total_serial_count' => function ($q) {
                     $q->where('status', 'in_stock');
-                },
-                'serialImeis as repairing_count' => function ($q) {
-                    $q->where('status', 'in_stock')
-                      ->whereIn('repair_status', ['not_started', 'repairing']);
-                },
-                'serialImeis as ready_count' => function ($q) {
-                    $q->where('status', 'in_stock')
-                      ->where(function ($q2) {
-                          $q2->where('repair_status', 'ready')
-                             ->orWhereNull('repair_status');
-                      });
-                },
+                }
             ])
             ->when($request->filled('sort_by'), function ($q) use ($request) {
                 $allowed = ['sku', 'name', 'retail_price', 'cost_price', 'stock_quantity', 'created_at'];
@@ -600,21 +589,7 @@ class ProductController extends Controller
         $query = $product->serials();
 
         if ($request->filled('status') && $request->status !== 'all') {
-            $status = $request->status;
-
-            // Filter by repair status
-            if ($status === 'repairing') {
-                $query->where('status', 'in_stock')
-                      ->whereIn('repair_status', ['not_started', 'repairing']);
-            } elseif ($status === 'ready') {
-                $query->where('status', 'in_stock')
-                      ->where(function ($q) {
-                          $q->where('repair_status', 'ready')
-                             ->orWhereNull('repair_status');
-                      });
-            } else {
-                $query->where('status', $status);
-            }
+            $query->where('status', $request->status);
         }
 
         if ($request->filled('search')) {

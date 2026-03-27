@@ -267,11 +267,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
                                     >Trả hàng</Link
                                 >
-                                <Link
-                                    href="#"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Yêu cầu sửa chữa</Link
-                                >
+
                                 <Link
                                     href="#"
                                     class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
@@ -350,51 +346,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         }"
                         >Sổ quỹ</Link
                     >
-                    <!-- Công việc — menu quản lý chỉ hiện khi có quyền -->
-                    <div v-if="canAny(['tasks.view', 'repairs.view'])" class="relative group">
-                        <button
-                            class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
-                            :class="{
-                                'bg-[#005bb5]':
-                                    $page.url.startsWith('/tasks') || $page.url.startsWith('/my-tasks'),
-                            }"
-                        >
-                            Công việc
-                        </button>
-                        <div
-                            class="absolute left-0 mt-0 w-48 bg-white rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pt-1 border border-gray-100"
-                        >
-                            <div class="bg-white rounded py-1">
-                                <Link
-                                    href="/tasks"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Danh sách công việc</Link
-                                >
-                                <Link
-                                    href="/my-tasks"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Việc của tôi</Link
-                                >
-                                <Link
-                                    href="/tasks/performance"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100"
-                                    >Báo cáo năng suất</Link
-                                >
-                                <Link
-                                    href="/activity-logs"
-                                    class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100 border-t border-gray-100"
-                                    >📜 Lịch sử thao tác</Link
-                                >
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Việc của tôi — hiện cho TẤT CẢ nhân viên (không cần quyền admin) -->
-                    <Link
-                        v-else
-                        href="/my-tasks"
-                        class="px-3 py-2 hover:bg-[#005bb5] rounded"
-                        :class="{ 'bg-[#005bb5]': $page.url.startsWith('/my-tasks') }"
-                    >Việc của tôi</Link>
+
                     <div class="relative group">
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
