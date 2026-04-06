@@ -149,7 +149,56 @@ class SalaryCalculationService
         }
         $deductionAmount += $latePenaltyAmount;
 
-        $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount - $deductionAmount;
+        // ===== TÍNH TIỀN TĂNG CA (OT PAY) =====
+        $otPay = 0;
+        $standardHoursPerDay = 8;
+        if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
+            $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // 150% = 1.5x
+
+            if ($setting->salary_type === 'hourly') {
+                // Hourly: base_salary chính là hourly_rate
+                $hourlyRate = $setting->base_salary;
+            } else {
+                // Fixed/by_workday: tính hourly_rate từ lương tháng / công chuẩn / giờ chuẩn
+                $hourlyRate = ($standardWorkUnits > 0)
+                    ? $setting->base_salary / $standardWorkUnits / $standardHoursPerDay
+                    : 0;
+            }
+
+            $otPay = ($otMinutes / 60) * $hourlyRate * $overtimeRate;
+        }
+
+        // ===== TÍNH PHẦN CHÊNH LỆCH NGÀY LỄ (HOLIDAY PAY) =====
+        $holidayPay = 0;
+        $holidayPayDetails = [];
+        $holidayRate = ($setting->holiday_rate ?? 200) / 100; // 200% = 2x (chỉ tính phần chênh thêm)
+        if ($holidayRate > 1) {
+            $holidayRecords = $records->where('is_holiday', true)->where('work_units', '>', 0);
+            foreach ($holidayRecords as $hRec) {
+                $multiplier = (float) ($hRec->holiday_multiplier ?? $holidayRate);
+                if ($multiplier > 1) {
+                    if ($setting->salary_type === 'hourly') {
+                        $dayPay = $hRec->work_units * $standardHoursPerDay * $setting->base_salary;
+                    } elseif ($setting->salary_type === 'by_workday' && $standardWorkUnits > 0) {
+                        $dayPay = $setting->base_salary * $hRec->work_units / $standardWorkUnits;
+                    } else {
+                        $dayPay = ($standardWorkUnits > 0)
+                            ? $setting->base_salary * $hRec->work_units / $standardWorkUnits
+                            : 0;
+                    }
+                    $extra = $dayPay * ($multiplier - 1); // phần chênh thêm
+                    $holidayPay += $extra;
+                    $holidayPayDetails[] = [
+                        'date' => $hRec->work_date,
+                        'work_units' => $hRec->work_units,
+                        'multiplier' => $multiplier,
+                        'extra_pay' => round($extra),
+                    ];
+                }
+            }
+        }
+
+        $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount + $otPay + $holidayPay - $deductionAmount;
 
         // ===== ĐÁNH GIÁ NĂNG SUẤT SỬA CHỮA (chỉ khi module bật) =====
         $repairPerformance = null;
@@ -159,7 +208,7 @@ class SalaryCalculationService
             if ($repairPerformance['assigned'] > 0) {
                 $factor = $repairPerformance['salary_percent'] / 100;
                 $baseSalary = $baseSalary * $factor;
-                $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount - $deductionAmount;
+                $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount + $otPay + $holidayPay - $deductionAmount;
             }
         }
 
@@ -170,6 +219,8 @@ class SalaryCalculationService
             'commission' => round($commissionAmount),
             'allowances' => round($allowanceAmount),
             'deductions' => round($deductionAmount),
+            'ot_pay' => round($otPay),
+            'holiday_pay' => round($holidayPay),
             'ot_minutes' => $otMinutes,
             'standard_work_units' => $standardWorkUnits,
             'work_units' => $totalUnits,
@@ -188,6 +239,7 @@ class SalaryCalculationService
                 'allowances' => $allowanceDetails,
                 'deductions' => $deductionDetails,
                 'late_penalty' => $latePenaltyDetails,
+                'holiday_pay' => $holidayPayDetails,
             ],
         ];
     }
@@ -735,11 +787,11 @@ class SalaryCalculationService
     {
         return [
             'base' => 0, 'base_salary_full' => 0, 'bonus' => 0, 'commission' => 0,
-            'allowances' => 0, 'deductions' => 0, 'ot_minutes' => 0,
-            'standard_work_units' => 0, 'work_units' => 0,
+            'allowances' => 0, 'deductions' => 0, 'ot_pay' => 0, 'holiday_pay' => 0,
+            'ot_minutes' => 0, 'standard_work_units' => 0, 'work_units' => 0,
             'paid_leave_units' => 0, 'late_count' => 0, 'late_minutes' => 0,
             'early_leave_count' => 0, 'early_minutes' => 0,
-            'personal_revenue' => 0, 'total' => 0, 'details' => [],
+            'personal_revenue' => 0, 'total' => 0, 'late_penalty' => 0, 'details' => [],
         ];
     }
 }
