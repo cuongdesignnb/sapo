@@ -142,8 +142,10 @@ class TimekeepingService
 
             if ($scheduleStart && $checkIn) {
                 $checkInCarbon = Carbon::parse($checkIn);
-                $lateMinutes = max(0, (int) $checkInCarbon->diffInMinutes($scheduleStart, false));
-                $lateMinutes = max(0, $lateMinutes - $allowLate);
+                // Carbon 3: diffInMinutes trả về giá trị có dấu → dùng abs() + kiểm tra hướng
+                if ($checkInCarbon->greaterThan($scheduleStart)) {
+                    $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
+                }
 
                 if ($overtimeBeforeEnabled) {
                     if ($checkInCarbon->lessThan($scheduleStart)) {
