@@ -19,7 +19,8 @@ class DiagnoseSalary extends Command
         {--paysheet= : ID bảng lương cần chẩn đoán}
         {--employee= : ID nhân viên cụ thể}
         {--from= : Ngày bắt đầu (Y-m-d)}
-        {--to= : Ngày kết thúc (Y-m-d)}';
+        {--to= : Ngày kết thúc (Y-m-d)}
+        {--fix : Recalculate timekeeping trước khi chẩn đoán (sửa dữ liệu stale)}';
 
     protected $description = 'Chẩn đoán chi tiết tính lương cho từng nhân viên - tìm nguyên nhân sai số';
 
@@ -165,6 +166,19 @@ class DiagnoseSalary extends Command
         // Phân tích từng phiếu lương
         $this->info("═══ CHI TIẾT TỪNG NHÂN VIÊN ═══");
         $this->newLine();
+
+        // Recalculate timekeeping nếu --fix
+        if ($this->option('fix')) {
+            $this->warn("🔄 Recalculate timekeeping cho tất cả NV trong paysheet...");
+            $tkService = new \App\Services\TimekeepingService();
+            foreach ($paysheet->payslips as $slip) {
+                if ($slip->employee) {
+                    $r = $tkService->recalculateForRange($periodStart, $periodEnd, $slip->employee_id);
+                    $this->line("  {$slip->employee->code}: created={$r['created']}, updated={$r['updated']}");
+                }
+            }
+            $this->newLine();
+        }
 
         $issues = [];
         $totalRecalc = 0;
@@ -393,6 +407,15 @@ class DiagnoseSalary extends Command
 
     private function printDetailedEmployeeAnalysis(Employee $employee, Carbon $from, Carbon $to): void
     {
+        // Auto-recalculate timekeeping nếu có flag --fix
+        if ($this->option('fix')) {
+            $this->warn("🔄 Đang recalculate timekeeping cho {$employee->code}...");
+            $service = new \App\Services\TimekeepingService();
+            $result = $service->recalculateForRange($from, $to, $employee->id);
+            $this->info("   → Created: {$result['created']}, Updated: {$result['updated']}");
+            $this->newLine();
+        }
+
         $setting = $employee->salarySetting;
 
         // Salary Setting
