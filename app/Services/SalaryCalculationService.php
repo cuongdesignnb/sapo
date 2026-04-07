@@ -58,11 +58,15 @@ class SalaryCalculationService
         $earlyLeaveCount = $records->where('early_minutes', '>', 0)->count();
         $earlyTotalMinutes = $records->sum('early_minutes');
 
+        // Tổng phút làm thực tế (dùng cho lương giờ)
+        $totalWorkedMinutes = $records->where('attendance_type', 'work')->sum('worked_minutes');
+
         // Tính lương cơ bản theo loại lương
         $baseSalary = $setting->base_salary;
         if ($setting->salary_type === 'hourly') {
-            // Lương theo giờ: base_salary = hourly_rate × totalUnits × 8h
-            $baseSalary = $totalUnits * 8 * $setting->base_salary;
+            // Lương theo giờ: tổng giờ làm thực tế × đơn giá giờ
+            $totalWorkedHours = $totalWorkedMinutes / 60;
+            $baseSalary = $totalWorkedHours * $setting->base_salary;
         } elseif ($setting->salary_type === 'by_workday') {
             // Theo ngày công chuẩn: tính theo tỷ lệ ngày công thực tế / ngày công chuẩn
             // VD: lương 10tr, công chuẩn 26, đi 20 → 10tr × 20/26 = 7.69tr
@@ -237,6 +241,7 @@ class SalaryCalculationService
             'ot_minutes' => $otMinutes,
             'standard_work_units' => $standardWorkUnits,
             'work_units' => $totalUnits,
+            'total_worked_minutes' => $totalWorkedMinutes,
             'paid_leave_units' => $paidLeaveUnits,
             'late_count' => $lateCount,
             'late_minutes' => $lateTotalMinutes,

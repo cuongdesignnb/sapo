@@ -624,10 +624,12 @@ class DiagnoseSalary extends Command
         $stdUnits = $calc['standard_work_units'];
 
         if ($setting->salary_type === 'hourly') {
+            $totalMins = $calc['total_worked_minutes'] ?? 0;
+            $totalHours = round($totalMins / 60, 2);
             $this->line("Loại: LƯƠNG GIỜ");
-            $this->line("base = totalUnits × 8h × hourly_rate");
-            $this->line("     = {$totalUnits} × 8 × " . number_format($setting->base_salary));
-            $this->line("     = " . number_format($totalUnits * 8 * $setting->base_salary) . "đ");
+            $this->line("base = tổng giờ làm thực tế × đơn giá giờ");
+            $this->line("     = {$totalHours}h ({$totalMins} phút) × " . number_format($setting->base_salary) . "đ/h");
+            $this->line("     = " . number_format($totalHours * $setting->base_salary) . "đ");
         } elseif ($setting->salary_type === 'by_workday') {
             $this->line("Loại: LƯƠNG NGÀY CÔNG CHUẨN");
             $this->line("base = base_salary × totalUnits / standardWorkUnits");
