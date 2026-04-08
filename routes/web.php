@@ -18,6 +18,7 @@ use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\CashFlowController;
 use App\Http\Controllers\OrderReturnController;
+use App\Http\Controllers\PurchaseReturnController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\TaskPageController;
 use App\Http\Controllers\ReportController;
@@ -127,6 +128,13 @@ Route::get('/purchases/{purchase}/edit', [PurchaseController::class, 'edit'])->m
 Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->middleware('permission:purchases.view')->name('purchases.show');
 Route::put('/purchases/{purchase}', [PurchaseController::class, 'update'])->middleware('permission:purchases.create')->name('purchases.update');
 Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->middleware('permission:purchases.create')->name('purchases.destroy');
+
+// ===== PURCHASE RETURNS (Trả hàng nhập) =====
+Route::get('/purchase-returns/create', [PurchaseReturnController::class, 'create'])->middleware('permission:purchases.create')->name('purchase-returns.create');
+Route::get('/purchase-returns', [PurchaseReturnController::class, 'index'])->middleware('permission:purchases.view')->name('purchase-returns.index');
+Route::get('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'show'])->middleware('permission:purchases.view')->name('purchase-returns.show');
+Route::post('/purchase-returns', [PurchaseReturnController::class, 'store'])->middleware('permission:purchases.create')->name('purchase-returns.store');
+Route::delete('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'destroy'])->middleware('permission:purchases.create')->name('purchase-returns.destroy');
 
 // Quick store for categories/brands (shared)
 Route::post('/categories/quick-store', [SettingController::class, 'quickStoreCategory'])->name('categories.quick-store');
@@ -308,6 +316,7 @@ Route::get('/cash-flows/export', [CashFlowController::class, 'export'])->middlew
 Route::post('/cash-flows/import', [CashFlowController::class, 'import'])->middleware('permission:cash_flows.import')->name('cash_flows.import');
 
 Route::get('/purchases/export', [PurchaseController::class, 'export'])->middleware('permission:purchases.export')->name('purchases.export');
+Route::get('/purchase-returns/export', [\App\Http\Controllers\PurchaseReturnController::class, 'export'])->middleware('permission:purchases.export')->name('purchase-returns.export');
 Route::get('/purchase-orders/export', [PurchaseOrderController::class, 'export'])->middleware('permission:purchase_orders.export')->name('purchase-orders.export');
 Route::get('/stock-takes/export', [StockTakeController::class, 'export'])->middleware('permission:stock_takes.export')->name('stock-takes.export');
 Route::get('/stock-transfers/export', [StockTransferController::class, 'export'])->middleware('permission:stock_transfers.export')->name('stock-transfers.export');
@@ -440,6 +449,8 @@ Route::group(['prefix' => 'reports'], function () {
     Route::get('/suppliers-report', [SupplierReportController::class, 'index'])->name('reports.suppliers-report');
     Route::get('/employees-report', [EmployeeReportController::class, 'index'])->name('reports.employees-report');
     Route::get('/financial-report', [FinancialReportController::class, 'index'])->name('reports.financial-report');
+    Route::get('/debt-reconciliation', [ReportController::class, 'debtReconciliation'])->name('reports.debt-reconciliation');
+    Route::get('/debt-reconciliation/export', [ReportController::class, 'exportDebtReconciliation'])->name('reports.debt-reconciliation.export');
 });
 
 }); // end auth middleware

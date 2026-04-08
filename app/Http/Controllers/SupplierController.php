@@ -4,10 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Purchase;
+use App\Models\Invoice;
+use App\Models\OrderReturn;
+use App\Models\CashFlow;
 use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
+use App\Services\DebtOffsetService;
 
 class SupplierController extends Controller
 {

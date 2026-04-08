@@ -34,6 +34,12 @@ const triggerToast = () => {
         showToast.value = true;
         setTimeout(() => (showToast.value = false), 6000);
         page.props.flash.warning = null;
+    } else if (page.props.flash?.warning) {
+        toastMessage.value = page.props.flash.warning;
+        toastType.value = "warning";
+        showToast.value = true;
+        setTimeout(() => (showToast.value = false), 6000);
+        page.props.flash.warning = null;
     } else if (page.props.flash?.error) {
         toastMessage.value = page.props.flash.error;
         toastType.value = "error";
@@ -67,7 +73,18 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         :class="{ 'bg-[#005bb5]': $page.url === '/' }"
                         >Tổng quan</Link
                     >
-                    <div v-if="canAny(['products.view', 'stock.transfer', 'stock.take', 'purchases.view', 'purchases.create'])" class="relative group cursor-pointer">
+                    <div
+                        v-if="
+                            canAny([
+                                'products.view',
+                                'stock.transfer',
+                                'stock.take',
+                                'purchases.view',
+                                'purchases.create',
+                            ])
+                        "
+                        class="relative group cursor-pointer"
+                    >
                         <div
                             class="px-3 py-2 flex items-center gap-1 hover:bg-[#005bb5] rounded"
                             :class="{
@@ -115,7 +132,10 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             class="absolute left-0 top-full mt-1 w-[550px] bg-white border border-gray-200 rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-gray-800 text-[13.5px] flex font-normal overflow-hidden leading-normal"
                         >
                             <!-- Col 1: Hàng hóa -->
-                            <div v-if="canAny(['products.view'])" class="flex-1 py-1">
+                            <div
+                                v-if="canAny(['products.view'])"
+                                class="flex-1 py-1"
+                            >
                                 <h3
                                     class="px-4 py-3 font-bold text-gray-500 text-[12px] mb-1"
                                 >
@@ -144,7 +164,16 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             </div>
 
                             <!-- Col 2: Kho hàng -->
-                            <div v-if="canAny(['stock.transfer', 'stock.take', 'products.view'])" class="flex-1 py-1 border-l border-gray-200">
+                            <div
+                                v-if="
+                                    canAny([
+                                        'stock.transfer',
+                                        'stock.take',
+                                        'products.view',
+                                    ])
+                                "
+                                class="flex-1 py-1 border-l border-gray-200"
+                            >
                                 <h3
                                     class="px-4 py-3 font-bold text-gray-500 text-[12px] mb-1"
                                 >
@@ -188,7 +217,12 @@ watch(() => page.props.flash, triggerToast, { deep: true });
 
                             <!-- Col 3: Nhập hàng -->
                             <div
-                                v-if="canAny(['purchases.view', 'purchases.create'])"
+                                v-if="
+                                    canAny([
+                                        'purchases.view',
+                                        'purchases.create',
+                                    ])
+                                "
                                 class="flex-1 py-1 border-l border-gray-200 bg-gray-50/30"
                             >
                                 <h3
@@ -215,8 +249,10 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                 >
                                 <Link
                                     v-if="
-                                        canAny(['purchases.view']) && ($page.props.app_settings
-                                            ?.purchase_order_enabled ?? true)
+                                        canAny(['purchases.view']) &&
+                                        ($page.props.app_settings
+                                            ?.purchase_order_enabled ??
+                                            true)
                                     "
                                     href="/purchase-orders"
                                     class="block px-4 py-3 hover:bg-gray-100"
@@ -229,14 +265,17 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                                 >
                                 <Link
                                     v-if="canAny(['purchases.view'])"
-                                    href="#"
+                                    href="/purchase-returns"
                                     class="block px-4 py-3 hover:bg-gray-100 bg-gray-100 border-t border-gray-200"
                                     >Trả hàng nhập</Link
                                 >
                             </div>
                         </div>
                     </div>
-                    <div v-if="canAny(['orders.view', 'invoices.view'])" class="relative group">
+                    <div
+                        v-if="canAny(['orders.view', 'invoices.view'])"
+                        class="relative group"
+                    >
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{
@@ -290,7 +329,10 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         }"
                         >Khách hàng</Link
                     >
-                    <div v-if="canAny(['employees.view'])" class="relative group">
+                    <div
+                        v-if="canAny(['employees.view'])"
+                        class="relative group"
+                    >
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{
@@ -351,36 +393,99 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                         <button
                             class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
                             :class="{
-                                'bg-[#005bb5]': $page.url.startsWith('/reports'),
+                                'bg-[#005bb5]':
+                                    $page.url.startsWith('/reports'),
                             }"
                         >
                             Phân tích
                         </button>
                         <div
                             class="absolute right-0 mt-0 bg-white rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pt-1 border border-gray-100"
-                            style="min-width: 420px;"
+                            style="min-width: 420px"
                         >
                             <div class="bg-white rounded py-2 flex">
                                 <!-- Column 1: Phân tích -->
-                                <div class="flex-1 border-r border-gray-100 px-2">
-                                    <div class="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">Phân tích</div>
-                                    <Link href="/reports/business" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Kinh doanh</Link>
-                                    <Link href="/reports/products" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Hàng hóa</Link>
-                                    <Link href="/reports/customers" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Khách hàng</Link>
-                                    <Link href="/reports/customer-debt" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Hiệu quả</Link>
+                                <div
+                                    class="flex-1 border-r border-gray-100 px-2"
+                                >
+                                    <div
+                                        class="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider"
+                                    >
+                                        Phân tích
+                                    </div>
+                                    <Link
+                                        href="/reports/business"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Kinh doanh</Link
+                                    >
+                                    <Link
+                                        href="/reports/products"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Hàng hóa</Link
+                                    >
+                                    <Link
+                                        href="/reports/customers"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Khách hàng</Link
+                                    >
+                                    <Link
+                                        href="/reports/customer-debt"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Hiệu quả</Link
+                                    >
                                 </div>
                                 <!-- Column 2: Báo cáo -->
                                 <div class="flex-1 px-2">
-                                    <div class="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">Báo cáo</div>
-                                    <Link href="/reports/end-of-day" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Cuối ngày</Link>
-                                    <Link href="/reports/sales" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Bán hàng</Link>
-                                    <Link href="/reports/orders" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Đặt hàng</Link>
-                                    <Link href="/reports/products-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Hàng hóa</Link>
-                                    <Link href="/reports/customers-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Khách hàng</Link>
-                                    <Link href="/reports/suppliers-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Nhà cung cấp</Link>
-                                    <Link href="/reports/employees-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Nhân viên</Link>
-                                    <Link href="#" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Kênh bán hàng</Link>
-                                    <Link href="/reports/financial-report" class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded">Tài chính</Link>
+                                    <div
+                                        class="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider"
+                                    >
+                                        Báo cáo
+                                    </div>
+                                    <Link
+                                        href="/reports/end-of-day"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Cuối ngày</Link
+                                    >
+                                    <Link
+                                        href="/reports/sales"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Bán hàng</Link
+                                    >
+                                    <Link
+                                        href="/reports/orders"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Đặt hàng</Link
+                                    >
+                                    <Link
+                                        href="/reports/products-report"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Hàng hóa</Link
+                                    >
+                                    <Link
+                                        href="/reports/customers-report"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Khách hàng</Link
+                                    >
+                                    <Link
+                                        href="/reports/suppliers-report"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Nhà cung cấp</Link
+                                    >
+                                    <Link
+                                        href="/reports/employees-report"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Nhân viên</Link
+                                    >
+                                    <Link
+                                        href="#"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Kênh bán hàng</Link
+                                    >
+                                    <Link
+                                        href="/reports/financial-report"
+                                        class="block px-3 py-2 text-[14px] text-gray-700 hover:bg-gray-100 rounded"
+                                        >Tài chính</Link
+                                    >
                                 </div>
                             </div>
                         </div>
