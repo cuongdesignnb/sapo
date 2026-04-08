@@ -182,8 +182,8 @@ class SalaryCalculationService
                 ->map(fn($d) => Carbon::parse($d)->toDateString())
                 ->toArray();
 
-            // Phân loại OT theo loại ngày
-            $otByType = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'rest_day' => 0, 'holiday' => 0];
+            // Phân loại OT theo loại ngày (Chủ nhật gộp vào Ngày nghỉ vì cùng hệ số)
+            $otByType = ['weekday' => 0, 'saturday' => 0, 'rest_day' => 0, 'holiday' => 0];
             foreach ($records->where('ot_minutes', '>', 0) as $rec) {
                 $dateStr = Carbon::parse($rec->work_date)->toDateString();
                 $dayOfWeek = Carbon::parse($rec->work_date)->dayOfWeek; // 0=CN, 6=T7
@@ -191,10 +191,8 @@ class SalaryCalculationService
 
                 if (in_array($dateStr, $officialHolidayDates)) {
                     $otByType['holiday'] += $mins;
-                } elseif ($rec->is_holiday) {
+                } elseif ($rec->is_holiday || $dayOfWeek === 0) {
                     $otByType['rest_day'] += $mins;
-                } elseif ($dayOfWeek === 0) {
-                    $otByType['sunday'] += $mins;
                 } elseif ($dayOfWeek === 6) {
                     $otByType['saturday'] += $mins;
                 } else {
@@ -206,19 +204,18 @@ class SalaryCalculationService
             $typeRates = [
                 'weekday' => $overtimeRate,
                 'saturday' => $overtimeRate,
-                'sunday' => $restDayOtRate,
                 'rest_day' => $restDayOtRate,
                 'holiday' => $tetOtRate,
             ];
             $typeLabels = [
                 'weekday' => 'Ngày thường',
                 'saturday' => 'Thứ 7',
-                'sunday' => 'Chủ nhật',
                 'rest_day' => 'Ngày nghỉ',
                 'holiday' => 'Ngày lễ tết',
             ];
 
             foreach ($otByType as $type => $mins) {
+                if ($mins <= 0) continue; // Bỏ loại OT không có phút
                 $rate = $typeRates[$type];
                 $hours = round($mins / 60, 2);
                 $amount = round($hours * $hourlyRate * $rate);
