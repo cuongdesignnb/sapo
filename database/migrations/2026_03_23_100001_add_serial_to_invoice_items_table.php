@@ -8,13 +8,19 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('invoice_items', 'serial')) {
+            return;
+        }
         Schema::table('invoice_items', function (Blueprint $table) {
-            $table->text('serial')->nullable()->after('price');
+            $table->text('serial')->nullable();
         });
     }
 
     public function down(): void
     {
+        if (!Schema::hasColumn('invoice_items', 'serial')) {
+            return;
+        }
         Schema::table('invoice_items', function (Blueprint $table) {
             $table->dropColumn('serial');
         });

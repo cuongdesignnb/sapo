@@ -11,6 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('serial_imeis', 'purchase_id')) {
+            return;
+        }
         Schema::table('serial_imeis', function (Blueprint $table) {
             $table->unsignedBigInteger('purchase_id')->nullable()->after('status');
             $table->foreign('purchase_id')->references('id')->on('purchases')->nullOnDelete();
@@ -22,6 +25,9 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasColumn('serial_imeis', 'purchase_id')) {
+            return;
+        }
         Schema::table('serial_imeis', function (Blueprint $table) {
             $table->dropForeign(['purchase_id']);
             $table->dropColumn('purchase_id');

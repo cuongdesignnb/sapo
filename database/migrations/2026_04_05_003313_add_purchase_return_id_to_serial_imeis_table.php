@@ -11,8 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('serial_imeis', 'purchase_return_id')) {
+            return;
+        }
         Schema::table('serial_imeis', function (Blueprint $table) {
-            $table->unsignedBigInteger('purchase_return_id')->nullable()->after('purchase_id');
+            $table->unsignedBigInteger('purchase_return_id')->nullable();
             $table->index('purchase_return_id');
         });
     }
@@ -22,6 +25,9 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasColumn('serial_imeis', 'purchase_return_id')) {
+            return;
+        }
         Schema::table('serial_imeis', function (Blueprint $table) {
             $table->dropIndex(['purchase_return_id']);
             $table->dropColumn('purchase_return_id');

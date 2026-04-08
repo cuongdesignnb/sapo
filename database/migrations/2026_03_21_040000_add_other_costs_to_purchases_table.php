@@ -8,15 +8,22 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('purchases', function (Blueprint $table) {
-            $table->json('other_costs')->nullable()->after('discount');
-            $table->decimal('other_costs_total', 15, 2)->default(0)->after('other_costs');
+            if (!Schema::hasColumn('purchases', 'other_costs')) {
+                $table->json('other_costs')->nullable();
+            }
+            if (!Schema::hasColumn('purchases', 'other_costs_total')) {
+                $table->decimal('other_costs_total', 15, 2)->default(0);
+            }
         });
     }
 
     public function down(): void
     {
-        Schema::table('purchases', function (Blueprint $table) {
-            $table->dropColumn(['other_costs', 'other_costs_total']);
-        });
+        $cols = array_filter(['other_costs', 'other_costs_total'], fn($c) => Schema::hasColumn('purchases', $c));
+        if ($cols) {
+            Schema::table('purchases', function (Blueprint $table) use ($cols) {
+                $table->dropColumn(array_values($cols));
+            });
+        }
     }
 };
