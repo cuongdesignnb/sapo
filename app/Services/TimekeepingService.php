@@ -187,6 +187,13 @@ class TimekeepingService
                 $isRestDay = !in_array($dayOfWeek, $weekDays);
             }
 
+            // Ngày nghỉ / ngày lễ: toàn bộ giờ làm = OT, không tính muộn/sớm
+            if (((bool) $holiday || $isRestDay) && $workedMinutes > 0) {
+                $otMinutes = $workedMinutes;
+                $lateMinutes = 0;
+                $earlyMinutes = 0;
+            }
+
             // Tính work_units: 0 (vắng), 0.5 (nửa ngày), 1 (đủ ngày)
             $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
             $halfDayThreshold = $standardHours / 2;
@@ -213,6 +220,11 @@ class TimekeepingService
             // Đi muộn quá ngưỡng → tính nửa ngày công
             if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $workUnits > 0.5) {
                 $workUnits = 0.5;
+            }
+
+            // Ngày nghỉ/lễ: không tính công (lương đã tính qua OT 200%)
+            if (((bool) $holiday || $isRestDay) && $workedMinutes > 0) {
+                $workUnits = 0;
             }
 
             $attributes = [
