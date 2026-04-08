@@ -9,6 +9,7 @@ use App\Models\Shift;
 use App\Models\TimekeepingSetting;
 use App\Models\Holiday;
 use App\Models\Setting;
+use App\Models\WorkdaySetting;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -20,6 +21,10 @@ class TimekeepingService
         $holidayMap = Holiday::whereBetween('holiday_date', [$from, $to])
             ->where('status', 'active')
             ->get()->keyBy(fn($h) => \Carbon\Carbon::parse($h->holiday_date)->toDateString());
+
+        // Lấy danh sách ngày làm việc trong tuần (VD: [1,2,3,4,5,6] = T2→T7)
+        // Ngày KHÔNG nằm trong danh sách = ngày nghỉ tuần (VD: CN = 0)
+        $workdaySettings = WorkdaySetting::all();
 
         $schedules = EmployeeWorkSchedule::whereBetween('work_date', [$from, $to])
             ->when($employeeId, fn($q) => $q->where('employee_id', $employeeId))
@@ -101,7 +106,7 @@ class TimekeepingService
                     // Nếu gần giờ kết thúc ca hơn → coi là check_out (nhân viên quên chấm vào)
                     $punch = Carbon::parse($logs->first()->punched_at);
                     $midShift = $scheduleStart->copy()->addMinutes(
-                        $scheduleStart->diffInMinutes($scheduleEnd) / 2
+                        abs($scheduleStart->diffInMinutes($scheduleEnd)) / 2
                     );
                     if ($punch->greaterThan($midShift)) {
                         $checkOut = $logs->first()->punched_at;
@@ -126,17 +131,23 @@ class TimekeepingService
             $lateMinutes = $earlyMinutes = $otMinutes = $workedMinutes = 0;
 
             if ($checkIn && $checkOut) {
-                $workedMinutes = max(0, Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
+                $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
+            } elseif ($checkIn && !$checkOut && $scheduleEnd) {
+                // Chỉ có check_in, không có check_out → ước tính làm đến hết ca
+                $workedMinutes = abs($scheduleEnd->diffInMinutes(Carbon::parse($checkIn)));
+            } elseif (!$checkIn && $checkOut && $scheduleStart) {
+                // Chỉ có check_out, không có check_in → ước tính làm từ đầu ca
+                $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes($scheduleStart));
             }
 
             if ($scheduleStart && $checkIn) {
-                $diff = Carbon::parse($checkIn)->diffInMinutes($scheduleStart, false);
-                $lateMinutes = max(0, $diff - $allowLate);
+                $checkInCarbon = Carbon::parse($checkIn);
+                $lateMinutes = max(0, (int) $checkInCarbon->diffInMinutes($scheduleStart, false));
+                $lateMinutes = max(0, $lateMinutes - $allowLate);
 
                 if ($overtimeBeforeEnabled) {
-                    $checkInCarbon = Carbon::parse($checkIn);
                     if ($checkInCarbon->lessThan($scheduleStart)) {
-                        $rawBeforeOt = $scheduleStart->diffInMinutes($checkInCarbon);
+                        $rawBeforeOt = abs($scheduleStart->diffInMinutes($checkInCarbon));
                         $rawBeforeOt = max(0, $rawBeforeOt - $overtimeBeforeMinutes);
                         if ($otRounding > 0) {
                             $rawBeforeOt = intdiv($rawBeforeOt, $otRounding) * $otRounding;
@@ -150,10 +161,10 @@ class TimekeepingService
                 $checkOutCarbon = Carbon::parse($checkOut);
 
                 if ($checkOutCarbon->lessThan($scheduleEnd)) {
-                    $diffEarly = $scheduleEnd->diffInMinutes($checkOutCarbon);
+                    $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    $rawOt = $checkOutCarbon->diffInMinutes($scheduleEnd);
+                    $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
                     $rawOt = max(0, $rawOt - $otAfter);
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
@@ -163,6 +174,16 @@ class TimekeepingService
             }
 
             $holiday = $holidayMap->get(Carbon::parse($schedule->work_date)->toDateString());
+
+            // Kiểm tra ngày nghỉ tuần (VD: Chủ nhật không nằm trong week_days)
+            $isRestDay = false;
+            if (!$holiday) {
+                $dayOfWeek = Carbon::parse($schedule->work_date)->dayOfWeek; // 0=CN, 1=T2...6=T7
+                $branchWorkday = $workdaySettings->firstWhere('branch_id', $schedule->branch_id);
+                $globalWorkday = $workdaySettings->firstWhere('branch_id', null);
+                $weekDays = ($branchWorkday ?? $globalWorkday)?->week_days ?? [1, 2, 3, 4, 5, 6]; // Mặc định T2-T7
+                $isRestDay = !in_array($dayOfWeek, $weekDays);
+            }
 
             // Tính work_units: 0 (vắng), 0.5 (nửa ngày), 1 (đủ ngày)
             $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
@@ -211,8 +232,8 @@ class TimekeepingService
                 'ot_minutes' => $otMinutes,
                 'worked_minutes' => $workedMinutes,
                 'work_units' => $workUnits,
-                'is_holiday' => (bool) $holiday,
-                'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : 1,
+                'is_holiday' => (bool) $holiday || $isRestDay,
+                'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : ($isRestDay ? 2.0 : 1),
                 'raw' => [
                     'log_ids' => $logs->pluck('id')->values()->all(),
                     'device_ids' => $logs->pluck('attendance_device_id')->unique()->values()->all(),

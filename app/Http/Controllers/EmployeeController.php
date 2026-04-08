@@ -329,19 +329,20 @@ class EmployeeController extends Controller
             $query->where('job_title_id', $request->job_title_id);
         }
 
-        $employees = $query->with('user:id,name,email')->latest()->paginate(20)->withQueryString();
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'attendance_code', 'name', 'phone', 'cccd', 'created_at'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
+        });
+
+        $employees = $query->paginate(20)->withQueryString();
 
         $branches = Branch::select('id', 'name')->get();
         $departments = Department::select('id', 'name')->get();
         $jobTitles = JobTitle::select('id', 'name')->get();
-
-        // Users not yet linked to any employee (available for linking)
-        $linkedUserIds = Employee::whereNotNull('user_id')->pluck('user_id')->toArray();
-        $availableUsers = \App\Models\User::whereNotIn('id', $linkedUserIds)
-            ->where('status', 'active')
-            ->select('id', 'name', 'email')
-            ->orderBy('name')
-            ->get();
 
         return Inertia::render('Employees/Index', [
             'employees' => $employees,
@@ -349,8 +350,7 @@ class EmployeeController extends Controller
             'departments' => $departments,
             'jobTitles' => $jobTitles,
             'salaryTemplates' => SalaryTemplate::select('id', 'name')->get(),
-            'availableUsers' => $availableUsers,
-            'filters' => $request->only('search', 'is_active', 'branch_id', 'department_id', 'job_title_id')
+            'filters' => $request->only('search', 'is_active', 'branch_id', 'department_id', 'job_title_id', 'sort_by', 'sort_direction')
         ]);
     }
 
@@ -368,7 +368,6 @@ class EmployeeController extends Controller
             'job_title_id' => 'nullable|exists:job_titles,id',
             'notes' => 'nullable|string',
             'is_active' => 'boolean',
-            'user_id' => 'nullable|exists:users,id|unique:employees,user_id',
         ]);
 
         // Nếu không truyền code, tự sinh mã
@@ -399,7 +398,6 @@ class EmployeeController extends Controller
             'job_title_id' => 'nullable|exists:job_titles,id',
             'notes' => 'nullable|string',
             'is_active' => 'boolean',
-            'user_id' => 'nullable|exists:users,id|unique:employees,user_id,' . $employee->id,
         ]);
 
         $employee->update($validated);

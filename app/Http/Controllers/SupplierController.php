@@ -53,44 +53,24 @@ class SupplierController extends Controller
             }
         }
 
-        $suppliers = $query
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'name', 'phone', 'email', 'created_at'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->latest();
-            })
-            ->paginate(50)->withQueryString();
-
-        // Recalculate supplier_debt_amount from actual purchase data
-        $supplierIds = $suppliers->pluck('id');
-        $debts = Purchase::whereIn('supplier_id', $supplierIds)
-            ->where('status', 'completed')
-            ->groupBy('supplier_id')
-            ->select('supplier_id', DB::raw('SUM(debt_amount) as real_debt'), DB::raw('SUM(total_amount) as real_total'))
-            ->pluck('real_debt', 'supplier_id');
-        $totals = Purchase::whereIn('supplier_id', $supplierIds)
-            ->where('status', 'completed')
-            ->groupBy('supplier_id')
-            ->select('supplier_id', DB::raw('SUM(total_amount) as real_total'))
-            ->pluck('real_total', 'supplier_id');
-
-        $suppliers->getCollection()->transform(function ($s) use ($debts, $totals) {
-            $s->supplier_debt_amount = $debts[$s->id] ?? 0;
-            $s->total_bought = $totals[$s->id] ?? 0;
-            return $s;
+        $query->when($request->filled('sort_by'), function ($q) use ($request) {
+            $allowed = ['code', 'name', 'phone', 'email', 'supplier_debt_amount', 'total_bought', 'created_at'];
+            $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'created_at';
+            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
+            $q->orderBy($sortBy, $dir);
+        }, function ($q) {
+            $q->latest();
         });
 
-        // Summary totals
+        $suppliers = $query->paginate(50)->withQueryString();
+
+        // Summary totals - use supplier_debt_amount which is maintained by purchase/return flows
         $summary = [
-            'total_debt' => Purchase::where('status', 'completed')
-                ->whereHas('supplier', fn($q) => $q->where('is_supplier', true))
-                ->sum('debt_amount'),
-            'total_bought' => Purchase::where('status', 'completed')
-                ->whereHas('supplier', fn($q) => $q->where('is_supplier', true))
-                ->sum('total_amount'),
+            'total_debt' => Customer::where('is_supplier', true)
+                ->where('supplier_debt_amount', '>', 0)
+                ->sum('supplier_debt_amount'),
+            'total_bought' => Customer::where('is_supplier', true)
+                ->sum('total_bought'),
         ];
 
         $groups = Customer::where('is_supplier', true)->whereNotNull('customer_group')->distinct()->pluck('customer_group');
@@ -98,27 +78,13 @@ class SupplierController extends Controller
         return Inertia::render('Suppliers/Index', [
             'suppliers' => $suppliers,
             'groups' => $groups,
-            'filters' => array_merge($request->only(['search', 'customer_group', 'date_filter', 'partner_type']), [
-                'sort_by' => $request->sort_by,
-                'sort_direction' => $request->sort_direction,
-            ]),
+            'filters' => $request->only(['search', 'customer_group', 'date_filter', 'partner_type', 'sort_by', 'sort_direction']),
             'summary' => $summary,
         ]);
     }
 
     public function store(Request $request)
     {
-        if ($request->filled('link_existing_id')) {
-            $customer = Customer::find($request->input('link_existing_id'));
-            if ($customer) {
-                $customer->update(['is_supplier' => true]);
-                if ($request->wantsJson()) {
-                    return response()->json(['supplier' => $customer]);
-                }
-                return redirect()->route('suppliers.index')->with('success', 'Đã liên kết nhà cung cấp thành công.');
-            }
-        }
-
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
@@ -138,11 +104,7 @@ class SupplierController extends Controller
         // If the toggle 'is_customer' is false, it means they are only a supplier.
         $validated['is_customer'] = $request->input('is_customer', false);
 
-        $customer = Customer::create($validated);
-
-        if ($request->wantsJson()) {
-            return response()->json(['supplier' => $customer]);
-        }
+        Customer::create($validated);
 
         return redirect()->route('suppliers.index')->with('success', 'Tạo nhà cung cấp thành công.');
     }
@@ -151,41 +113,14 @@ class SupplierController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'code' => 'nullable|string|max:255|unique:customers,code',
             'phone' => 'nullable|string|max:255',
-            'phone2' => 'nullable|string|max:255',
-            'birthday' => 'nullable|date',
-            'gender' => 'nullable|in:none,male,female',
             'email' => 'nullable|email|max:255',
-            'facebook' => 'nullable|string|max:255',
             'address' => 'nullable|string',
-            'city' => 'nullable|string',
-            'district' => 'nullable|string',
-            'ward' => 'nullable|string',
-            'customer_group' => 'nullable|string',
-            'note' => 'nullable|string',
-            'type' => 'nullable|in:individual,company',
-            'invoice_name' => 'nullable|string|max:255',
-            'id_card' => 'nullable|string|max:255',
-            'passport' => 'nullable|string|max:255',
-            'tax_code' => 'nullable|string|max:255',
-            'invoice_address' => 'nullable|string',
-            'invoice_city' => 'nullable|string',
-            'invoice_district' => 'nullable|string',
-            'invoice_ward' => 'nullable|string',
-            'invoice_email' => 'nullable|email|max:255',
-            'invoice_phone' => 'nullable|string|max:255',
-            'bank_name' => 'nullable|string|max:255',
-            'bank_account' => 'nullable|string|max:255',
-            'is_customer' => 'boolean',
         ]);
 
-        if (empty($validated['code'])) {
-            $validated['code'] = 'NCC' . time() . rand(10, 99);
-        }
-
+        $validated['code'] = 'NCC' . time() . rand(10, 99);
         $validated['is_supplier'] = true;
-        $validated['is_customer'] = $request->input('is_customer', false);
+        $validated['is_customer'] = false;
 
         $supplier = Customer::create($validated);
 
@@ -205,6 +140,29 @@ class SupplierController extends Controller
         );
     }
 
+    public function exportDebtHistory($id)
+    {
+        $data = $this->debtTransactions($id)->getData(true);
+        $entries = $data['entries'] ?? $data;
+
+        return \App\Services\CsvService::export(
+            ['Mã chứng từ', 'Loại', 'Giá trị', 'Còn nợ', 'Ngày', 'Ghi chú'],
+            collect($entries)->map(fn($t) => [$t['code'], $t['type_label'], $t['amount'], $t['debt_remain'], $t['date'] ?? ($t['created_at'] ?? ''), $t['note'] ?? '']),
+            "cong_no_ncc_{$id}.csv"
+        );
+    }
+
+    public function exportPurchaseHistory($id)
+    {
+        $data = $this->purchaseHistory($id)->getData(true);
+
+        return \App\Services\CsvService::export(
+            ['Mã phiếu nhập', 'Ngày', 'Người tạo', 'Chi nhánh', 'Tổng tiền', 'Trạng thái'],
+            collect($data)->map(fn($p) => [$p['code'], $p['date'], $p['user_name'], $p['branch'], $p['total'], $p['status_label']]),
+            "lich_su_nhap_{$id}.csv"
+        );
+    }
+
     public function import(Request $request)
     {
         [$headers, $rows] = \App\Services\CsvService::parse($request);
@@ -213,7 +171,7 @@ class SupplierController extends Controller
             if (count($row) < 2 || empty(trim($row[1] ?? ''))) continue;
             Customer::updateOrCreate(
                 ['code' => trim($row[0])],
-                ['name' => trim($row[1]), 'phone' => trim($row[2] ?? ''), 'email' => trim($row[3] ?? ''), 'address' => trim($row[4] ?? ''), 'ward' => trim($row[5] ?? ''), 'district' => trim($row[6] ?? ''), 'city' => trim($row[7] ?? ''), 'note' => trim($row[9] ?? ''), 'is_supplier' => true]
+                ['name' => trim($row[1]), 'phone' => trim($row[2] ?? ''), 'email' => trim($row[3] ?? ''), 'address' => trim($row[4] ?? ''), 'ward' => trim($row[5] ?? ''), 'district' => trim($row[6] ?? ''), 'city' => trim($row[7] ?? ''), 'note' => trim($row[9] ?? ''), 'is_supplier' => true, 'is_customer' => false]
             );
             $count++;
         }
@@ -221,23 +179,6 @@ class SupplierController extends Controller
     }
 
     // ===== API METHODS =====
-
-    public function apiSearch(Request $request)
-    {
-        $search = $request->input('search');
-        $suppliers = Customer::where('is_supplier', true)
-            ->when($search, function($q) use ($search) {
-                $q->where(function($query) use ($search) {
-                    $query->where('name', 'like', "%{$search}%")
-                          ->orWhere('code', 'like', "%{$search}%")
-                          ->orWhere('phone', 'like', "%{$search}%");
-                });
-            })
-            ->take(20)
-            ->get(['id', 'name', 'phone']);
-            
-        return response()->json($suppliers);
-    }
 
     /**
      * Lịch sử nhập/trả hàng
@@ -265,37 +206,134 @@ class SupplierController extends Controller
     }
 
     /**
-     * Nợ cần trả NCC - lịch sử công nợ
+     * Nợ cần trả NCC - lịch sử công nợ (unified for dual-role)
      */
     public function debtTransactions($id)
     {
         // Seed debt transactions from purchases if empty
         $this->seedDebtTransactions($id);
 
+        $supplier = Customer::find($id);
+
+        $entries = collect();
+
+        // 1) Supplier debt transactions (purchase, return, payment, adjustment, discount, offset)
         $transactions = SupplierDebtTransaction::where('supplier_id', $id)
             ->orderBy('created_at')
-            ->get()
-            ->map(function ($t) {
-                $typeLabels = [
-                    'purchase' => 'Nhập hàng',
-                    'return' => 'Trả hàng',
-                    'payment' => 'Thanh toán',
-                    'adjustment' => 'Điều chỉnh',
-                    'discount' => 'Chiết khấu TT',
-                ];
-                return [
-                    'id' => $t->id,
-                    'code' => $t->code,
-                    'date' => $t->created_at->format('d/m/Y H:i'),
-                    'type' => $t->type,
-                    'type_label' => $typeLabels[$t->type] ?? $t->type,
-                    'amount' => $t->amount,
-                    'debt_remain' => $t->debt_remain,
-                    'note' => $t->note,
-                ];
-            });
+            ->get();
 
-        return response()->json($transactions);
+        $typeLabels = [
+            'purchase' => 'Nhập hàng',
+            'return' => 'Trả hàng',
+            'payment' => 'Thanh toán',
+            'adjustment' => 'Điều chỉnh',
+            'discount' => 'Chiết khấu TT',
+            'offset' => 'Đối trừ CN',
+        ];
+
+        foreach ($transactions as $t) {
+            $entries->push([
+                'id' => 'stx-' . $t->id,
+                'code' => $t->code,
+                'type' => $t->type,
+                'type_label' => $typeLabels[$t->type] ?? $t->type,
+                'amount' => $t->amount,
+                'note' => $t->note,
+                'created_at' => $t->created_at,
+            ]);
+        }
+
+        // 2) If dual-role (also customer): include invoice entries (mirrored)
+        // In KiotViet supplier view: sales show as NEGATIVE (they owe us → offsets what we owe them)
+        if ($supplier && $supplier->is_customer) {
+            $invoices = Invoice::where('customer_id', $id)
+                ->orderBy('created_at')
+                ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
+
+            foreach ($invoices as $inv) {
+                $entries->push([
+                    'id' => 'inv-' . $inv->id,
+                    'code' => $inv->code,
+                    'type' => 'sale',
+                    'type_label' => 'Bán hàng',
+                    'amount' => -$inv->total, // Negative: they owe us → offsets our debt to them
+                    'note' => null,
+                    'created_at' => $inv->created_at,
+                ]);
+                if ($inv->customer_paid > 0) {
+                    $entries->push([
+                        'id' => 'invpay-' . $inv->id,
+                        'code' => 'TTHD' . preg_replace('/^HD/', '', $inv->code),
+                        'type' => 'sale_payment',
+                        'type_label' => 'TT bán hàng',
+                        'amount' => $inv->customer_paid, // Positive: customer paid us → increases what we owe net
+                        'note' => null,
+                        'created_at' => $inv->created_at,
+                    ]);
+                }
+            }
+
+            // Order returns = positive (we refund customer → increases what we owe net)
+            $returns = OrderReturn::where('customer_id', $id)
+                ->orderBy('created_at')
+                ->get(['id', 'code', 'total', 'paid_to_customer', 'created_at']);
+
+            foreach ($returns as $ret) {
+                $entries->push([
+                    'id' => 'ret-' . $ret->id,
+                    'code' => $ret->code,
+                    'type' => 'sale_return',
+                    'type_label' => 'Trả hàng bán',
+                    'amount' => $ret->total, // Positive: we refund → more we owe
+                    'note' => null,
+                    'created_at' => $ret->created_at,
+                ]);
+            }
+
+            // Customer-side cash_flows (non-invoice receipts like debt payment, adjustment)
+            $cashFlows = CashFlow::where('target_type', 'Khách hàng')
+                ->where('target_id', $id)
+                ->where('type', 'receipt')
+                ->whereNotIn('reference_type', ['Invoice', 'DebtOffset']) // Skip duplicates
+                ->orderBy('created_at')
+                ->get();
+
+            foreach ($cashFlows as $cf) {
+                $entries->push([
+                    'id' => 'cf-' . $cf->id,
+                    'code' => $cf->code,
+                    'type' => 'customer_payment',
+                    'type_label' => 'Thu nợ KH',
+                    'amount' => $cf->amount, // Positive: customer paid debt → increases our net obligation
+                    'note' => $cf->description,
+                    'created_at' => $cf->created_at,
+                ]);
+            }
+        }
+
+        // Sort by date asc, compute running debt balance
+        $sorted = $entries->sortBy('created_at')->values();
+        $balance = 0;
+        $ledger = $sorted->map(function ($entry) use (&$balance) {
+            $balance += $entry['amount'];
+            $entry['debt_remain'] = $balance;
+            return $entry;
+        });
+
+        $payable = $supplier ? abs((float) $supplier->supplier_debt_amount) : 0;
+        $receivable = $supplier ? abs((float) $supplier->debt_amount) : 0;
+        $net = $receivable - $payable;
+
+        return response()->json([
+            'entries' => $ledger->values(),
+            'summary' => [
+                'receivable' => $receivable,
+                'payable' => $payable,
+                'net' => $net,
+                'status' => $net > 0 ? 'receivable' : ($net < 0 ? 'payable' : 'balanced'),
+                'is_dual_role' => $supplier && $supplier->is_customer && $supplier->is_supplier,
+            ],
+        ]);
     }
 
     /**
@@ -324,6 +362,9 @@ class SupplierController extends Controller
 
         // Update cached debt
         $supplier->update(['supplier_debt_amount' => $currentDebt - abs($data['amount'])]);
+
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($supplier);
 
         return response()->json(['success' => true, 'message' => 'Đã ghi thanh toán.']);
     }
@@ -357,6 +398,9 @@ class SupplierController extends Controller
         ]);
 
         $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
+
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($supplier);
 
         return response()->json(['success' => true, 'message' => 'Đã cập nhật công nợ.']);
     }

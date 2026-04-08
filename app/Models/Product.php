@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Carbon\Carbon;
 
 class Product extends Model
 {
@@ -62,11 +63,6 @@ class Product extends Model
         return $this->hasMany(SerialImei::class);
     }
 
-    public function serialImeis(): HasMany
-    {
-        return $this->hasMany(SerialImei::class);
-    }
-
     public function components(): BelongsToMany
     {
         return $this->belongsToMany(Product::class, 'product_combos', 'combo_product_id', 'component_product_id')
@@ -87,5 +83,23 @@ class Product extends Model
     public function variants(): HasMany
     {
         return $this->hasMany(ProductVariant::class);
+    }
+
+    /**
+     * Lấy ngày nhập hàng sớm nhất cho sản phẩm này.
+     * Fallback về created_at nếu chưa có phiếu nhập nào.
+     */
+    public function getEarliestImportDate(): ?Carbon
+    {
+        $earliestPurchaseDate = Purchase::whereHas('items', function ($q) {
+            $q->where('product_id', $this->id);
+        })->where('status', 'completed')
+          ->min('purchase_date');
+
+        if ($earliestPurchaseDate) {
+            return Carbon::parse($earliestPurchaseDate);
+        }
+
+        return $this->created_at;
     }
 }

@@ -58,11 +58,15 @@ class SalaryCalculationService
         $earlyLeaveCount = $records->where('early_minutes', '>', 0)->count();
         $earlyTotalMinutes = $records->sum('early_minutes');
 
+        // Tổng phút làm thực tế (dùng cho lương giờ)
+        $totalWorkedMinutes = $records->where('attendance_type', 'work')->sum('worked_minutes');
+
         // Tính lương cơ bản theo loại lương
         $baseSalary = $setting->base_salary;
         if ($setting->salary_type === 'hourly') {
-            // Lương theo giờ: base_salary = hourly_rate × totalUnits × 8h
-            $baseSalary = $totalUnits * 8 * $setting->base_salary;
+            // Lương theo giờ: tổng giờ làm thực tế × đơn giá giờ
+            $totalWorkedHours = $totalWorkedMinutes / 60;
+            $baseSalary = $totalWorkedHours * $setting->base_salary;
         } elseif ($setting->salary_type === 'by_workday') {
             // Theo ngày công chuẩn: tính theo tỷ lệ ngày công thực tế / ngày công chuẩn
             // VD: lương 10tr, công chuẩn 26, đi 20 → 10tr × 20/26 = 7.69tr
@@ -149,9 +153,81 @@ class SalaryCalculationService
         }
         $deductionAmount += $latePenaltyAmount;
 
-        $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount - $deductionAmount;
+        // ===== TÍNH TIỀN TĂNG CA (OT PAY) =====
+        $otPay = 0;
+        $standardHoursPerDay = 8;
+        if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
+            $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // 150% = 1.5x
 
+            if ($setting->salary_type === 'hourly') {
+                // Hourly: base_salary chính là hourly_rate
+                $hourlyRate = $setting->base_salary;
+            } else {
+                // Fixed/by_workday: tính hourly_rate từ lương tháng / công chuẩn / giờ chuẩn
+                $hourlyRate = ($standardWorkUnits > 0)
+                    ? $setting->base_salary / $standardWorkUnits / $standardHoursPerDay
+                    : 0;
+            }
 
+            $otPay = ($otMinutes / 60) * $hourlyRate * $overtimeRate;
+        }
+
+        // ===== TÍNH PHẦN CHÊNH LỆCH NGÀY NGHỈ + NGÀY LỄ =====
+        // Chỉ tính khi NV bật "Thiết lập nâng cao" (advanced_salary = true)
+        $holidayPay = 0;
+        $holidayPayDetails = [];
+        if ($setting->advanced_salary) {
+            $restDayRate = ($setting->holiday_rate ?? 200) / 100;
+            $tetRate = ($setting->tet_rate ?? 300) / 100;
+
+            $officialHolidays = Holiday::whereBetween('holiday_date', [$from, $to])
+                ->where('status', 'active')
+                ->pluck('holiday_date')
+                ->map(fn($d) => Carbon::parse($d)->toDateString())
+                ->toArray();
+
+            $holidayRecords = $records->where('is_holiday', true)->where('work_units', '>', 0);
+            foreach ($holidayRecords as $hRec) {
+                $dateStr = Carbon::parse($hRec->work_date)->toDateString();
+                $isOfficialHoliday = in_array($dateStr, $officialHolidays);
+                $multiplier = $isOfficialHoliday ? $tetRate : $restDayRate;
+
+                if ($multiplier > 1) {
+                    if ($setting->salary_type === 'hourly') {
+                        $dayPay = $hRec->work_units * $standardHoursPerDay * $setting->base_salary;
+                    } elseif ($setting->salary_type === 'by_workday' && $standardWorkUnits > 0) {
+                        $dayPay = $setting->base_salary * $hRec->work_units / $standardWorkUnits;
+                    } else {
+                        $dayPay = ($standardWorkUnits > 0)
+                            ? $setting->base_salary * $hRec->work_units / $standardWorkUnits
+                            : 0;
+                    }
+                    $extra = $dayPay * ($multiplier - 1);
+                    $holidayPay += $extra;
+                    $holidayPayDetails[] = [
+                        'date' => $hRec->work_date,
+                        'work_units' => $hRec->work_units,
+                        'type' => $isOfficialHoliday ? 'holiday/tet' : 'rest_day',
+                        'multiplier' => $multiplier,
+                        'extra_pay' => round($extra),
+                    ];
+                }
+            }
+        }
+
+        $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount + $otPay + $holidayPay - $deductionAmount;
+
+        // ===== ĐÁNH GIÁ NĂNG SUẤT SỬA CHỮA (chỉ khi module bật) =====
+        $repairPerformance = null;
+        if (Setting::get('repair_performance_salary_enabled', false)) {
+            $repairService = new RepairService();
+            $repairPerformance = $repairService->getEmployeePerformance($employee->id, $from->toDateString(), $to->toDateString());
+            if ($repairPerformance['assigned'] > 0) {
+                $factor = $repairPerformance['salary_percent'] / 100;
+                $baseSalary = $baseSalary * $factor;
+                $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount + $otPay + $holidayPay - $deductionAmount;
+            }
+        }
 
         return [
             'base' => round($baseSalary),
@@ -160,16 +236,19 @@ class SalaryCalculationService
             'commission' => round($commissionAmount),
             'allowances' => round($allowanceAmount),
             'deductions' => round($deductionAmount),
+            'ot_pay' => round($otPay),
+            'holiday_pay' => round($holidayPay),
             'ot_minutes' => $otMinutes,
             'standard_work_units' => $standardWorkUnits,
             'work_units' => $totalUnits,
+            'total_worked_minutes' => $totalWorkedMinutes,
             'paid_leave_units' => $paidLeaveUnits,
             'late_count' => $lateCount,
             'late_minutes' => $lateTotalMinutes,
             'early_leave_count' => $earlyLeaveCount,
             'early_minutes' => $earlyTotalMinutes,
             'personal_revenue' => $personalRevenue,
-
+            'repair_performance' => $repairPerformance,
             'total' => round(max(0, $totalSalary)),
             'late_penalty' => round($latePenaltyAmount),
             'details' => [
@@ -178,6 +257,7 @@ class SalaryCalculationService
                 'allowances' => $allowanceDetails,
                 'deductions' => $deductionDetails,
                 'late_penalty' => $latePenaltyDetails,
+                'holiday_pay' => $holidayPayDetails,
             ],
         ];
     }
@@ -713,20 +793,8 @@ class SalaryCalculationService
         $grossProfit = 0;
         foreach ($orders as $order) {
             foreach ($order->items as $item) {
-                $costPrice = $item->cost_price ?: ($item->product?->cost_price ?? 0);
+                $costPrice = $item->product?->cost_price ?? 0;
                 $grossProfit += $item->subtotal - ($item->qty * $costPrice);
-            }
-        }
-
-        $invoices = Invoice::where('created_by', $employee->id)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->with('items.product:id,cost_price')
-            ->get();
-
-        foreach ($invoices as $invoice) {
-            foreach ($invoice->items as $item) {
-                $costPrice = $item->cost_price ?: ($item->product?->cost_price ?? 0);
-                $grossProfit += $item->subtotal - ($item->quantity * $costPrice);
             }
         }
 
@@ -737,11 +805,11 @@ class SalaryCalculationService
     {
         return [
             'base' => 0, 'base_salary_full' => 0, 'bonus' => 0, 'commission' => 0,
-            'allowances' => 0, 'deductions' => 0, 'ot_minutes' => 0,
-            'standard_work_units' => 0, 'work_units' => 0,
+            'allowances' => 0, 'deductions' => 0, 'ot_pay' => 0, 'holiday_pay' => 0,
+            'ot_minutes' => 0, 'standard_work_units' => 0, 'work_units' => 0,
             'paid_leave_units' => 0, 'late_count' => 0, 'late_minutes' => 0,
             'early_leave_count' => 0, 'early_minutes' => 0,
-            'personal_revenue' => 0, 'total' => 0, 'details' => [],
+            'personal_revenue' => 0, 'total' => 0, 'late_penalty' => 0, 'details' => [],
         ];
     }
 }

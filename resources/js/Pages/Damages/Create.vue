@@ -9,16 +9,10 @@ const props = defineProps({
     damageCode: String
 });
 
-const currentTime = computed(() => {
-    const now = new Date();
-    return now.toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
-});
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const transactionDate = ref(localNowStr);
 
 const searchQuery = ref('');
 const showSuggestions = ref(false);
@@ -27,13 +21,31 @@ const note = ref('');
 const submitRef = ref(false);
 const selectedBranch = ref(props.defaultBranchId || '');
 
-const filteredProducts = computed(() => {
-    if (!searchQuery.value) return [];
-    const query = searchQuery.value.toLowerCase();
-    return props.products.filter(p => 
-        p.name.toLowerCase().includes(query) || 
-        p.sku.toLowerCase().includes(query)
-    ).slice(0, 10);
+const filteredProducts = ref([]);
+const isSearchingProduct = ref(false);
+
+let searchTimeout = null;
+watch(searchQuery, (val) => {
+    if (!val) {
+        filteredProducts.value = [];
+        showSuggestions.value = false;
+        return;
+    }
+    showSuggestions.value = true;
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(async () => {
+        isSearchingProduct.value = true;
+        try {
+            const response = await axios.get('/api/products/search', {
+                params: { search: val }
+            });
+            filteredProducts.value = response.data;
+        } catch (error) {
+            console.error("Lỗi tìm kiếm sản phẩm:", error);
+        } finally {
+            isSearchingProduct.value = false;
+        }
+    }, 300);
 });
 
 const selectProduct = (product) => {
@@ -95,6 +107,7 @@ const save = async (status) => {
             code: props.damageCode,
             status: status, // 'draft' | 'completed'
             branch_id: selectedBranch.value,
+            action_date: transactionDate.value,
             note: note.value,
             items: itemsComputed.value
         });
@@ -126,7 +139,13 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                     <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[7px] border-none text-gray-800 rounded-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white shadow-inner" placeholder="Tìm hàng hóa theo mã hoặc tên (F3)">
                     
                     <!-- Suggestions Dropdown -->
-                    <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto text-black">
+                    <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto text-black">
+                        <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">
+                            Đang tìm kiếm...
+                        </div>
+                        <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">
+                            Không tìm thấy sản phẩm hợp lệ
+                        </div>
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
                             <div class="flex-1">
@@ -183,7 +202,11 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                                 <td class="p-3 text-blue-600 w-[120px] break-all">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">{{ item.name }}</td>
                                 <td class="p-3 text-center w-[100px]">Cái</td>
-                                <td class="p-3 text-center w-[100px] text-gray-500">{{ item.stock_quantity }}</td>
+                                <td class="p-3 text-center w-[100px]" :class="item.stock_quantity <= 0 ? 'text-red-500 font-bold' : item.stock_quantity < item.qty ? 'text-orange-500 font-semibold' : 'text-gray-500'">
+                                    {{ item.stock_quantity }}
+                                    <div v-if="item.stock_quantity <= 0" class="text-[10px]">Hết hàng!</div>
+                                    <div v-else-if="item.stock_quantity < item.qty" class="text-[10px]">Không đủ!</div>
+                                </td>
                                 <td class="p-3 text-center w-[120px]">
                                     <input type="number" v-model="item.qty" min="1" class="w-20 border border-gray-300 rounded-sm py-1.5 px-2 text-right outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block font-semibold shadow-inner bg-blue-50/30">
                                 </td>
@@ -216,7 +239,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             </div>
                             <span class="font-medium text-gray-800">Trần Văn Tiến</span>
                         </div>
-                        <span class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded">{{ currentTime }}</span>
+                        <input type="datetime-local" v-model="transactionDate" class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400">
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200 flex-1">

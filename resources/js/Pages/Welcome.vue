@@ -17,6 +17,28 @@ const props = defineProps({
 const search = ref(props.filters?.search || "");
 const sortBy = ref(props.filters?.sort_by || "");
 const sortDirection = ref(props.filters?.sort_direction || "");
+const categoryFilter = ref(props.filters?.category_id || "");
+const brandFilter = ref(props.filters?.brand_id || "");
+const statusFilter = ref(props.filters?.status || "");
+const stockFilter = ref(props.filters?.stock_filter || "");
+const typeFilter = ref(props.filters?.type || "");
+
+const buildFilterParams = () => {
+    const params = {};
+    if (search.value) params.search = search.value;
+    if (sortBy.value) params.sort_by = sortBy.value;
+    if (sortDirection.value) params.sort_direction = sortDirection.value;
+    if (categoryFilter.value) params.category_id = categoryFilter.value;
+    if (brandFilter.value) params.brand_id = brandFilter.value;
+    if (statusFilter.value) params.status = statusFilter.value;
+    if (stockFilter.value) params.stock_filter = stockFilter.value;
+    if (typeFilter.value) params.type = typeFilter.value;
+    return params;
+};
+
+const applyFilters = () => {
+    router.get("/products", buildFilterParams(), { preserveState: true, replace: true });
+};
 
 // Bulk selection state
 const selectedProductIds = ref([]);
@@ -144,24 +166,22 @@ const handleSort = (field, direction) => {
     sortDirection.value = direction;
     router.get(
         "/products",
-        { search: search.value, sort_by: field, sort_direction: direction },
+        buildFilterParams(),
         { preserveState: true, replace: true },
     );
 };
 
 let searchTimeout;
-watch(search, (value) => {
+watch(search, () => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
-        router.get(
-            "/products",
-            { search: value, sort_by: sortBy.value, sort_direction: sortDirection.value },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
+        applyFilters();
     }, 500);
+});
+
+// Watch sidebar filters to apply immediately
+watch([categoryFilter, brandFilter, statusFilter, stockFilter, typeFilter], () => {
+    applyFilters();
 });
 
 const dropdownOpen = ref(false);
@@ -233,6 +253,17 @@ const setTab = async (product, tab) => {
             product.loadingSerials = false;
         }
     }
+    if (tab === "final_cost" && !product.serialsData) {
+        product.loadingSerials = true;
+        try {
+            const res = await axios.get(`/products/${product.id}/serials`);
+            product.serialsData = res.data;
+        } catch (e) {
+            console.error(e);
+        } finally {
+            product.loadingSerials = false;
+        }
+    }
     if (tab === "warranties" && !product.warrantiesData) {
         product.loadingWarranties = true;
         try {
@@ -292,63 +323,90 @@ const formatDate = (val) => {
                 <h3 class="font-bold text-gray-700">Bộ lọc tìm kiếm</h3>
             </div>
             <div class="p-4 space-y-6">
+                <!-- Nhóm hàng -->
                 <div>
-                    <label
-                        class="block text-sm font-semibold text-gray-700 mb-2"
-                        >Nhóm hàng</label
-                    >
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Nhóm hàng</label>
                     <select
+                        v-model="categoryFilter"
                         class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
                     >
                         <option value="">Tất cả nhóm</option>
+                        <template v-for="cat in categories" :key="cat.id">
+                            <option :value="cat.id">{{ cat.name }}</option>
+                            <option
+                                v-for="child in (cat.children || [])"
+                                :key="child.id"
+                                :value="child.id"
+                            >
+                                &nbsp;&nbsp;└ {{ child.name }}
+                            </option>
+                        </template>
+                    </select>
+                </div>
+                <!-- Thương hiệu -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Thương hiệu</label>
+                    <select
+                        v-model="brandFilter"
+                        class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+                    >
+                        <option value="">Tất cả thương hiệu</option>
                         <option
-                            v-for="cat in categories"
-                            :key="cat.id"
-                            :value="cat.id"
+                            v-for="brand in brands"
+                            :key="brand.id"
+                            :value="brand.id"
                         >
-                            {{ cat.name }}
+                            {{ brand.name }}
                         </option>
                     </select>
                 </div>
+                <!-- Loại hàng -->
                 <div>
-                    <label
-                        class="block text-sm font-semibold text-gray-700 mb-2"
-                        >Trạng thái</label
-                    >
-                    <div class="space-y-2">
-                        <label
-                            class="flex items-center gap-2 text-gray-600 hover:text-gray-900 cursor-pointer"
-                        >
-                            <input
-                                type="checkbox"
-                                checked
-                                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Đang kinh doanh
-                        </label>
-                        <label
-                            class="flex items-center gap-2 text-gray-600 hover:text-gray-900 cursor-pointer"
-                        >
-                            <input
-                                type="checkbox"
-                                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Ngừng kinh doanh
-                        </label>
-                    </div>
-                </div>
-                <div>
-                    <label
-                        class="block text-sm font-semibold text-gray-700 mb-2"
-                        >Tồn kho</label
-                    >
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Loại hàng</label>
                     <select
+                        v-model="typeFilter"
                         class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
                     >
-                        <option>Tất cả</option>
-                        <option>Còn hàng trong kho</option>
-                        <option>Hết hàng</option>
+                        <option value="">Tất cả loại</option>
+                        <option value="standard">Hàng hóa</option>
+                        <option value="service">Dịch vụ</option>
+                        <option value="combo">Combo - đóng gói</option>
+                        <option value="manufactured">Hàng sản xuất</option>
                     </select>
+                </div>
+                <!-- Trạng thái -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Trạng thái</label>
+                    <select
+                        v-model="statusFilter"
+                        class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+                    >
+                        <option value="">Đang kinh doanh</option>
+                        <option value="inactive">Ngừng kinh doanh</option>
+                        <option value="all">Tất cả</option>
+                    </select>
+                </div>
+                <!-- Tồn kho -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Tồn kho</label>
+                    <select
+                        v-model="stockFilter"
+                        class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
+                    >
+                        <option value="">Tất cả</option>
+                        <option value="in_stock">Còn hàng trong kho</option>
+                        <option value="out_of_stock">Hết hàng</option>
+                        <option value="below_min">Dưới định mức tồn</option>
+                    </select>
+                </div>
+                <!-- Nút xóa bộ lọc -->
+                <div v-if="categoryFilter || brandFilter || statusFilter || stockFilter || typeFilter">
+                    <button
+                        @click="categoryFilter = ''; brandFilter = ''; statusFilter = ''; stockFilter = ''; typeFilter = '';"
+                        class="w-full text-center text-sm text-blue-600 hover:text-blue-800 font-medium py-2 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
+                    >
+                        ✕ Xóa bộ lọc
+                    </button>
                 </div>
             </div>
         </template>
@@ -494,8 +552,8 @@ const formatDate = (val) => {
                             <SortableHeader label="Mã hàng" field="sku" :current-sort="sortBy" :current-direction="sortDirection" class="p-3" @sort="handleSort" />
                             <SortableHeader label="Tên hàng" field="name" :current-sort="sortBy" :current-direction="sortDirection" class="p-3" @sort="handleSort" />
                             <th class="p-3">Nhóm hàng</th>
-                            <SortableHeader label="Giá bán" field="retail_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
-                            <SortableHeader v-if="canViewCostPrice" label="Giá vốn" field="cost_price" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <SortableHeader label="Giá bán" field="retail_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <SortableHeader v-if="canViewCostPrice" label="Giá vốn (BQ)" field="cost_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                             <SortableHeader label="Tồn kho" field="stock_quantity" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
@@ -667,6 +725,27 @@ const formatDate = (val) => {
                                                 ]"
                                             >
                                                 Serial/IMEI
+                                            </button>
+                                            <button
+                                                v-if="
+                                                    canViewCostPrice &&
+                                                    product.has_serial &&
+                                                    ($page.props.app_settings
+                                                        ?.product_use_serial ??
+                                                        true)
+                                                "
+                                                @click="
+                                                    setTab(product, 'final_cost')
+                                                "
+                                                :class="[
+                                                    'pb-2 text-sm font-bold transition-all border-b-2',
+                                                    product.activeTab ===
+                                                    'final_cost'
+                                                        ? 'border-blue-600 text-blue-600'
+                                                        : 'border-transparent text-gray-400 hover:text-gray-600',
+                                                ]"
+                                            >
+                                                💰 Giá vốn cuối
                                             </button>
                                             <button
                                                 @click="
@@ -1349,6 +1428,125 @@ const formatDate = (val) => {
                                                         </svg>
                                                         Xuất file
                                                     </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Final Cost Tab (Giá vốn cuối) -->
+                                        <div
+                                            v-if="
+                                                product.activeTab === 'final_cost'
+                                            "
+                                            class="py-2 min-h-[100px]"
+                                        >
+                                            <div
+                                                v-if="product.loadingSerials"
+                                                class="flex justify-center py-6"
+                                            >
+                                                <i
+                                                    class="fas fa-circle-notch fa-spin text-blue-500 text-xl"
+                                                ></i>
+                                            </div>
+                                            <div v-else>
+                                                <!-- Header -->
+                                                <div
+                                                    class="flex items-center justify-between mb-3 bg-gradient-to-r from-green-50 to-blue-50 rounded px-4 py-2.5 border border-green-200"
+                                                >
+                                                    <span
+                                                        class="font-bold text-[13px] text-gray-700"
+                                                        >💰 Giá vốn cuối theo Serial/IMEI
+                                                        <span class="text-gray-400 font-normal ml-1">({{ product.serialsData?.length || 0 }})</span>
+                                                    </span>
+                                                    <div class="flex items-center gap-3 text-[12px]">
+                                                        <span class="text-gray-500">Giá vốn BQ sản phẩm: <span class="font-bold text-gray-700">{{ formatCurrency(product.serialsData && product.serialsData.length > 0 ? Math.round(product.serialsData.reduce((sum, s) => sum + (Number(s.cost_price) || Number(s.original_cost) || 0), 0) / product.serialsData.length) : product.cost_price) }}</span></span>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Cost Table -->
+                                                <div
+                                                    v-if="
+                                                        product.serialsData &&
+                                                        product.serialsData.length > 0
+                                                    "
+                                                    class="border border-gray-200 rounded overflow-hidden"
+                                                >
+                                                    <table class="w-full text-left border-collapse text-[13px]">
+                                                        <thead class="bg-gray-100/80 text-gray-600 font-bold uppercase tracking-tight text-[11px]">
+                                                            <tr>
+                                                                <th class="p-2.5">Serial/IMEI</th>
+                                                                <th class="p-2.5 text-center">Trạng thái</th>
+                                                                <th class="p-2.5 text-right">Giá nhập gốc</th>
+                                                                <th class="p-2.5 text-right">Giá vốn cuối</th>
+                                                                <th class="p-2.5 text-right">Chênh lệch</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody class="divide-y divide-gray-100 bg-white">
+                                                            <tr
+                                                                v-for="s in product.serialsData"
+                                                                :key="s.id"
+                                                                class="hover:bg-gray-50/50"
+                                                                :class="Number(s.cost_price || 0) > 0 && Number(s.cost_price || 0) !== Number(s.original_cost || 0) ? 'bg-yellow-50/30' : ''"
+                                                            >
+                                                                <td class="p-2.5">
+                                                                    <div class="flex items-center gap-2">
+                                                                        <span class="font-medium text-gray-800">{{ s.serial_number }}</span>
+                                                                        <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧</span>
+                                                                        <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓</span>
+                                                                    </div>
+                                                                </td>
+                                                                <td class="p-2.5 text-center">
+                                                                    <span
+                                                                        :class="[
+                                                                            'text-[11px] px-2 py-0.5 rounded-full font-bold',
+                                                                            s.status === 'in_stock' ? 'bg-green-100 text-green-700' : s.status === 'sold' ? 'bg-gray-100 text-gray-500' : s.status === 'warranty' ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600',
+                                                                        ]"
+                                                                    >{{ serialStatusLabel(s.status) }}</span>
+                                                                </td>
+                                                                <td class="p-2.5 text-right text-gray-500">
+                                                                    {{ formatCurrency(Number(s.original_cost) || 0) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right font-bold"
+                                                                    :class="(() => { const fc = Number(s.cost_price) || Number(s.original_cost) || 0; const oc = Number(s.original_cost) || 0; return fc > oc ? 'text-red-600' : fc < oc ? 'text-green-600' : 'text-gray-800'; })()"
+                                                                >
+                                                                    {{ formatCurrency(Number(s.cost_price) || Number(s.original_cost) || 0) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right font-semibold"
+                                                                    :class="(() => { const diff = (Number(s.cost_price) || Number(s.original_cost) || 0) - (Number(s.original_cost) || 0); return diff > 0 ? 'text-red-500' : diff < 0 ? 'text-green-500' : 'text-gray-400'; })()"
+                                                                >
+                                                                    {{ (() => { const diff = (Number(s.cost_price) || Number(s.original_cost) || 0) - (Number(s.original_cost) || 0); return (diff > 0 ? '+' : '') + formatCurrency(diff); })() }}
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                        <tfoot class="bg-gray-50 font-bold text-[12px] border-t-2 border-gray-200">
+                                                            <tr>
+                                                                <td class="p-2.5 text-gray-600" colspan="2">
+                                                                    Tổng cộng ({{ product.serialsData.filter(s => s.status === 'in_stock').length }} còn tồn)
+                                                                </td>
+                                                                <td class="p-2.5 text-right text-gray-500">
+                                                                    {{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + (Number(s.original_cost) || 0), 0)) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right text-blue-700">
+                                                                    {{ formatCurrency(product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + (Number(s.cost_price) || Number(s.original_cost) || 0), 0)) }}
+                                                                </td>
+                                                                <td class="p-2.5 text-right"
+                                                                    :class="product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((Number(s.cost_price) || Number(s.original_cost) || 0) - (Number(s.original_cost) || 0)), 0) > 0 ? 'text-red-500' : 'text-green-500'"
+                                                                >
+                                                                    {{ (() => { const diff = product.serialsData.filter(s => s.status === 'in_stock').reduce((sum, s) => sum + ((Number(s.cost_price) || Number(s.original_cost) || 0) - (Number(s.original_cost) || 0)), 0); return (diff > 0 ? '+' : '') + formatCurrency(diff); })() }}
+                                                                </td>
+                                                            </tr>
+                                                        </tfoot>
+                                                    </table>
+                                                </div>
+                                                <div
+                                                    v-else
+                                                    class="text-center py-8 text-gray-400 italic text-[13px]"
+                                                >
+                                                    Chưa có Serial/IMEI nào.
+                                                </div>
+
+                                                <!-- Info Note -->
+                                                <div class="mt-3 px-3 py-2 bg-blue-50 rounded text-[12px] text-blue-700 border border-blue-100">
+                                                    <strong>💡 Lưu ý:</strong> Giá nhập gốc = giá từ phiếu nhập hàng. Giá vốn cuối = Giá nhập gốc ± linh kiện bóc tách/lắp thêm từ phiếu sửa chữa. Lợi nhuận = Giá bán − Giá vốn cuối.
                                                 </div>
                                             </div>
                                         </div>

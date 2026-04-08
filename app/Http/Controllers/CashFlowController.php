@@ -19,13 +19,13 @@ class CashFlowController extends Controller
                 ->orWhere('description', 'LIKE', "%{$search}%")
                 ->orWhere('reference_code', 'LIKE', "%{$search}%");
         })
-            ->when($request->filled('sort_by'), function ($query) use ($request) {
-                $allowed = ['code', 'time', 'type', 'amount', 'target_name', 'category', 'created_at'];
+            ->when($request->filled('sort_by'), function ($q) use ($request) {
+                $allowed = ['code', 'time', 'type', 'amount', 'category', 'created_at'];
                 $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'time';
                 $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $query->orderBy($sortBy, $dir);
-            }, function ($query) {
-                $query->orderBy('time', 'desc')->orderBy('created_at', 'desc');
+                $q->orderBy($sortBy, $dir);
+            }, function ($q) {
+                $q->orderBy('time', 'desc')->orderBy('created_at', 'desc');
             })
             ->paginate(15)
             ->withQueryString();
@@ -111,8 +111,10 @@ class CashFlowController extends Controller
             'is_supplier' => 'boolean'
         ]);
 
-        $validated['code'] = ($request->input('is_supplier', false) ? 'NCC' : 'KH') . time() . rand(10, 99);
-        $validated['is_supplier'] = $request->input('is_supplier', false);
+        $isSupplier = $request->input('is_supplier', false);
+        $validated['code'] = ($isSupplier ? 'NCC' : 'KH') . time() . rand(10, 99);
+        $validated['is_supplier'] = $isSupplier;
+        $validated['is_customer'] = !$isSupplier;
 
         \App\Models\Customer::create($validated);
 

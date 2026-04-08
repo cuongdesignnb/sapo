@@ -17,16 +17,39 @@ const status = ref('draft');
 
 const submitRef = ref(false);
 
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const transactionDate = ref(localNowStr);
+
 const searchQuery = ref('');
 const showSuggestions = ref(false);
 
-const filteredProducts = computed(() => {
-    if (!searchQuery.value) return [];
-    const query = searchQuery.value.toLowerCase();
-    return props.products.filter(p => 
-        (p.name && p.name.toLowerCase().includes(query)) || 
-        (p.sku && p.sku.toLowerCase().includes(query))
-    );
+const filteredProducts = ref([]);
+const isSearchingProduct = ref(false);
+
+let searchTimeout = null;
+watch(searchQuery, (val) => {
+    if (!val) {
+        filteredProducts.value = [];
+        showSuggestions.value = false;
+        return;
+    }
+    showSuggestions.value = true;
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(async () => {
+        isSearchingProduct.value = true;
+        try {
+            const response = await axios.get('/api/products/search', {
+                params: { search: val }
+            });
+            filteredProducts.value = response.data;
+        } catch (error) {
+            console.error("Lỗi tìm kiếm sản phẩm:", error);
+        } finally {
+            isSearchingProduct.value = false;
+        }
+    }, 300);
 });
 
 const selectProduct = (product) => {
@@ -71,6 +94,7 @@ const save = async (actionStatus) => {
             from_branch_id: fromBranchId.value,
             to_branch_id: toBranchId.value,
             status: status.value,
+            action_date: transactionDate.value,
             note: note.value,
             items: items.value.map(i => ({
                 product_id: i.id,
@@ -108,7 +132,13 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                     <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-1.5 border-2 border-blue-400 rounded-sm focus:outline-none focus:border-blue-500 shadow-inner" placeholder="Tìm hàng hóa theo mã hoặc tên (F3)">
                     
                     <!-- Suggestions Dropdown -->
-                    <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-lg rounded-sm z-50 max-h-[300px] overflow-auto">
+                    <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-lg rounded-sm z-50 max-h-[300px] overflow-auto">
+                        <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">
+                            Đang tìm kiếm...
+                        </div>
+                        <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">
+                            Không tìm thấy sản phẩm hợp lệ
+                        </div>
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
                             <div class="flex-1">
@@ -166,7 +196,11 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                                 <td class="p-3 text-blue-600 w-[120px] break-all">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">{{ item.name }}</td>
                                 <td class="p-3 text-center w-16">Cái</td>
-                                <td class="p-3 text-right w-20">{{ item.stock_quantity || 0 }}</td>
+                                <td class="p-3 text-right w-20" :class="(item.stock_quantity || 0) <= 0 ? 'text-red-500 font-bold' : (item.stock_quantity || 0) < (item.quantity || 0) ? 'text-orange-500 font-semibold' : ''">
+                                    {{ item.stock_quantity || 0 }}
+                                    <div v-if="(item.stock_quantity || 0) <= 0" class="text-[10px]">Hết hàng!</div>
+                                    <div v-else-if="(item.stock_quantity || 0) < (item.quantity || 0)" class="text-[10px]">Không đủ!</div>
+                                </td>
                                 <td class="p-3 text-right w-24">0</td>
                                 <td class="p-3 text-center w-28">
                                     <input type="number" v-model="item.quantity" min="1" class="w-16 border border-gray-300 rounded p-1 text-center outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block">
@@ -200,9 +234,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                             Trần Văn Tiến
                         </div>
-                        <div class="bg-gray-50 border border-gray-200 px-2 py-0.5 rounded text-[12px] text-gray-500 font-medium">
-                            {{ new Date().toLocaleDateString('vi-VN') + ' ' + new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) }}
-                        </div>
+                        <input type="datetime-local" v-model="transactionDate" class="text-gray-500 text-[12px] bg-gray-50 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400 font-medium">
                     </div>
 
                     <div class="grid grid-cols-[100px_1fr] items-center gap-y-5 gap-x-2">

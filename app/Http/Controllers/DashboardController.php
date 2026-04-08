@@ -80,17 +80,12 @@ class DashboardController extends Controller
         $totalCustomers = Customer::count();
 
         // Nợ phải thu (khách nợ)
-        try {
-            $totalCustomerDebt = Customer::where('debt', '>', 0)->sum('debt');
-        } catch (\Exception $e) {
-            $totalCustomerDebt = 0;
-        }
+        $totalCustomerDebt = Customer::where('debt_amount', '>', 0)->sum('debt_amount');
 
-        // Nợ phải trả (nợ NCC)
-        $totalSupplierDebt = Purchase::where('status', 'completed')
-            ->whereRaw('total_amount > paid_amount')
-            ->selectRaw('COALESCE(SUM(total_amount - paid_amount), 0) as total_debt')
-            ->value('total_debt') ?? 0;
+        // Nợ phải trả (nợ NCC) - dùng supplier_debt_amount đã được cập nhật khi nhập/trả hàng
+        $totalSupplierDebt = Customer::where('is_supplier', true)
+            ->where('supplier_debt_amount', '>', 0)
+            ->sum('supplier_debt_amount');
 
         // ═══════════════════════════════════════
         // 2. BIỂU ĐỒ DOANH THU 30 NGÀY
@@ -180,7 +175,8 @@ class DashboardController extends Controller
         $topProductsByRevenue = InvoiceItem::select(
                 'product_id',
                 DB::raw('SUM(quantity) as total_qty'),
-                DB::raw('SUM(quantity * price) as total_revenue')
+                DB::raw('SUM(quantity * price) as total_revenue'),
+                DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
             )
             ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
             ->groupBy('product_id')
@@ -189,14 +185,17 @@ class DashboardController extends Controller
             ->with('product:id,name,sku,cost_price')
             ->get()
             ->map(function ($item) {
-                $costPrice = $item->product->cost_price ?? 0;
-                $totalCost = $costPrice * $item->total_qty;
+                $totalCost = (float) ($item->total_cost ?? 0);
+                // Fallback: nếu invoice_items.cost_price = 0, dùng product.cost_price
+                if ($totalCost == 0 && $item->product) {
+                    $totalCost = (float) ($item->product->cost_price ?? 0) * (int) $item->total_qty;
+                }
                 return [
                     'name' => $item->product->name ?? 'N/A',
                     'sku' => $item->product->sku ?? '',
                     'qty' => (int) $item->total_qty,
                     'revenue' => (float) $item->total_revenue,
-                    'cost' => (float) $totalCost,
+                    'cost' => $totalCost,
                     'profit' => (float) ($item->total_revenue - $totalCost),
                 ];
             });
@@ -207,15 +206,18 @@ class DashboardController extends Controller
         $allProductSales = InvoiceItem::select(
                 'product_id',
                 DB::raw('SUM(quantity) as total_qty'),
-                DB::raw('SUM(quantity * price) as total_revenue')
+                DB::raw('SUM(quantity * price) as total_revenue'),
+                DB::raw('SUM(quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), 0)) as total_cost')
             )
             ->whereHas('invoice', fn($q) => $q->where('created_at', '>=', $startOfMonth))
             ->groupBy('product_id')
             ->with('product:id,name,sku,cost_price')
             ->get()
             ->map(function ($item) {
-                $costPrice = $item->product->cost_price ?? 0;
-                $totalCost = $costPrice * $item->total_qty;
+                $totalCost = (float) ($item->total_cost ?? 0);
+                if ($totalCost == 0 && $item->product) {
+                    $totalCost = (float) ($item->product->cost_price ?? 0) * (int) $item->total_qty;
+                }
                 return [
                     'name' => $item->product->name ?? 'N/A',
                     'sku' => $item->product->sku ?? '',

@@ -21,7 +21,13 @@ const currentTime = computed(() => {
     });
 });
 
-// Create an initial tab state template
+// Format datetime-local input value
+const formatDatetimeLocal = (date) => {
+    const d = new Date(date);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 // Create an initial tab state template
 const createInitialTab = (index) => ({
     id: Date.now() + index,
@@ -40,6 +46,7 @@ const createInitialTab = (index) => ({
     otherFees: 0,
     amountPaid: 0,
     note: '',
+    orderDate: formatDatetimeLocal(new Date()),
     
     isDelivery: true,
     receiverName: '',
@@ -190,24 +197,17 @@ const removeItem = (index) => {
     activeTab.value.items.splice(index, 1);
 };
 
-const getItemSubtotal = (item) => {
-    const qty = parseInt(item.qty) || 0;
-    const price = parseFloat(item.price) || 0;
-    const itemDiscount = parseFloat(item.discount) || 0;
-    return (qty * price) - itemDiscount;
-};
-
 const itemsComputed = computed(() => {
     if (!activeTab.value) return [];
     return activeTab.value.items.map(item => {
-        return { ...item, subtotal: getItemSubtotal(item) };
+        const qty = parseInt(item.qty) || 0;
+        const price = parseFloat(item.price) || 0;
+        const itemDiscount = parseFloat(item.discount) || 0;
+        return { ...item, subtotal: (qty * price) - itemDiscount };
     });
 });
 
-const totalAmount = computed(() => {
-    if (!activeTab.value) return 0;
-    return activeTab.value.items.reduce((sum, item) => sum + getItemSubtotal(item), 0);
-});
+const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.subtotal, 0));
 const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(activeTab.value.discount) + Number(activeTab.value.otherFees)));
 const balance = computed(() => activeTab.value.amountPaid - (activeTab.value.isCod ? 0 : totalPayment.value));
 
@@ -251,6 +251,7 @@ const save = async () => {
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
+            order_date: activeTab.value.orderDate || null,
         };
         await router.post(endpoint, payload);
         if (tabs.value.length > 1) {
@@ -345,6 +346,7 @@ const saveAndPrint = async () => {
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
+            order_date: activeTab.value.orderDate || null,
             _print: true,
         };
         const res = await axios.post(endpoint, payload);
@@ -464,27 +466,32 @@ onUnmounted(() => {
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="(item, index) in activeTab.items" :key="index" class="border-b border-gray-100 hover:bg-blue-50/20 group">
+                            <tr v-for="(item, index) in itemsComputed" :key="index" class="border-b border-gray-100 hover:bg-blue-50/20 group">
                                 <td class="p-2 text-center text-red-300 cursor-pointer hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" @click="removeItem(index)">
                                     <i class="fas fa-minus-circle"></i>
                                 </td>
                                 <td class="p-3 text-gray-800 text-[12px]">{{ item.sku }}</td>
                                 <td class="p-3 font-medium text-gray-800">
                                     <div class="truncate w-[150px] lg:w-[250px] xl:w-[350px]">{{ item.name }}</div>
+                                    <div v-if="item.stock_quantity !== undefined" class="text-[11px] mt-0.5" :class="item.stock_quantity <= 0 ? 'text-red-500 font-bold' : item.stock_quantity < item.qty ? 'text-orange-500' : 'text-gray-400'">
+                                        Tồn: {{ item.stock_quantity }}
+                                        <span v-if="item.stock_quantity <= 0"> — Hết hàng!</span>
+                                        <span v-else-if="item.stock_quantity < item.qty"> — Không đủ!</span>
+                                    </div>
                                 </td>
                                 <td class="p-3">
                                     <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
                                         <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty > 1 ? item.qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
-                                        <input type="number" v-model.number="item.qty" min="1" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
+                                        <input type="text" v-model="item.qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
                                         <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty++"><i class="fas fa-plus text-[10px]"></i></button>
                                     </div>
                                 </td>
                                 <td class="p-3 text-right font-medium text-gray-800">
-                                    <input type="text" :value="formatCurrency(item.price)" @change="e => item.price = Number(e.target.value.replace(/\D/g,''))" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
+                                    <input type="text" :value="formatCurrency(item.price)" @change="e => item.price = e.target.value.replace(/\D/g,'')" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
                                 </td>
-                                <td class="p-3 text-right font-bold text-gray-800 pr-4">{{ formatCurrency(getItemSubtotal(item)) }}</td>
+                                <td class="p-3 text-right font-bold text-gray-800 pr-4">{{ formatCurrency(item.subtotal) }}</td>
                             </tr>
-                            <tr v-if="activeTab.items.length === 0">
+                            <tr v-if="itemsComputed.length === 0">
                                 <td colspan="6" class="p-12 text-center text-gray-400 relative">
                                     <svg class="w-12 h-12 mx-auto text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
                                     Chưa có sản phẩm nào
@@ -506,7 +513,7 @@ onUnmounted(() => {
                         <div class="flex justify-between items-center mb-1">
                             <span>Tổng tiền hàng</span>
                             <span class="font-bold text-gray-800">
-                               <span class="text-gray-800 w-8 inline-block text-center mr-2">{{ activeTab.items.reduce((s,i)=>s+(parseInt(i.qty)||0), 0) }}</span> 
+                               <span class="text-gray-800 w-8 inline-block text-center mr-2">{{ itemsComputed.reduce((s,i)=>s+i.qty, 0) }}</span> 
                                {{ formatCurrency(totalAmount) }}
                             </span>
                         </div>
@@ -552,10 +559,10 @@ onUnmounted(() => {
                            <i class="fas fa-walking text-gray-400"></i> 
                            <i class="fas fa-caret-down text-gray-400"></i>
                        </div>
-                       <div class="text-[12px] text-gray-500">{{ currentTime }}</div>
+                       <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" @click.stop />
                     </div>
-                    <div v-else class="flex justify-end text-[12px] text-gray-500 mb-2">
-                        {{ currentTime }}
+                    <div v-else class="flex justify-end mb-2">
+                        <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" />
                     </div>
                     
                     <div class="flex gap-2 relative">

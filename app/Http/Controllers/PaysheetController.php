@@ -7,6 +7,7 @@ use App\Models\Paysheet;
 use App\Models\Payslip;
 use App\Models\PaysheetPayment;
 use App\Models\Employee;
+use App\Services\TimekeepingService;
 use Carbon\Carbon;
 
 class PaysheetController extends Controller
@@ -115,6 +116,12 @@ class PaysheetController extends Controller
         }
         $employees = $empQuery->get();
 
+        // Auto-recalculate timekeeping trước khi tính lương
+        $timekeepingService = app(TimekeepingService::class);
+        foreach ($employees as $employee) {
+            $timekeepingService->recalculateForRange($periodStart, $periodEnd, $employee->id);
+        }
+
         // Calculate salary for each employee
         $slipNumber = (int) substr(Payslip::orderByDesc('id')->value('code') ?? 'PL000000', 2);
         foreach ($employees as $employee) {
@@ -130,7 +137,7 @@ class PaysheetController extends Controller
                 'commission' => $calc['commission'] ?? 0,
                 'allowances' => $calc['allowances'],
                 'deductions' => $calc['deductions'],
-                'ot_pay' => 0,
+                'ot_pay' => ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0),
                 'total_salary' => $calc['total'],
                 'paid_amount' => 0,
                 'remaining' => $calc['total'],
@@ -166,6 +173,13 @@ class PaysheetController extends Controller
         $periodStart = Carbon::parse($paysheet->period_start);
         $periodEnd = Carbon::parse($paysheet->period_end);
 
+        // Auto-recalculate timekeeping trước khi tính lại lương
+        $timekeepingService = app(TimekeepingService::class);
+        $employeeIds = $paysheet->payslips->pluck('employee_id')->unique()->toArray();
+        foreach ($employeeIds as $empId) {
+            $timekeepingService->recalculateForRange($periodStart, $periodEnd, $empId);
+        }
+
         foreach ($paysheet->payslips as $slip) {
             $employee = Employee::with(['salarySetting'])->find($slip->employee_id);
             if (!$employee) continue;
@@ -177,6 +191,7 @@ class PaysheetController extends Controller
                 'commission' => $calc['commission'] ?? 0,
                 'allowances' => $calc['allowances'],
                 'deductions' => $calc['deductions'],
+                'ot_pay' => ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0),
                 'total_salary' => $calc['total'],
                 'remaining' => max(0, $calc['total'] - $slip->paid_amount),
                 'work_units' => $calc['work_units'],
@@ -193,6 +208,44 @@ class PaysheetController extends Controller
         return response()->json([
             'success' => true,
             'data' => $paysheet->load(['payslips.employee:id,code,name', 'branch:id,name']),
+        ]);
+    }
+
+    /**
+     * PUT /api/paysheets/{id}/payslips/{slipId} — Cập nhật phiếu lương inline
+     */
+    public function updatePayslip(Request $request, $id, $slipId)
+    {
+        $paysheet = Paysheet::findOrFail($id);
+        if ($paysheet->status === 'locked') {
+            return response()->json(['success' => false, 'message' => 'Bảng lương đã chốt.'], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+
+        $fields = $request->only([
+            'base_salary', 'bonus', 'commission', 'allowances', 'deductions', 'ot_pay',
+        ]);
+
+        // Cập nhật các field được gửi
+        foreach ($fields as $key => $value) {
+            $slip->$key = (int) $value;
+        }
+
+        // Tính lại total
+        $slip->total_salary = $slip->base_salary + $slip->bonus + $slip->commission
+            + $slip->allowances + $slip->ot_pay - $slip->deductions;
+        $slip->total_salary = max(0, $slip->total_salary);
+        $slip->remaining = max(0, $slip->total_salary - $slip->paid_amount);
+        $slip->save();
+
+        // Cập nhật tổng paysheet
+        $paysheet->recalculateTotals();
+
+        return response()->json([
+            'success' => true,
+            'data' => $slip->load('employee:id,code,name'),
+            'paysheet' => $paysheet->fresh(),
         ]);
     }
 

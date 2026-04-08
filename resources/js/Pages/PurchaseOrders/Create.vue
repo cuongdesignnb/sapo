@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
+import axios from 'axios';
 
 const props = defineProps({
     products: Array,
@@ -24,13 +25,37 @@ const expectedDate = ref('');
 const note = ref('');
 const submitRef = ref(false);
 
-const filteredProducts = computed(() => {
-    if (!searchQuery.value) return [];
-    const query = searchQuery.value.toLowerCase();
-    return props.products.filter(p => 
-        p.name.toLowerCase().includes(query) || 
-        p.sku.toLowerCase().includes(query)
-    ).slice(0, 10);
+// Ngày đặt hàng
+const pad = (n) => String(n).padStart(2, '0');
+const nowInit = new Date();
+const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
+const orderDate = ref(localNowStr);
+
+const filteredProducts = ref([]);
+const isSearchingProduct = ref(false);
+
+let searchTimeout = null;
+watch(searchQuery, (val) => {
+    if (!val) {
+        filteredProducts.value = [];
+        showSuggestions.value = false;
+        return;
+    }
+    showSuggestions.value = true;
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(async () => {
+        isSearchingProduct.value = true;
+        try {
+            const response = await axios.get('/api/products/search', {
+                params: { search: val }
+            });
+            filteredProducts.value = response.data;
+        } catch (error) {
+            console.error("Lỗi tìm kiếm sản phẩm:", error);
+        } finally {
+            isSearchingProduct.value = false;
+        }
+    }, 300);
 });
 
 const selectProduct = (product) => {
@@ -60,14 +85,19 @@ const removeItem = (index) => {
     items.value.splice(index, 1);
 };
 
-const getItemTotal = (item) => {
-    const qty = parseInt(item.qty) || 0;
-    const price = parseFloat(item.price) || 0;
-    const itemDiscount = parseFloat(item.discount) || 0;
-    return (qty * price) - itemDiscount;
-};
+const itemsComputed = computed(() => {
+    return items.value.map(item => {
+        const qty = parseInt(item.qty) || 0;
+        const price = parseFloat(item.price) || 0;
+        const itemDiscount = parseFloat(item.discount) || 0;
+        return {
+            ...item,
+            total_value: (qty * price) - itemDiscount
+        };
+    });
+});
 
-const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
+const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.total_value, 0));
 const totalPayment = computed(() => totalAmount.value - Number(discount.value) + Number(importFee.value) + Number(otherImportFee.value));
 
 const save = async (saveStatus) => {
@@ -85,6 +115,7 @@ const save = async (saveStatus) => {
             branch_id: props.defaultBranchId,
             supplier_id: selectedSupplierId.value || null,
             expected_date: expectedDate.value || null,
+            order_date: orderDate.value || null,
             note: note.value,
             discount: discount.value,
             import_fee: importFee.value,
@@ -117,15 +148,25 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                     <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </div>
-                    <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white" placeholder="Tìm hàng hóa theo mã hoặc tên (F3)">
+                    <input v-model="searchQuery" @focus="showSuggestions = true" @blur="hideSuggestions" type="text" class="w-full pl-9 pr-12 py-[9px] border border-gray-300 text-gray-800 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white" placeholder="Tìm hàng hóa theo tên, mã, barcode, serial (F3)">
                     
                     <!-- Suggestions Dropdown -->
-                    <div v-if="showSuggestions && filteredProducts.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                    <div v-if="showSuggestions" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded-sm z-50 max-h-[300px] overflow-auto">
+                        <div v-if="isSearchingProduct" class="p-3 text-sm text-gray-500 text-center">
+                            Đang tìm kiếm...
+                        </div>
+                        <div v-else-if="filteredProducts.length === 0 && searchQuery" class="p-3 text-sm text-gray-500 text-center">
+                            Không tìm thấy sản phẩm hợp lệ
+                        </div>
                         <div v-for="product in filteredProducts" :key="product.id" @mousedown.prevent="selectProduct(product)" class="flex items-center gap-3 p-2 border-b border-gray-100 hover:bg-gray-50 cursor-pointer">
                             <img :src="product.image || 'https://ui-avatars.com/api/?name=' + product.name + '&background=random'" class="w-10 h-10 object-cover rounded border border-gray-200">
                             <div class="flex-1">
                                 <div class="font-medium text-[13px] text-gray-800">{{ product.name }}</div>
-                                <div class="text-[12px] text-gray-500">{{ product.sku }}</div>
+                                <div class="text-[12px] text-gray-500">
+                                    {{ product.sku }}
+                                    <span v-if="product.barcode" class="ml-2 text-gray-400">BC: {{ product.barcode }}</span>
+                                    <span v-if="product.matched_serial" class="ml-2 text-purple-500 font-semibold">SN: {{ product.matched_serial }}</span>
+                                </div>
                             </div>
                             <div class="text-right">
                                 <div class="text-blue-600 font-medium text-[13px]">{{ formatCurrency(product.cost_price) }}</div>
@@ -168,7 +209,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                             </tr>
                         </thead>
                         <tbody v-if="items.length > 0">
-                            <tr v-for="(item, index) in items" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f8fafc] transition-colors">
+                            <tr v-for="(item, index) in itemsComputed" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f8fafc] transition-colors">
                                 <td class="p-3 text-center text-gray-500 group relative w-12">
                                     <span class="group-hover:hidden">{{ index + 1 }}</span>
                                     <button @click="removeItem(index)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
@@ -187,7 +228,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                                 <td class="p-3 w-[100px]">
                                     <input type="number" v-model="item.discount" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-yellow-50">
                                 </td>
-                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(getItemTotal(item)) }}</td>
+                                <td class="p-3 font-bold text-gray-800 text-right w-[140px] pr-6">{{ formatCurrency(item.total_value) }}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -214,7 +255,7 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                         </div>
                         <span class="font-medium text-[13px] text-gray-700">Trần Văn Tiến <span class="text-gray-400 font-normal ml-1">▼</span></span>
                     </div>
-                    <div class="text-[13px] text-gray-500">{{ new Date().toLocaleString('vi-VN', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}) }}</div>
+                    <input type="datetime-local" v-model="orderDate" class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 py-0.5 w-[170px]" />
                 </div>
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">

@@ -310,17 +310,12 @@ Route::prefix('tasks')->group(function () {
 });
 
 // 🔔 NOTIFICATIONS
-// 🔔 NOTIFICATIONS
 Route::prefix('notifications')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\NotificationController::class, 'index']);
     Route::get('/unread-count', [\App\Http\Controllers\Api\NotificationController::class, 'unreadCount']);
     Route::post('/{id}/read', [\App\Http\Controllers\Api\NotificationController::class, 'markAsRead']);
     Route::post('/read-all', [\App\Http\Controllers\Api\NotificationController::class, 'markAllAsRead']);
 });
-
-
-
-
 
 // 👤 MY TASKS (employee portal)
 Route::prefix('my-tasks')->middleware('auth:sanctum')->group(function () {

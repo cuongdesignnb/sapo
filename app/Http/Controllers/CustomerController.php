@@ -6,9 +6,13 @@ use App\Models\CashFlow;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
+use App\Models\Purchase;
+use App\Models\PurchaseReturn;
 use App\Models\Setting;
+use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Services\DebtOffsetService;
 
 class CustomerController extends Controller
 {
@@ -51,10 +55,18 @@ class CustomerController extends Controller
             'customer_manage_by_branch' => Setting::get('customer_manage_by_branch', false),
         ];
 
+        // Summary totals
+        $summary = [
+            'total_debt' => Customer::where('debt_amount', '>', 0)->sum('debt_amount'),
+            'total_spent' => Customer::sum('total_spent'),
+            'total_returns' => Customer::sum('total_returns'),
+        ];
+
         return Inertia::render('Customers/Index', [
             'customers' => $customers,
             'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
             'customerSettings' => $customerSettings,
+            'summary' => $summary,
         ]);
     }
 
@@ -98,20 +110,13 @@ class CustomerController extends Controller
         }
 
         $validated['is_supplier'] = $request->input('is_supplier', false);
+        $validated['is_customer'] = true;
 
-        if ($request->filled('link_existing_id')) {
-            $existing = Customer::findOrFail($request->link_existing_id);
-            $existing->update([
-                'name' => $validated['name'],
-                'phone' => $validated['phone'] ?? $existing->phone,
-                'is_customer' => true,
-                'is_supplier' => true,
-                'address' => $validated['address'] ?? $existing->address,
-                'note' => $validated['note'] ?? $existing->note,
-            ]);
-            $customer = $existing;
-        } elseif ($request->input('supplier_linking_mode') === 'link_existing' && $request->filled('linked_supplier_id')) {
-            $existing = Customer::findOrFail($request->linked_supplier_id);
+        $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
+        $linkMode = $request->input('supplier_linking_mode');
+
+        if (($linkMode === 'link_existing' || $linkId) && $linkId) {
+            $existing = Customer::findOrFail($linkId);
             $existing->update([
                 'name' => $validated['name'],
                 'phone' => $validated['phone'] ?? $existing->phone,
@@ -162,8 +167,11 @@ class CustomerController extends Controller
              $validated['is_supplier'] = false;
         }
 
-        if ($request->input('supplier_linking_mode') === 'link_existing' && $request->filled('linked_supplier_id') && $request->linked_supplier_id != $customer->id) {
-            $existing = Customer::findOrFail($request->linked_supplier_id);
+        $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
+        $linkMode = $request->input('supplier_linking_mode');
+
+        if (($linkMode === 'link_existing' || $linkId) && $linkId && $linkId != $customer->id) {
+            $existing = Customer::findOrFail($linkId);
             
             // Merge relations
             Invoice::where('customer_id', $customer->id)->update(['customer_id' => $existing->id]);
@@ -269,10 +277,81 @@ class CustomerController extends Controller
             $entries->push([
                 'id' => 'cf-' . $cf->id,
                 'code' => $cf->code,
-                'type' => 'Thanh toán',
+                'type' => $cf->reference_type === 'DebtOffset' ? 'Đối trừ CN' : ($cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán'),
                 'amount' => -$cf->amount,
                 'created_at' => $cf->created_at,
             ]);
+        }
+
+        // 3) If dual-role (also supplier): include purchase entries (mirrored)
+        // In KiotViet customer view: purchases show as NEGATIVE (we owe them → offsets what they owe us)
+        if ($customer->is_supplier) {
+            $purchases = Purchase::where('supplier_id', $customer->id)
+                ->where('status', 'completed')
+                ->orderBy('created_at', 'desc')
+                ->get(['id', 'code', 'total_amount', 'paid_amount', 'created_at']);
+
+            foreach ($purchases as $p) {
+                $entries->push([
+                    'id' => 'pur-' . $p->id,
+                    'code' => $p->code,
+                    'type' => 'Nhập hàng',
+                    'amount' => -$p->total_amount, // Negative: we owe them
+                    'created_at' => $p->created_at,
+                ]);
+                if ($p->paid_amount > 0) {
+                    $entries->push([
+                        'id' => 'purpay-' . $p->id,
+                        'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
+                        'type' => 'TT nhập hàng',
+                        'amount' => $p->paid_amount, // Positive: we paid them → reduces what they owe us net
+                        'created_at' => $p->created_at,
+                    ]);
+                }
+            }
+
+            // Purchase returns = positive (they refund us)
+            $purchaseReturns = PurchaseReturn::where('supplier_id', $customer->id)
+                ->where('status', 'completed')
+                ->orderBy('created_at', 'desc')
+                ->get(['id', 'code', 'total_amount', 'refund_amount', 'created_at']);
+
+            foreach ($purchaseReturns as $pr) {
+                $entries->push([
+                    'id' => 'pret-' . $pr->id,
+                    'code' => $pr->code,
+                    'type' => 'Trả hàng nhập',
+                    'amount' => $pr->total_amount, // Positive: they owe us back
+                    'created_at' => $pr->created_at,
+                ]);
+            }
+
+            // Supplier debt transactions (payment/adjustment/discount/offset) — mirror sign
+            $supplierTxs = SupplierDebtTransaction::where('supplier_id', $customer->id)
+                ->whereNotIn('type', ['purchase']) // purchases already handled above
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            $typeLabels = [
+                'return' => 'Trả hàng nhập',
+                'payment' => 'TT công nợ NCC',
+                'adjustment' => 'Điều chỉnh NCC',
+                'discount' => 'Chiết khấu NCC',
+                'offset' => 'Đối trừ CN',
+            ];
+
+            // Skip return type since we already show PurchaseReturn entries
+            foreach ($supplierTxs as $stx) {
+                if ($stx->type === 'return') continue;
+                if ($stx->type === 'offset') continue; // Already shown as CashFlow DebtOffset entry
+                $entries->push([
+                    'id' => 'stx-' . $stx->id,
+                    'code' => $stx->code,
+                    'type' => $typeLabels[$stx->type] ?? $stx->type,
+                    'amount' => -$stx->amount, // Mirror sign for customer perspective
+                    'created_at' => $stx->created_at,
+                ]);
+            }
         }
 
         // Sort by date asc to compute running balance
@@ -285,8 +364,19 @@ class CustomerController extends Controller
         });
 
         // Return newest first for display
+        $receivable = abs((float) $customer->debt_amount);
+        $payable = abs((float) $customer->supplier_debt_amount);
+        $net = $receivable - $payable;
+
         return response()->json([
             'entries' => $ledger->reverse()->values(),
+            'summary' => [
+                'receivable' => $receivable,
+                'payable' => $payable,
+                'net' => $net,
+                'status' => $net > 0 ? 'receivable' : ($net < 0 ? 'payable' : 'balanced'),
+                'is_dual_role' => $customer->is_customer && $customer->is_supplier,
+            ],
         ]);
     }
 
@@ -312,6 +402,9 @@ class CustomerController extends Controller
         ]);
 
         $customer->decrement('debt_amount', $validated['amount']);
+
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($customer);
 
         return back()->with('success', 'Đã thu nợ ' . number_format($validated['amount']) . ' từ khách hàng.');
     }
@@ -343,7 +436,77 @@ class CustomerController extends Controller
 
         $customer->update(['debt_amount' => max(0, $customer->debt_amount - $adjustAmount)]);
 
+        // Tự động đối trừ công nợ NCC↔KH
+        DebtOffsetService::offsetDebts($customer);
+
         return back()->with('success', 'Đã điều chỉnh công nợ thành công.');
+    }
+
+    public function searchForMerge(Request $request)
+    {
+        $q = $request->input('q');
+        $type = $request->input('type'); // 'customer' or 'supplier'
+        $exclude = $request->input('exclude');
+
+        $results = Customer::query()
+            ->when($q, function ($query, $q) {
+                $query->where(function ($qb) use ($q) {
+                    $qb->where('name', 'LIKE', "%{$q}%")
+                       ->orWhere('phone', 'LIKE', "%{$q}%")
+                       ->orWhere('code', 'LIKE', "%{$q}%");
+                });
+            })
+            ->when($exclude, fn($qb, $id) => $qb->where('id', '!=', $id))
+            ->limit(20)
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);
+
+        return response()->json($results);
+    }
+
+    public function merge(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'merge_with_id' => 'required|integer|exists:customers,id',
+        ]);
+
+        $target = Customer::findOrFail($validated['merge_with_id']);
+
+        if ($target->id === $customer->id) {
+            return back()->with('error', 'Không thể gộp với chính mình.');
+        }
+
+        // Transfer all relations from $customer (source) into $target
+        Invoice::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
+        OrderReturn::where('customer_id', $customer->id)->update(['customer_id' => $target->id]);
+        Purchase::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
+        PurchaseReturn::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
+        SupplierDebtTransaction::where('supplier_id', $customer->id)->update(['supplier_id' => $target->id]);
+
+        CashFlow::where('target_id', $customer->id)->whereIn('target_type', ['Khách hàng', 'Nhà cung cấp'])->update([
+            'target_id' => $target->id,
+            'target_name' => $target->name,
+        ]);
+
+        // Merge financial figures
+        $target->debt_amount += $customer->debt_amount;
+        $target->total_spent += $customer->total_spent;
+        $target->total_returns += $customer->total_returns;
+        $target->supplier_debt_amount += $customer->supplier_debt_amount;
+        $target->total_bought += $customer->total_bought;
+
+        // Set both flags
+        $target->is_customer = $target->is_customer || $customer->is_customer;
+        $target->is_supplier = $target->is_supplier || $customer->is_supplier;
+
+        $target->save();
+
+        // Tự động đối trừ công nợ NCC↔KH sau khi gộp
+        DebtOffsetService::offsetDebts($target);
+
+        // Delete source
+        $customer->delete();
+
+        return back()->with('success', "Đã gộp thành công vào {$target->name} ({$target->code}).");
     }
 
     public function export(Request $request)
@@ -356,6 +519,35 @@ class CustomerController extends Controller
             ['Mã KH', 'Tên khách hàng', 'Điện thoại', 'Email', 'Nhóm KH', 'Địa chỉ', 'Phường/Xã', 'Quận/Huyện', 'Tỉnh/TP', 'Công nợ', 'Tổng mua', 'Ghi chú'],
             $customers->map(fn($c) => [$c->code, $c->name, $c->phone, $c->email, $c->customer_group, $c->address, $c->ward, $c->district, $c->city, $c->debt_amount, $c->total_spent, $c->note]),
             'khach_hang.csv'
+        );
+    }
+
+    public function exportDebtHistory(Customer $customer)
+    {
+        $data = $this->debtHistory($customer)->getData(true);
+        $entries = $data['entries'] ?? [];
+
+        return \App\Services\CsvService::export(
+            ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày'],
+            collect($entries)->map(fn($e) => [$e['code'], $e['type'], $e['amount'], $e['balance'], $e['created_at']]),
+            "cong_no_kh_{$customer->code}.csv"
+        );
+    }
+
+    public function exportSalesHistory(Customer $customer)
+    {
+        $invoices = Invoice::where('customer_id', $customer->id)->orderByDesc('created_at')
+            ->get(['code', 'total', 'status', 'created_at']);
+        $returns = OrderReturn::where('customer_id', $customer->id)->orderByDesc('created_at')
+            ->get(['code', 'total', 'status', 'created_at']);
+
+        $rows = $invoices->map(fn($i) => [$i->code, 'Hóa đơn', $i->total, $i->status, $i->created_at])
+            ->merge($returns->map(fn($r) => [$r->code, 'Trả hàng', $r->total, $r->status, $r->created_at]));
+
+        return \App\Services\CsvService::export(
+            ['Mã chứng từ', 'Loại', 'Giá trị', 'Trạng thái', 'Ngày'],
+            $rows,
+            "lich_su_ban_{$customer->code}.csv"
         );
     }
 
@@ -372,5 +564,99 @@ class CustomerController extends Controller
             $count++;
         }
         return back()->with('success', "Đã nhập {$count} khách hàng từ file.");
+    }
+
+    // ===== CẤN BẰNG CÔNG NỢ =====
+
+    /**
+     * Cấn bằng công nợ thủ công
+     */
+    public function debtOffset(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1',
+            'note' => 'nullable|string|max:500',
+        ]);
+
+        if (!$customer->is_customer || !$customer->is_supplier) {
+            return back()->with('error', 'Đối tác phải đồng thời là khách hàng và nhà cung cấp.');
+        }
+
+        $receivable = abs((float) $customer->debt_amount);
+        $payable = abs((float) $customer->supplier_debt_amount);
+
+        if ($receivable <= 0 || $payable <= 0) {
+            return back()->with('error', 'Cả hai bên công nợ phải lớn hơn 0 để cấn bằng.');
+        }
+
+        $maxOffset = min($receivable, $payable);
+        if ($validated['amount'] > $maxOffset) {
+            return back()->with('error', 'Số tiền cấn bằng không được vượt quá ' . number_format($maxOffset) . '₫.');
+        }
+
+        $result = DebtOffsetService::manualOffset($customer, $validated['amount'], $validated['note']);
+
+        if (!$result) {
+            return back()->with('error', 'Không thể cấn bằng công nợ.');
+        }
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'data' => $result]);
+        }
+
+        return back()->with('success', 'Cấn bằng công nợ thành công: ' . number_format($validated['amount']) . '₫');
+    }
+
+    /**
+     * Hủy cấn bằng công nợ
+     */
+    public function cancelDebtOffset(Request $request, Customer $customer, \App\Models\DebtOffset $debtOffset)
+    {
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        if ($debtOffset->customer_id !== $customer->id) {
+            return back()->with('error', 'Chứng từ cấn bằng không thuộc đối tác này.');
+        }
+
+        if ($debtOffset->status !== 'active') {
+            return back()->with('error', 'Chứng từ cấn bằng đã bị hủy trước đó.');
+        }
+
+        $result = DebtOffsetService::cancelOffset($debtOffset, $validated['reason'] ?? null);
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'data' => $result]);
+        }
+
+        return back()->with('success', 'Đã hủy cấn bằng công nợ: ' . number_format($debtOffset->amount) . '₫');
+    }
+
+    /**
+     * Lịch sử cấn bằng công nợ
+     */
+    public function debtOffsetHistory(Customer $customer)
+    {
+        $offsets = \App\Models\DebtOffset::where('customer_id', $customer->id)
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn($o) => [
+                'id' => $o->id,
+                'code' => $o->code,
+                'amount' => $o->amount,
+                'receivable_before' => $o->receivable_before,
+                'payable_before' => $o->payable_before,
+                'receivable_after' => $o->receivable_after,
+                'payable_after' => $o->payable_after,
+                'is_auto' => $o->is_auto,
+                'note' => $o->note,
+                'status' => $o->status,
+                'cancel_reason' => $o->cancel_reason,
+                'cancelled_at' => $o->cancelled_at,
+                'created_at' => $o->created_at,
+            ]);
+
+        return response()->json($offsets);
     }
 }

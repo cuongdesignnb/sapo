@@ -47,4 +47,3 @@ class SerialImei extends Model
         return $this->hasMany(DeviceRepair::class, 'serial_imei_id');
     }
 }
-

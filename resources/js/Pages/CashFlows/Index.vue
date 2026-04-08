@@ -25,23 +25,13 @@ const search = ref(props.filters?.search || "");
 const sortBy = ref(props.filters?.sort_by || "");
 const sortDirection = ref(props.filters?.sort_direction || "");
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/cash-flows",
-        { search: search.value, sort_by: field, sort_direction: direction },
-        { preserveState: true, replace: true },
-    );
-};
-
 let searchTimeout;
 watch(search, (value) => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
         router.get(
             "/cash-flows",
-            { search: value, sort_by: sortBy.value, sort_direction: sortDirection.value },
+            { search: value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined },
             {
                 preserveState: true,
                 replace: true,
@@ -50,18 +40,23 @@ watch(search, (value) => {
     }, 500);
 });
 
+const handleSort = (field, direction) => {
+    sortBy.value = field;
+    sortDirection.value = direction;
+    router.get(
+        "/cash-flows",
+        { search: search.value || undefined, sort_by: field || undefined, sort_direction: direction || undefined },
+        { preserveState: true, replace: true },
+    );
+};
+
 const isModalOpen = ref(false);
 const modalType = ref("receipt"); // receipt or payment
-
-const getLocalIsoTime = (d = new Date()) => {
-    const date = new Date(d);
-    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-};
 
 const form = useForm({
     id: null,
     type: "receipt",
-    time: getLocalIsoTime(),
+    time: new Date().toISOString().slice(0, 16),
     category: "",
     target_type: "Khác",
     target_name: "",
@@ -171,8 +166,8 @@ const openModal = (type, flow = null) => {
         form.id = flow.id;
         form.type = flow.type;
         form.time = flow.time
-            ? getLocalIsoTime(flow.time)
-            : getLocalIsoTime(flow.created_at);
+            ? new Date(flow.time).toISOString().slice(0, 16)
+            : new Date(flow.created_at).toISOString().slice(0, 16);
         form.category = flow.category || "";
         form.target_type = flow.target_type || "Khác";
         form.target_name = flow.target_name || "";
@@ -185,7 +180,7 @@ const openModal = (type, flow = null) => {
     } else {
         form.id = null;
         form.type = type;
-        form.time = getLocalIsoTime();
+        form.time = new Date().toISOString().slice(0, 16);
         form.category = "";
         form.target_type = "Khác";
         form.target_name = "";
@@ -399,14 +394,12 @@ const printFlow = (flow) => {
                     >
                         <tr>
                             <SortableHeader label="Mã Phiếu" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="time" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
-                            <th class="px-4 py-3 font-semibold">
-                                Loại thu chi
-                            </th>
+                            <SortableHeader label="Thời gian" field="time" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Loại thu chi" field="category" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">
                                 Người nộp/nhận
                             </th>
-                            <SortableHeader label="Giá trị" field="amount" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 font-semibold text-right" @sort="handleSort" />
+                            <SortableHeader label="Giá trị" field="amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 font-semibold text-right" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">Ghi chú</th>
                         </tr>
                     </thead>
