@@ -306,22 +306,33 @@ class SupplierController extends Controller
             return $entry;
         });
 
-        // Summary uses raw DB values (signed)
-        // supplier_debt_amount: positive = we owe them, negative = they owe us (overpaid/offset)
-        // debt_amount: positive = they owe us (as customer), negative = we owe them
+        // Calculate supplier-only balance (exclude dual-role sale/return entries)
+        // This is the actual supplier_debt_amount
+        $supplierOnlyBalance = $entries
+            ->whereNotIn('type', ['sale', 'sale_payment', 'sale_return', 'customer_payment'])
+            ->sum('amount');
+
+        // Auto-sync: if supplier_debt_amount in DB is wrong, fix it
+        if ($supplier) {
+            $currentDbValue = (float) $supplier->supplier_debt_amount;
+            if (abs($currentDbValue - $supplierOnlyBalance) > 0.01) {
+                $supplier->update(['supplier_debt_amount' => $supplierOnlyBalance]);
+                $supplier->refresh();
+            }
+        }
+
+        // Use synced values for summary
         $rawSupplierDebt = $supplier ? (float) $supplier->supplier_debt_amount : 0;
         $rawCustomerDebt = $supplier ? (float) $supplier->debt_amount : 0;
 
-        // Keep raw signed values - frontend handles display
-        $payable = $rawSupplierDebt;   // Positive = we owe, Negative = we overpaid/they owe us
-        $receivable = $rawCustomerDebt; // Positive = they owe us, Negative = we owe them
-        $net = $receivable - $payable;  // Positive = net receivable, Negative = net payable
+        $payable = $rawSupplierDebt;
+        $receivable = $rawCustomerDebt;
+        $net = $receivable - $payable;
 
-        // Status based on net position
         if ($net > 0) {
-            $status = 'receivable'; // They owe us net
+            $status = 'receivable';
         } elseif ($net < 0) {
-            $status = 'payable';    // We owe them net
+            $status = 'payable';
         } else {
             $status = 'balanced';
         }
@@ -441,7 +452,21 @@ class SupplierController extends Controller
 
     private function seedDebtTransactions($supplierId)
     {
-        if (SupplierDebtTransaction::where('supplier_id', $supplierId)->exists()) return;
+        $completedPurchases = Purchase::where('supplier_id', $supplierId)
+            ->where('status', 'completed')
+            ->count();
+
+        $seededPurchases = SupplierDebtTransaction::where('supplier_id', $supplierId)
+            ->where('type', 'purchase')
+            ->count();
+
+        // Already seeded and all purchases accounted for
+        if ($seededPurchases > 0 && $seededPurchases >= $completedPurchases) return;
+
+        // Need to (re)seed: delete purchase-linked entries, keep manual ones
+        SupplierDebtTransaction::where('supplier_id', $supplierId)
+            ->whereNotNull('purchase_id')
+            ->delete();
 
         $purchases = Purchase::where('supplier_id', $supplierId)
             ->where('status', 'completed')
@@ -449,32 +474,36 @@ class SupplierController extends Controller
             ->orderBy('created_at')
             ->get();
 
-        $runningDebt = 0;
         foreach ($purchases as $p) {
+            // Check if already exists (to avoid duplicates)
+            $exists = SupplierDebtTransaction::where('supplier_id', $supplierId)
+                ->where('purchase_id', $p->id)
+                ->where('type', 'purchase')
+                ->exists();
+            if ($exists) continue;
+
             // Purchase entry
-            $runningDebt += $p->total_amount;
             SupplierDebtTransaction::create([
                 'supplier_id' => $supplierId,
                 'code' => $p->code,
                 'type' => 'purchase',
                 'amount' => $p->total_amount,
-                'debt_remain' => $runningDebt,
+                'debt_remain' => 0, // Will be recalculated below
                 'purchase_id' => $p->id,
                 'user_id' => $p->user_id,
                 'created_at' => $p->purchase_date ?? $p->created_at,
                 'updated_at' => $p->purchase_date ?? $p->created_at,
             ]);
 
-            // Payment entry (if paid)
+            // Payment entry (if paid at purchase time)
             $paid = $p->paid_amount ?? ($p->total_amount - ($p->debt_amount ?? 0));
             if ($paid > 0) {
-                $runningDebt -= $paid;
                 SupplierDebtTransaction::create([
                     'supplier_id' => $supplierId,
                     'code' => 'PCPN' . substr($p->code, 2),
                     'type' => 'payment',
                     'amount' => -$paid,
-                    'debt_remain' => $runningDebt,
+                    'debt_remain' => 0, // Will be recalculated below
                     'purchase_id' => $p->id,
                     'user_id' => $p->user_id,
                     'created_at' => $p->purchase_date ?? $p->created_at,
@@ -482,6 +511,19 @@ class SupplierController extends Controller
                 ]);
             }
         }
+
+        // Recalculate running debt_remain for ALL entries
+        $allEntries = SupplierDebtTransaction::where('supplier_id', $supplierId)
+            ->orderBy('created_at')
+            ->get();
+        $runningDebt = 0;
+        foreach ($allEntries as $entry) {
+            $runningDebt += $entry->amount;
+            $entry->update(['debt_remain' => $runningDebt]);
+        }
+
+        // Sync supplier_debt_amount
+        Customer::where('id', $supplierId)->update(['supplier_debt_amount' => $runningDebt]);
     }
 }
 
