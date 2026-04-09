@@ -452,48 +452,32 @@ class SupplierController extends Controller
 
     private function seedDebtTransactions($supplierId)
     {
-        $completedPurchases = Purchase::where('supplier_id', $supplierId)
-            ->where('status', 'completed')
-            ->count();
-
-        if ($completedPurchases === 0) return;
-
-        // Always reseed purchase-linked entries to ensure correct dates
-        // Manual entries (payment, adjustment without purchase_id) are preserved
-        SupplierDebtTransaction::where('supplier_id', $supplierId)
-            ->whereNotNull('purchase_id')
-            ->delete();
-
-
         $purchases = Purchase::where('supplier_id', $supplierId)
             ->where('status', 'completed')
             ->orderBy('created_at')
             ->get();
 
+        if ($purchases->isEmpty()) return;
+
+        // Delete old purchase-linked entries (keeps manual payments/adjustments)
+        SupplierDebtTransaction::where('supplier_id', $supplierId)
+            ->whereNotNull('purchase_id')
+            ->delete();
+
         foreach ($purchases as $p) {
             $txDate = $p->created_at;
 
-            // Purchase entry
-            SupplierDebtTransaction::create([
-                'supplier_id' => $supplierId,
-                'code' => $p->code,
-                'type' => 'purchase',
-                'amount' => $p->total_amount,
-                'debt_remain' => 0,
-                'purchase_id' => $p->id,
-                'user_id' => $p->user_id,
-                'created_at' => $txDate,
-                'updated_at' => $txDate,
-            ]);
+            // debt_amount = the unpaid portion = what actually adds to supplier debt
+            // This matches PurchaseController::store: debt_amount = (total - discount) - paid
+            $debtForThisPurchase = (float) ($p->debt_amount ?? 0);
 
-            // Payment entry (if paid at purchase time)
-            $paid = $p->paid_amount ?? ($p->total_amount - ($p->debt_amount ?? 0));
-            if ($paid > 0) {
+            // Only create entry if there's actual debt from this purchase
+            if (abs($debtForThisPurchase) > 0.01) {
                 SupplierDebtTransaction::create([
                     'supplier_id' => $supplierId,
-                    'code' => 'PCPN' . substr($p->code, 2),
-                    'type' => 'payment',
-                    'amount' => -$paid,
+                    'code' => $p->code,
+                    'type' => 'purchase',
+                    'amount' => $debtForThisPurchase,
                     'debt_remain' => 0,
                     'purchase_id' => $p->id,
                     'user_id' => $p->user_id,
@@ -503,9 +487,10 @@ class SupplierController extends Controller
             }
         }
 
-        // Recalculate running debt_remain for ALL entries
+        // Recalculate running debt_remain for ALL entries (seeded + manual)
         $allEntries = SupplierDebtTransaction::where('supplier_id', $supplierId)
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get();
         $runningDebt = 0;
         foreach ($allEntries as $entry) {
@@ -513,7 +498,7 @@ class SupplierController extends Controller
             $entry->update(['debt_remain' => $runningDebt]);
         }
 
-        // Sync supplier_debt_amount
+        // Sync supplier_debt_amount to match reality
         Customer::where('id', $supplierId)->update(['supplier_debt_amount' => $runningDebt]);
     }
 }
