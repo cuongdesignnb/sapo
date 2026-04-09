@@ -264,14 +264,12 @@ class POSController extends Controller
 
             // Tạo công nợ nếu có
             if ($debt > 0) {
-                CustomerDebt::create([
-                    'customer_id' => $customerId,
-                    'order_id' => $order->id,
-                    'amount' => $debt,
-                    'note' => "Công nợ từ đơn hàng POS {$orderCode}",
-                    'created_by' => auth()->id(),
-                    'recorded_at' => now()
-                ]);
+                CustomerDebt::createSaleDebt(
+                    customerId: $customerId,
+                    amount: $debt,
+                    orderId: $order->id,
+                    note: "Công nợ từ đơn hàng POS {$orderCode}"
+                );
             }
 
             // Cập nhật tổng chi tiêu của khách hàng

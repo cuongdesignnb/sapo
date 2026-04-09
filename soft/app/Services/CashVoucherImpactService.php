@@ -9,6 +9,7 @@ use App\Models\SupplierDebt;
 use App\Models\CashReceiptTransaction;
 use App\Models\CashPaymentTransaction;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CashVoucherImpactService
 {
@@ -80,10 +81,14 @@ class CashVoucherImpactService
         }
     }
 
+    // ==========================================
+    // RECEIPT IMPACTS (Phiếu thu)
+    // ==========================================
+
     private function handleReceiptDebtImpact($receipt, $type)
     {
         if ($receipt->recipient_type === 'customer' && $type->impact_action === 'decrease') {
-            // Thu nợ khách hàng
+            // Thu nợ khách hàng → giảm nợ phải thu
             $customer = Customer::find($receipt->recipient_id);
             if (!$customer) {
                 throw new \Exception('Không tìm thấy khách hàng');
@@ -94,38 +99,73 @@ class CashVoucherImpactService
             }
 
             $oldDebt = $customer->total_debt;
-            $newDebt = $oldDebt - $receipt->amount;
-            
-            $customer->update(['total_debt' => $newDebt]);
 
-            // Tạo customer debt record
-            CustomerDebt::create([
-                'customer_id' => $customer->id,
-                'ref_code' => $receipt->code,
-                'amount' => -$receipt->amount,
-                'debt_total' => $newDebt,
-                'note' => 'Thu nợ từ phiếu ' . $receipt->code,
-                'created_by' => $receipt->created_by,
-                'recorded_at' => $receipt->receipt_date,
-            ]);
+            // Dùng method chuẩn có row locking
+            CustomerDebt::createPayment(
+                customerId: $customer->id,
+                amount: $receipt->amount,
+                refCode: $receipt->code,
+                note: 'Thu nợ từ phiếu thu ' . $receipt->code
+            );
 
-            // Tạo transaction log
+            // Log transaction
             CashReceiptTransaction::create([
                 'receipt_id' => $receipt->id,
                 'target_model' => 'Customer',
                 'target_id' => $customer->id,
                 'field_affected' => 'total_debt',
                 'old_value' => $oldDebt,
-                'new_value' => $newDebt,
+                'new_value' => $oldDebt - $receipt->amount,
                 'change_amount' => -$receipt->amount,
                 'transaction_type' => 'debt_decrease',
+            ]);
+
+            Log::info('✅ Thu nợ KH thành công', [
+                'customer_id' => $customer->id,
+                'receipt_code' => $receipt->code,
+                'amount' => $receipt->amount,
+                'old_debt' => $oldDebt,
+                'new_debt' => $oldDebt - $receipt->amount,
+            ]);
+        }
+
+        if ($receipt->recipient_type === 'supplier' && $type->impact_action === 'decrease') {
+            // Thu tiền từ NCC (NCC hoàn trả tiền dư) → giảm nợ phải trả
+            $supplier = Supplier::find($receipt->recipient_id);
+            if (!$supplier) {
+                throw new \Exception('Không tìm thấy nhà cung cấp');
+            }
+
+            $oldDebt = $supplier->total_debt;
+
+            SupplierDebt::createPayment(
+                supplierId: $supplier->id,
+                amount: $receipt->amount,
+                refCode: $receipt->code,
+                note: 'Thu từ NCC - phiếu thu ' . $receipt->code
+            );
+
+            CashReceiptTransaction::create([
+                'receipt_id' => $receipt->id,
+                'target_model' => 'Supplier',
+                'target_id' => $supplier->id,
+                'field_affected' => 'total_debt',
+                'old_value' => $oldDebt,
+                'new_value' => $oldDebt - $receipt->amount,
+                'change_amount' => -$receipt->amount,
+                'transaction_type' => 'debt_decrease',
+            ]);
+
+            Log::info('✅ Thu tiền NCC thành công', [
+                'supplier_id' => $supplier->id,
+                'receipt_code' => $receipt->code,
+                'amount' => $receipt->amount,
             ]);
         }
     }
 
     private function handleReceiptRevenueImpact($receipt, $type)
     {
-        // Thu từ NCC hoặc thu nhập khác - có thể extend thêm logic tính revenue
         CashReceiptTransaction::create([
             'receipt_id' => $receipt->id,
             'target_model' => ucfirst($receipt->recipient_type),
@@ -140,7 +180,6 @@ class CashVoucherImpactService
 
     private function handleReceiptAdvanceImpact($receipt, $type)
     {
-        // Thu đặt cọc từ khách hàng - có thể extend thêm logic quản lý tạm ứng
         CashReceiptTransaction::create([
             'receipt_id' => $receipt->id,
             'target_model' => 'Customer',
@@ -153,10 +192,14 @@ class CashVoucherImpactService
         ]);
     }
 
+    // ==========================================
+    // PAYMENT IMPACTS (Phiếu chi)
+    // ==========================================
+
     private function handlePaymentDebtImpact($payment, $type)
     {
         if ($payment->recipient_type === 'supplier' && $type->impact_action === 'decrease') {
-            // Trả nợ nhà cung cấp
+            // Trả nợ nhà cung cấp → giảm nợ phải trả
             $supplier = Supplier::find($payment->recipient_id);
             if (!$supplier) {
                 throw new \Exception('Không tìm thấy nhà cung cấp');
@@ -167,39 +210,72 @@ class CashVoucherImpactService
             }
 
             $oldDebt = $supplier->total_debt;
-            $newDebt = $oldDebt - $payment->amount;
-            
-            $supplier->update(['total_debt' => $newDebt]);
 
-            // Tạo supplier debt record
-            SupplierDebt::create([
-                'supplier_id' => $supplier->id,
-                'ref_code' => $payment->code,
-                'amount' => -$payment->amount,
-                'debt_total' => $newDebt,
-                'type' => 'payment',
-                'note' => 'Trả nợ từ phiếu ' . $payment->code,
-                'created_by' => $payment->created_by,
-                'recorded_at' => $payment->payment_date,
-            ]);
+            // Dùng method chuẩn có row locking
+            SupplierDebt::createPayment(
+                supplierId: $supplier->id,
+                amount: $payment->amount,
+                refCode: $payment->code,
+                note: 'Trả nợ từ phiếu chi ' . $payment->code
+            );
 
-            // Tạo transaction log
             CashPaymentTransaction::create([
                 'payment_id' => $payment->id,
                 'target_model' => 'Supplier',
                 'target_id' => $supplier->id,
                 'field_affected' => 'total_debt',
                 'old_value' => $oldDebt,
-                'new_value' => $newDebt,
+                'new_value' => $oldDebt - $payment->amount,
                 'change_amount' => -$payment->amount,
                 'transaction_type' => 'debt_decrease',
+            ]);
+
+            Log::info('✅ Trả nợ NCC thành công', [
+                'supplier_id' => $supplier->id,
+                'payment_code' => $payment->code,
+                'amount' => $payment->amount,
+                'old_debt' => $oldDebt,
+                'new_debt' => $oldDebt - $payment->amount,
+            ]);
+        }
+
+        if ($payment->recipient_type === 'customer' && $type->impact_action === 'decrease') {
+            // Chi tiền cho KH (hoàn tiền KH) → giảm nợ phải thu
+            $customer = Customer::find($payment->recipient_id);
+            if (!$customer) {
+                throw new \Exception('Không tìm thấy khách hàng');
+            }
+
+            $oldDebt = $customer->total_debt;
+
+            CustomerDebt::createPayment(
+                customerId: $customer->id,
+                amount: $payment->amount,
+                refCode: $payment->code,
+                note: 'Hoàn tiền KH từ phiếu chi ' . $payment->code
+            );
+
+            CashPaymentTransaction::create([
+                'payment_id' => $payment->id,
+                'target_model' => 'Customer',
+                'target_id' => $customer->id,
+                'field_affected' => 'total_debt',
+                'old_value' => $oldDebt,
+                'new_value' => $oldDebt - $payment->amount,
+                'change_amount' => -$payment->amount,
+                'transaction_type' => 'debt_decrease',
+            ]);
+
+            Log::info('✅ Hoàn tiền KH thành công', [
+                'customer_id' => $customer->id,
+                'payment_code' => $payment->code,
+                'amount' => $payment->amount,
             ]);
         }
     }
 
     private function handlePaymentExpenseImpact($payment, $type)
     {
-        // Chi phí hoạt động - có thể extend thêm logic tính expense
         CashPaymentTransaction::create([
             'payment_id' => $payment->id,
             'target_model' => ucfirst($payment->recipient_type),
@@ -214,7 +290,6 @@ class CashVoucherImpactService
 
     private function handlePaymentAdvanceImpact($payment, $type)
     {
-        // Tạm ứng nhân viên - có thể extend thêm logic quản lý tạm ứng
         CashPaymentTransaction::create([
             'payment_id' => $payment->id,
             'target_model' => ucfirst($payment->recipient_type),
@@ -226,6 +301,10 @@ class CashVoucherImpactService
             'transaction_type' => 'advance_increase',
         ]);
     }
+
+    // ==========================================
+    // REVERSE IMPACTS (Hoàn tác)
+    // ==========================================
 
     public function reverseReceiptImpact($receipt)
     {
@@ -239,40 +318,23 @@ class CashVoucherImpactService
             $type = $receipt->receiptType;
             
             if ($type->impact_type === 'debt' && $receipt->recipient_type === 'customer') {
-                $customer = Customer::find($receipt->recipient_id);
-                $oldDebt = $customer->total_debt;
-                $newDebt = $oldDebt + $receipt->amount;
-                
-                $customer->update(['total_debt' => $newDebt]);
-
-                CustomerDebt::create([
-                    'customer_id' => $customer->id,
-                    'ref_code' => $receipt->code . '_REVERSE',
-                    'amount' => $receipt->amount,
-                    'debt_total' => $newDebt,
-                    'note' => 'Hoàn tác phiếu ' . $receipt->code,
-                    'created_by' => auth()->id(),
-                    'recorded_at' => now(),
-                ]);
+                // Hoàn tác thu nợ KH → tăng lại nợ
+                CustomerDebt::createAdjustment(
+                    customerId: $receipt->recipient_id,
+                    amount: $receipt->amount,
+                    note: 'Hoàn tác phiếu thu ' . $receipt->code,
+                    refCode: $receipt->code . '_REVERSE'
+                );
             }
 
             if ($type->impact_type === 'debt' && $receipt->recipient_type === 'supplier') {
-                $supplier = Supplier::find($receipt->recipient_id);
-                $oldDebt = $supplier->total_debt;
-                $newDebt = $oldDebt + $receipt->amount;
-                
-                $supplier->update(['total_debt' => $newDebt]);
-
-                SupplierDebt::create([
-                    'supplier_id' => $supplier->id,
-                    'ref_code' => $receipt->code . '_REVERSE',
-                    'amount' => $receipt->amount,
-                    'debt_total' => $newDebt,
-                    'type' => 'adjustment',
-                    'note' => 'Hoàn tác phiếu ' . $receipt->code,
-                    'created_by' => auth()->id(),
-                    'recorded_at' => now(),
-                ]);
+                // Hoàn tác thu tiền NCC → tăng lại nợ
+                SupplierDebt::createAdjustment(
+                    supplierId: $receipt->recipient_id,
+                    amount: $receipt->amount,
+                    note: 'Hoàn tác phiếu thu ' . $receipt->code,
+                    refCode: $receipt->code . '_REVERSE'
+                );
             }
 
             $receipt->update(['impact_applied' => false]);
@@ -298,22 +360,23 @@ class CashVoucherImpactService
             $type = $payment->paymentType;
             
             if ($type->impact_type === 'debt' && $payment->recipient_type === 'supplier') {
-                $supplier = Supplier::find($payment->recipient_id);
-                $oldDebt = $supplier->total_debt;
-                $newDebt = $oldDebt + $payment->amount;
-                
-                $supplier->update(['total_debt' => $newDebt]);
+                // Hoàn tác trả nợ NCC → tăng lại nợ
+                SupplierDebt::createAdjustment(
+                    supplierId: $payment->recipient_id,
+                    amount: $payment->amount,
+                    note: 'Hoàn tác phiếu chi ' . $payment->code,
+                    refCode: $payment->code . '_REVERSE'
+                );
+            }
 
-                SupplierDebt::create([
-                    'supplier_id' => $supplier->id,
-                    'ref_code' => $payment->code . '_REVERSE',
-                    'amount' => $payment->amount,
-                    'debt_total' => $newDebt,
-                    'type' => 'adjustment',
-                    'note' => 'Hoàn tác phiếu ' . $payment->code,
-                    'created_by' => auth()->id(),
-                    'recorded_at' => now(),
-                ]);
+            if ($type->impact_type === 'debt' && $payment->recipient_type === 'customer') {
+                // Hoàn tác hoàn tiền KH → tăng lại nợ
+                CustomerDebt::createAdjustment(
+                    customerId: $payment->recipient_id,
+                    amount: $payment->amount,
+                    note: 'Hoàn tác phiếu chi ' . $payment->code,
+                    refCode: $payment->code . '_REVERSE'
+                );
             }
 
             $payment->update(['impact_applied' => false]);

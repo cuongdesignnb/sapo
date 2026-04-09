@@ -214,6 +214,16 @@ class CustomerController extends Controller
                 'created_at' => $customer->created_at->format('d/m/Y'),
                 'updated_at' => $customer->updated_at->format('d/m/Y H:i'),
                 
+                // Partner linking
+                'linked_supplier_id' => $customer->linked_supplier_id,
+                'linked_supplier' => $customer->linkedSupplier ? [
+                    'id' => $customer->linkedSupplier->id,
+                    'code' => $customer->linkedSupplier->code,
+                    'name' => $customer->linkedSupplier->name,
+                    'total_debt' => $customer->linkedSupplier->total_debt,
+                ] : null,
+                'partner_debt_summary' => $customer->getPartnerDebtSummary(),
+
                 // Related data
                 'addresses' => $customer->addresses,
                 'recent_orders' => $customer->orders,
@@ -617,6 +627,215 @@ class CustomerController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Lỗi khi tải thống kê: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Liên kết KH với NCC (đối tác 2 vai trò)
+     */
+    public function linkSupplier(Request $request, Customer $customer): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'supplier_id' => 'required|exists:suppliers,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Dữ liệu không hợp lệ',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Kiểm tra NCC đã liên kết với KH khác chưa
+            $supplier = \App\Models\Supplier::find($request->supplier_id);
+            if ($supplier->linked_customer_id && $supplier->linked_customer_id !== $customer->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'NCC này đã liên kết với khách hàng khác: ' . $supplier->linkedCustomer->name
+                ], 400);
+            }
+
+            DB::beginTransaction();
+            $customer->linkToSupplier($request->supplier_id);
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'customer' => $customer->fresh(['linkedSupplier']),
+                    'partner_debt_summary' => $customer->fresh()->getPartnerDebtSummary(),
+                ],
+                'message' => 'Liên kết đối tác thành công'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi khi liên kết: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Hủy liên kết KH ↔ NCC
+     */
+    public function unlinkSupplier(Customer $customer): JsonResponse
+    {
+        try {
+            if (!$customer->isLinkedPartner()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Khách hàng này chưa liên kết với NCC nào'
+                ], 400);
+            }
+
+            DB::beginTransaction();
+            $customer->unlinkSupplier();
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Hủy liên kết đối tác thành công'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi khi hủy liên kết: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Lấy tổng hợp công nợ 2 chiều của đối tác
+     */
+    public function partnerDebtSummary(Customer $customer): JsonResponse
+    {
+        try {
+            $summary = $customer->getPartnerDebtSummary();
+
+            if (!$summary) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Khách hàng chưa liên kết với NCC'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $summary,
+                'message' => 'Tổng hợp công nợ đối tác'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Cấn bằng công nợ 2 chiều
+     */
+    public function executeOffset(Request $request, Customer $customer): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'amount' => 'nullable|numeric|min:0.01',
+                'note' => 'nullable|string|max:500',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Dữ liệu không hợp lệ',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $service = app(\App\Services\DebtOffsetService::class);
+            $offset = $service->executeOffset(
+                customerId: $customer->id,
+                customAmount: $request->input('amount'),
+                note: $request->input('note'),
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'offset' => $offset,
+                    'partner_debt_summary' => $customer->fresh()->getPartnerDebtSummary(),
+                ],
+                'message' => 'Cấn bằng công nợ thành công! Số tiền: ' . number_format($offset->amount) . ' VNĐ'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * Hủy phiên cấn bằng
+     */
+    public function cancelOffset(Request $request, $offsetId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'reason' => 'required|string|max:500',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $service = app(\App\Services\DebtOffsetService::class);
+            $offset = $service->cancelOffset($offsetId, $request->input('reason'));
+
+            return response()->json([
+                'success' => true,
+                'data' => $offset,
+                'message' => 'Đã hủy phiên cấn bằng ' . $offset->code
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * Lịch sử cấn bằng công nợ
+     */
+    public function offsetHistory(Customer $customer): JsonResponse
+    {
+        try {
+            $service = app(\App\Services\DebtOffsetService::class);
+            $history = $service->getHistory($customer->id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $history,
+                'message' => 'Lịch sử cấn bằng'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -419,49 +419,15 @@ class OrderReturnController extends Controller
 
     private function handleCustomerDebtAdjustment(Order $order, $refundAmount, $note = null)
     {
-        // Check if customer has existing debt
-        $existingDebt = CustomerDebt::where('customer_id', $order->customer_id)
-            ->where('order_id', '!=', $order->id)
-            ->sum('amount');
+        if ($refundAmount <= 0) return;
 
-        if ($existingDebt > 0) {
-            // Customer has debt - reduce debt first
-            $debtReduction = min($existingDebt, $refundAmount);
-            
-            if ($debtReduction > 0) {
-                CustomerDebt::create([
-                    'customer_id' => $order->customer_id,
-                    'order_id' => $order->id,
-                    'amount' => -$debtReduction, // Negative amount reduces debt
-                    'description' => "Giảm nợ từ hoàn trả hàng {$order->code}" . ($note ? " - {$note}" : ""),
-                    'created_by' => Auth::id(),
-                ]);
-            }
-
-            $remainingRefund = $refundAmount - $debtReduction;
-            
-            // If there's still money left after debt reduction, it can be refunded
-            if ($remainingRefund > 0) {
-                // Here you might want to create a cash receipt or other refund record
-                // For now, we'll just note it in the description
-                CustomerDebt::create([
-                    'customer_id' => $order->customer_id,
-                    'order_id' => $order->id,
-                    'amount' => 0,
-                    'description' => "Hoàn tiền {$remainingRefund} từ trả hàng {$order->code}" . ($note ? " - {$note}" : ""),
-                    'created_by' => Auth::id(),
-                ]);
-            }
-        } else {
-            // No existing debt - full refund
-            CustomerDebt::create([
-                'customer_id' => $order->customer_id,
-                'order_id' => $order->id,
-                'amount' => 0,
-                'description' => "Hoàn tiền {$refundAmount} từ trả hàng {$order->code}" . ($note ? " - {$note}" : ""),
-                'created_by' => Auth::id(),
-            ]);
-        }
+        // Giảm nợ khách hàng bằng bút toán trả hàng (thread-safe)
+        CustomerDebt::createReturnCredit(
+            customerId: $order->customer_id,
+            amount: $refundAmount,
+            orderId: $order->id,
+            note: "Giảm nợ từ trả hàng {$order->code}" . ($note ? " - {$note}" : "")
+        );
     }
 
     /**

@@ -1,6 +1,17 @@
 <!-- resources/js/components/SupplierDebtHistory.vue -->
 <template>
   <div class="supplier-debt-history">
+    <!-- Header -->
+    <div class="flex items-center gap-3 mb-6">
+      <div class="p-2 bg-blue-100 rounded-lg">
+        <i class="fas fa-file-invoice-dollar text-blue-600 text-xl"></i>
+      </div>
+      <div>
+        <h2 class="text-xl font-bold text-gray-900">Công nợ phải trả</h2>
+        <p class="text-blue-600 font-medium text-sm">Cửa hàng nợ nhà cung cấp</p>
+      </div>
+    </div>
+
     <!-- Filters -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
       <div>
@@ -11,9 +22,10 @@
           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">Tất cả</option>
-          <option value="purchase">Mua hàng</option>
-          <option value="payment">Thanh toán</option>
-          <option value="adjustment">Điều chỉnh</option>
+          <option value="purchase">🛒 Mua hàng (đơn nhập)</option>
+          <option value="payment">💵 Thanh toán (trả nợ)</option>
+          <option value="return">🔄 Trả hàng nhập</option>
+          <option value="adjustment">⚙️ Điều chỉnh</option>
         </select>
       </div>
       
@@ -325,16 +337,20 @@ export default {
       const classes = {
         'purchase': 'bg-red-100 text-red-800',
         'payment': 'bg-green-100 text-green-800',
-        'adjustment': 'bg-yellow-100 text-yellow-800'
+        'return': 'bg-blue-100 text-blue-800',
+        'adjustment': 'bg-yellow-100 text-yellow-800',
+        'offset': 'bg-purple-100 text-purple-800'
       };
       return classes[type] || 'bg-gray-100 text-gray-800';
     },
 
     getDebtTypeText(type) {
       const texts = {
-        'purchase': 'Mua hàng',
-        'payment': 'Thanh toán',
-        'adjustment': 'Điều chỉnh'
+        'purchase': '🛒 Mua hàng',
+        'payment': '💵 Thanh toán',
+        'return': '🔄 Trả hàng',
+        'adjustment': '⚙️ Điều chỉnh',
+        'offset': '⚖️ Cấn bằng'
       };
       return texts[type] || 'Không xác định';
     },

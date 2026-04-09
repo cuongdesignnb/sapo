@@ -28,7 +28,8 @@ class Customer extends Model
         'customer_type',
         'person_in_charge',
         'tags',
-        'note'
+        'note',
+        'linked_supplier_id'
     ];
 
     protected $casts = [
@@ -66,6 +67,70 @@ class Customer extends Model
     public function debts(): HasMany
     {
         return $this->hasMany(CustomerDebt::class);
+    }
+
+    // ====== PARTNER LINKING ======
+
+    /**
+     * NCC liên kết (đối tác vừa là KH vừa là NCC)
+     */
+    public function linkedSupplier()
+    {
+        return $this->belongsTo(Supplier::class, 'linked_supplier_id');
+    }
+
+    /**
+     * Kiểm tra có phải đối tác 2 vai trò không
+     */
+    public function isLinkedPartner(): bool
+    {
+        return !is_null($this->linked_supplier_id);
+    }
+
+    /**
+     * Liên kết với NCC (đồng bộ 2 chiều)
+     */
+    public function linkToSupplier(int $supplierId): void
+    {
+        $this->update(['linked_supplier_id' => $supplierId]);
+        Supplier::where('id', $supplierId)->update(['linked_customer_id' => $this->id]);
+    }
+
+    /**
+     * Hủy liên kết (đồng bộ 2 chiều)
+     */
+    public function unlinkSupplier(): void
+    {
+        if ($this->linked_supplier_id) {
+            Supplier::where('id', $this->linked_supplier_id)->update(['linked_customer_id' => null]);
+        }
+        $this->update(['linked_supplier_id' => null]);
+    }
+
+    /**
+     * Lấy tổng hợp công nợ 2 chiều
+     */
+    public function getPartnerDebtSummary(): ?array
+    {
+        if (!$this->isLinkedPartner()) return null;
+
+        $supplier = $this->linkedSupplier;
+        if (!$supplier) return null;
+
+        $receivable = $this->total_debt ?? 0;  // KH nợ mình
+        $payable = $supplier->total_debt ?? 0;  // Mình nợ NCC
+        $netDebt = $receivable - $payable;
+
+        return [
+            'customer_id' => $this->id,
+            'supplier_id' => $supplier->id,
+            'customer_name' => $this->name,
+            'supplier_name' => $supplier->name,
+            'receivable' => $receivable,   // KH nợ mình (phải thu)
+            'payable' => $payable,         // Mình nợ NCC (phải trả)
+            'net_debt' => $netDebt,        // >0: họ nợ mình, <0: mình nợ họ
+            'net_label' => $netDebt > 0 ? 'Họ nợ mình' : ($netDebt < 0 ? 'Mình nợ họ' : 'Cân bằng'),
+        ];
     }
 
     // Scopes

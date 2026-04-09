@@ -6,18 +6,29 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class CustomerDebt extends Model
 {
     use HasFactory;
 
+    // ====== DEBT TYPES (giống SupplierDebt) ======
+    const TYPE_SALE       = 'sale';       // Bán hàng → tăng nợ
+    const TYPE_PAYMENT    = 'payment';    // Thu tiền → giảm nợ
+    const TYPE_RETURN     = 'return';     // Trả hàng → giảm nợ
+    const TYPE_ADJUSTMENT = 'adjustment'; // Điều chỉnh ± nợ
+    const TYPE_OFFSET     = 'offset';     // Cấn bằng với NCC
+
     protected $fillable = [
         'customer_id',
         'order_id',
+        'order_return_id',
         'ref_code',
         'amount',
         'debt_total',
+        'type',
         'note',
         'created_by',
         'recorded_at'
@@ -31,236 +42,203 @@ class CustomerDebt extends Model
         'updated_at' => 'datetime'
     ];
 
-    protected $dates = [
-        'recorded_at',
-        'created_at',
-        'updated_at'
-    ];
+    // ====== RELATIONSHIPS ======
 
-    /**
-     * Boot method - Auto calculate debt_total and generate ref_code
-     */
-    protected static function boot()
-    {
-        parent::boot();
-
-        static::creating(function ($customerDebt) {
-            // Auto generate ref_code if not provided
-            if (empty($customerDebt->ref_code)) {
-                $customerDebt->ref_code = 'CD' . now()->format('YmdHis') . rand(100, 999);
-            }
-
-            // Set recorded_at to now if not provided
-            if (empty($customerDebt->recorded_at)) {
-                $customerDebt->recorded_at = now();
-            }
-
-            // Auto calculate debt_total
-            $customerDebt->calculateDebtTotal();
-        });
-
-        static::updating(function ($customerDebt) {
-            // Recalculate debt_total if amount changed
-            if ($customerDebt->isDirty('amount')) {
-                $customerDebt->calculateDebtTotal();
-            }
-        });
-
-        static::created(function ($customerDebt) {
-            // Update customer total_debt
-            $customerDebt->updateCustomerTotalDebt();
-        });
-
-        static::updated(function ($customerDebt) {
-            // Update customer total_debt
-            $customerDebt->updateCustomerTotalDebt();
-        });
-
-        static::deleted(function ($customerDebt) {
-            // Update customer total_debt
-            $customerDebt->updateCustomerTotalDebt();
-        });
-    }
-
-    /**
-     * Relationship with Customer
-     */
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
     }
 
-    /**
-     * Relationship with Order
-     */
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
     }
 
-    /**
-     * Relationship with User (creator)
-     */
+    public function orderReturn(): BelongsTo
+    {
+        return $this->belongsTo(OrderReturn::class);
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    /**
-     * Scope: Filter by customer
-     */
-    public function scopeByCustomer(Builder $query, $customerId): Builder
+    // ====== BOOT — chỉ giữ deleted event ======
+
+    protected static function boot()
     {
-        return $query->where('customer_id', $customerId);
+        parent::boot();
+
+        static::deleted(function ($customerDebt) {
+            $customerDebt->recalcCustomerTotalDebt();
+        });
     }
 
-    /**
-     * Scope: Filter by date range
-     */
-    public function scopeByDateRange(Builder $query, $startDate, $endDate): Builder
-    {
-        return $query->whereBetween('recorded_at', [$startDate, $endDate]);
-    }
+    // ====== CORE METHOD: createDebtRecord — THREAD-SAFE ======
 
     /**
-     * Scope: Filter by debt type (positive = debt, negative = payment)
+     * Tạo bản ghi công nợ KH và cập nhật Customer.total_debt
+     * Dùng lockForUpdate() để tránh race condition (giống SupplierDebt)
      */
-    public function scopeByType(Builder $query, $type): Builder
-    {
-        if ($type === 'debt') {
-            return $query->where('amount', '>', 0);
-        } elseif ($type === 'payment') {
-            return $query->where('amount', '<', 0);
+    public static function createDebtRecord(
+        int $customerId,
+        float $amount,
+        string $type = self::TYPE_SALE,
+        ?string $refCode = null,
+        ?int $orderId = null,
+        ?int $orderReturnId = null,
+        ?string $note = null
+    ): self {
+        DB::beginTransaction();
+        try {
+            // Lock customer record
+            $customer = Customer::lockForUpdate()->findOrFail($customerId);
+
+            $oldDebtTotal = $customer->total_debt ?? 0;
+            $newDebtTotal = $oldDebtTotal + $amount;
+
+            // Auto generate ref_code
+            if (empty($refCode)) {
+                $refCode = 'CD' . now()->format('YmdHis') . rand(100, 999);
+            }
+
+            $debt = self::create([
+                'customer_id'     => $customerId,
+                'order_id'        => $orderId,
+                'order_return_id' => $orderReturnId,
+                'ref_code'        => $refCode,
+                'amount'          => $amount,
+                'debt_total'      => $newDebtTotal,
+                'type'            => $type,
+                'note'            => $note,
+                'created_by'      => auth()->id(),
+                'recorded_at'     => now(),
+            ]);
+
+            // Cập nhật Customer.total_debt
+            $customer->update(['total_debt' => $newDebtTotal]);
+
+            Log::info("CustomerDebt record created", [
+                'customer_id'    => $customerId,
+                'amount'         => $amount,
+                'type'           => $type,
+                'old_debt_total' => $oldDebtTotal,
+                'new_debt_total' => $newDebtTotal,
+                'ref_code'       => $refCode,
+            ]);
+
+            DB::commit();
+            return $debt;
+
+        } catch (\Exception $e) {
+            DB::rollback();
+            Log::error("Failed to create CustomerDebt record", [
+                'customer_id' => $customerId,
+                'amount'      => $amount,
+                'type'        => $type,
+                'error'       => $e->getMessage(),
+            ]);
+            throw $e;
         }
-        return $query;
+    }
+
+    // ====== HELPER METHODS ======
+
+    /**
+     * Tạo nợ từ bán hàng (amount dương)
+     */
+    public static function createSaleDebt(int $customerId, float $amount, int $orderId, ?string $note = null): self
+    {
+        return self::createDebtRecord(
+            customerId: $customerId,
+            amount: abs($amount),
+            type: self::TYPE_SALE,
+            orderId: $orderId,
+            note: $note ?? "Công nợ từ đơn hàng"
+        );
     }
 
     /**
-     * Scope: Order by recorded date desc
+     * Thu tiền → giảm nợ (amount âm)
      */
-    public function scopeLatest(Builder $query): Builder
+    public static function createPayment(int $customerId, float $amount, ?string $refCode = null, ?string $note = null): self
     {
-        return $query->orderBy('recorded_at', 'desc');
+        return self::createDebtRecord(
+            customerId: $customerId,
+            amount: -abs($amount),
+            type: self::TYPE_PAYMENT,
+            refCode: $refCode,
+            note: $note ?? "Thanh toán"
+        );
     }
 
     /**
-     * Scope: With customer info
+     * Trả hàng → giảm nợ (amount âm)
      */
-    public function scopeWithCustomer(Builder $query): Builder
+    public static function createReturnCredit(int $customerId, float $amount, ?int $orderId = null, ?int $orderReturnId = null, ?string $refCode = null, ?string $note = null): self
     {
-        return $query->with(['customer:id,code,name,email,phone,total_debt']);
+        return self::createDebtRecord(
+            customerId: $customerId,
+            amount: -abs($amount),
+            type: self::TYPE_RETURN,
+            refCode: $refCode,
+            orderId: $orderId,
+            orderReturnId: $orderReturnId,
+            note: $note ?? "Giảm nợ từ trả hàng"
+        );
     }
 
     /**
-     * Scope: With order info
+     * Điều chỉnh ± nợ
      */
-    public function scopeWithOrder(Builder $query): Builder
+    public static function createAdjustment(int $customerId, float $amount, ?string $note = null, ?string $refCode = null): self
     {
-        return $query->with(['order:id,code,total,status']);
+        return self::createDebtRecord(
+            customerId: $customerId,
+            amount: $amount,
+            type: self::TYPE_ADJUSTMENT,
+            refCode: $refCode,
+            note: $note ?? "Điều chỉnh công nợ"
+        );
     }
 
     /**
-     * Scope: With creator info
+     * Cấn bằng công nợ với NCC
      */
-    public function scopeWithCreator(Builder $query): Builder
+    public static function createOffset(int $customerId, float $amount, ?string $refCode = null, ?string $note = null): self
     {
-        return $query->with(['creator:id,name,email']);
+        return self::createDebtRecord(
+            customerId: $customerId,
+            amount: -abs($amount),
+            type: self::TYPE_OFFSET,
+            refCode: $refCode,
+            note: $note ?? "Cấn bằng công nợ"
+        );
     }
 
+    // ====== UTILITY ======
+
     /**
-     * Calculate debt_total based on previous debt records
+     * Tính lại Customer.total_debt từ bản ghi mới nhất
      */
-    public function calculateDebtTotal()
+    public function recalcCustomerTotalDebt(): void
     {
-        // Get previous debt total for this customer
-        $previousDebt = static::where('customer_id', $this->customer_id)
-            ->where('recorded_at', '<', $this->recorded_at ?? now())
-            ->when($this->exists, function ($query) {
-                $query->where('id', '!=', $this->id);
-            })
+        if (!$this->customer_id) return;
+
+        $latestRecord = static::where('customer_id', $this->customer_id)
             ->orderBy('recorded_at', 'desc')
+            ->orderBy('id', 'desc')
             ->first();
 
-        $previousTotal = $previousDebt ? $previousDebt->debt_total : 0;
-        $this->debt_total = $previousTotal + $this->amount;
+        Customer::where('id', $this->customer_id)
+            ->update(['total_debt' => $latestRecord ? $latestRecord->debt_total : 0]);
     }
 
     /**
-     * Update customer's total_debt field
+     * Get debt summary for a customer
      */
-    public function updateCustomerTotalDebt()
-    {
-        if ($this->customer_id) {
-            $totalDebt = static::where('customer_id', $this->customer_id)
-                ->orderBy('recorded_at', 'desc')
-                ->first();
-
-            Customer::where('id', $this->customer_id)
-                ->update(['total_debt' => $totalDebt ? $totalDebt->debt_total : 0]);
-        }
-    }
-
-    /**
-     * Check if this is a debt transaction (positive amount)
-     */
-    public function isDebt(): bool
-    {
-        return $this->amount > 0;
-    }
-
-    /**
-     * Check if this is a payment transaction (negative amount)
-     */
-    public function isPayment(): bool
-    {
-        return $this->amount < 0;
-    }
-
-    /**
-     * Get transaction type as string
-     */
-    public function getTypeAttribute(): string
-    {
-        return $this->isDebt() ? 'debt' : 'payment';
-    }
-
-    /**
-     * Get formatted amount with proper sign
-     */
-    public function getFormattedAmountAttribute(): string
-    {
-        $prefix = $this->isDebt() ? '+' : '';
-        return $prefix . number_format($this->amount, 0, ',', '.') . ' VNĐ';
-    }
-
-    /**
-     * Get formatted debt total
-     */
-    public function getFormattedDebtTotalAttribute(): string
-    {
-        return number_format($this->debt_total, 0, ',', '.') . ' VNĐ';
-    }
-
-    /**
-     * Get debt status color for UI
-     */
-    public function getStatusColorAttribute(): string
-    {
-        return $this->isDebt() ? 'text-red-600' : 'text-green-600';
-    }
-
-    /**
-     * Get debt status badge color
-     */
-    public function getBadgeColorAttribute(): string
-    {
-        return $this->isDebt() ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800';
-    }
-
-    /**
-     * Static method: Get debt summary for a customer
-     */
-    public static function getCustomerDebtSummary($customerId)
+    public static function getCustomerDebtSummary(int $customerId): array
     {
         $debts = static::where('customer_id', $customerId)
             ->selectRaw('
@@ -273,60 +251,128 @@ class CustomerDebt extends Model
 
         $latestRecord = static::where('customer_id', $customerId)
             ->orderBy('recorded_at', 'desc')
+            ->orderBy('id', 'desc')
             ->first();
 
         return [
-            'total_debt' => $debts->total_debt ?? 0,
-            'total_paid' => $debts->total_paid ?? 0,
-            'current_balance' => $latestRecord ? $latestRecord->debt_total : 0,
-            'debt_transactions' => $debts->debt_count ?? 0,
+            'total_debt'           => $debts->total_debt ?? 0,
+            'total_paid'           => $debts->total_paid ?? 0,
+            'current_balance'      => $latestRecord ? $latestRecord->debt_total : 0,
+            'debt_transactions'    => $debts->debt_count ?? 0,
             'payment_transactions' => $debts->payment_count ?? 0,
-            'last_transaction_date' => $latestRecord ? $latestRecord->recorded_at : null
+            'last_transaction_date' => $latestRecord?->recorded_at,
         ];
     }
 
     /**
-     * Static method: Get top debtors
+     * Get top debtors
      */
-    public static function getTopDebtors($limit = 10)
+    public static function getTopDebtors(int $limit = 10)
     {
-        return static::select('customer_id')
-            ->selectRaw('MAX(debt_total) as current_debt')
-            ->with(['customer:id,code,name,email,phone'])
-            ->groupBy('customer_id')
-            ->having('current_debt', '>', 0)
-            ->orderBy('current_debt', 'desc')
+        return Customer::where('total_debt', '>', 0)
+            ->orderBy('total_debt', 'desc')
             ->limit($limit)
-            ->get();
+            ->get(['id', 'code', 'name', 'email', 'phone', 'total_debt']);
     }
 
-    /**
-     * Static method: Create payment transaction
-     */
-    public static function createPayment($customerId, $amount, $note = null, $refCode = null)
+    // ====== SCOPES ======
+
+    public function scopeByCustomer(Builder $query, int $customerId): Builder
     {
-        return static::create([
-            'customer_id' => $customerId,
-            'amount' => -abs($amount), // Ensure negative for payment
-            'note' => $note ?? 'Thanh toán',
-            'ref_code' => $refCode,
-            'created_by' => auth()->id(),
-            'recorded_at' => now()
-        ]);
+        return $query->where('customer_id', $customerId);
     }
 
-    /**
-     * Static method: Create debt adjustment
-     */
-    public static function createAdjustment($customerId, $amount, $note, $refCode = null)
+    public function scopeByDateRange(Builder $query, $startDate, $endDate): Builder
     {
-        return static::create([
-            'customer_id' => $customerId,
-            'amount' => $amount,
-            'note' => $note ?? 'Điều chỉnh công nợ',
-            'ref_code' => $refCode,
-            'created_by' => auth()->id(),
-            'recorded_at' => now()
-        ]);
+        return $query->whereBetween('recorded_at', [$startDate, $endDate]);
+    }
+
+    public function scopeByType(Builder $query, string $type): Builder
+    {
+        return $query->where('type', $type);
+    }
+
+    public function scopeLatest(Builder $query): Builder
+    {
+        return $query->orderBy('recorded_at', 'desc')->orderBy('id', 'desc');
+    }
+
+    public function scopeWithCustomer(Builder $query): Builder
+    {
+        return $query->with(['customer:id,code,name,email,phone,total_debt']);
+    }
+
+    public function scopeWithOrder(Builder $query): Builder
+    {
+        return $query->with(['order:id,code,total,status']);
+    }
+
+    public function scopeWithCreator(Builder $query): Builder
+    {
+        return $query->with(['creator:id,name,email']);
+    }
+
+    // ====== ACCESSORS ======
+
+    public function getTypeTextAttribute(): string
+    {
+        return match($this->type) {
+            self::TYPE_SALE       => 'Bán hàng',
+            self::TYPE_PAYMENT    => 'Thanh toán',
+            self::TYPE_RETURN     => 'Trả hàng',
+            self::TYPE_ADJUSTMENT => 'Điều chỉnh',
+            self::TYPE_OFFSET     => 'Cấn bằng',
+            default               => 'Không xác định',
+        };
+    }
+
+    public function getTypeIconAttribute(): string
+    {
+        return match($this->type) {
+            self::TYPE_SALE       => '🛒',
+            self::TYPE_PAYMENT    => '💵',
+            self::TYPE_RETURN     => '🔄',
+            self::TYPE_ADJUSTMENT => '⚙️',
+            self::TYPE_OFFSET     => '⚖️',
+            default               => '❓',
+        };
+    }
+
+    public function getFormattedAmountAttribute(): string
+    {
+        $prefix = $this->amount >= 0 ? '+' : '';
+        return $prefix . number_format($this->amount, 0, ',', '.') . ' VNĐ';
+    }
+
+    public function getFormattedDebtTotalAttribute(): string
+    {
+        return number_format($this->debt_total, 0, ',', '.') . ' VNĐ';
+    }
+
+    public function getStatusColorAttribute(): string
+    {
+        return $this->amount > 0 ? 'text-red-600' : 'text-green-600';
+    }
+
+    public function getBadgeColorAttribute(): string
+    {
+        return match($this->type) {
+            self::TYPE_SALE       => 'bg-red-100 text-red-800',
+            self::TYPE_PAYMENT    => 'bg-green-100 text-green-800',
+            self::TYPE_RETURN     => 'bg-blue-100 text-blue-800',
+            self::TYPE_ADJUSTMENT => 'bg-yellow-100 text-yellow-800',
+            self::TYPE_OFFSET     => 'bg-purple-100 text-purple-800',
+            default               => 'bg-gray-100 text-gray-800',
+        };
+    }
+
+    public function isDebt(): bool
+    {
+        return $this->amount > 0;
+    }
+
+    public function isPayment(): bool
+    {
+        return $this->amount < 0;
     }
 }

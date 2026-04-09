@@ -22,39 +22,22 @@
           <!-- Transaction Type Toggle -->
           <div class="bg-gray-50 rounded-lg p-4">
             <label class="block text-sm font-medium text-gray-700 mb-3">Loại giao dịch</label>
-            <div class="flex gap-4">
-              <label class="flex items-center cursor-pointer">
+            <div class="flex flex-wrap gap-3">
+              <label v-for="opt in typeOptions" :key="opt.value" class="flex items-center cursor-pointer">
                 <input
                   v-model="transactionType"
                   type="radio"
-                  value="debt"
+                  :value="opt.value"
                   class="sr-only"
                 />
                 <div :class="[
-                  'flex items-center px-4 py-2 rounded-lg border-2 transition-colors',
-                  transactionType === 'debt' 
-                    ? 'border-red-500 bg-red-50 text-red-700' 
+                  'flex items-center px-4 py-2 rounded-lg border-2 transition-colors text-sm',
+                  transactionType === opt.value 
+                    ? opt.activeClass 
                     : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400'
                 ]">
-                  <i class="fas fa-arrow-up mr-2"></i>
-                  Nợ phát sinh
-                </div>
-              </label>
-              <label class="flex items-center cursor-pointer">
-                <input
-                  v-model="transactionType"
-                  type="radio"
-                  value="payment"
-                  class="sr-only"
-                />
-                <div :class="[
-                  'flex items-center px-4 py-2 rounded-lg border-2 transition-colors',
-                  transactionType === 'payment' 
-                    ? 'border-green-500 bg-green-50 text-green-700' 
-                    : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400'
-                ]">
-                  <i class="fas fa-arrow-down mr-2"></i>
-                  Thanh toán
+                  <span class="mr-2">{{ opt.icon }}</span>
+                  {{ opt.label }}
                 </div>
               </label>
             </div>
@@ -258,8 +241,8 @@
               </div>
               <div>
                 <span class="text-gray-600">Loại giao dịch:</span>
-                <div :class="getBadgeClass(form.amount)" class="inline-block px-2 py-1 rounded text-xs font-medium mt-1">
-                  {{ getTransactionType(form.amount) }}
+                <div :class="getTypeBadgeClass(transactionType)" class="inline-block px-2 py-1 rounded text-xs font-medium mt-1">
+                  {{ getTypeLabel(transactionType) }}
                 </div>
               </div>
               <div>
@@ -334,8 +317,16 @@ export default {
     const orderSearch = ref('');
     const showCustomerDropdown = ref(false);
     const showOrderDropdown = ref(false);
-    const transactionType = ref('debt');
+    const transactionType = ref('sale');
     const rawAmount = ref('');
+
+    // Type options for the toggle buttons
+    const typeOptions = [
+      { value: 'sale', label: 'Bán hàng', icon: '🛒', activeClass: 'border-red-500 bg-red-50 text-red-700', isDebt: true },
+      { value: 'payment', label: 'Thanh toán', icon: '💵', activeClass: 'border-green-500 bg-green-50 text-green-700', isDebt: false },
+      { value: 'return', label: 'Trả hàng', icon: '🔄', activeClass: 'border-blue-500 bg-blue-50 text-blue-700', isDebt: false },
+      { value: 'adjustment', label: 'Điều chỉnh', icon: '⚙️', activeClass: 'border-yellow-500 bg-yellow-50 text-yellow-700', isDebt: true },
+    ];
 
     // Form data
     const form = reactive({
@@ -343,6 +334,7 @@ export default {
       order_id: '',
       ref_code: '',
       amount: 0,
+      type: 'sale',
       note: '',
       recorded_at: ''
     });
@@ -370,7 +362,7 @@ export default {
           new Date(props.debt.recorded_at).toISOString().slice(0, 16) : '';
         
         // Set transaction type and raw amount
-        transactionType.value = props.debt.amount > 0 ? 'debt' : 'payment';
+        transactionType.value = props.debt.type || (props.debt.amount > 0 ? 'sale' : 'payment');
         rawAmount.value = Math.abs(props.debt.amount);
         
         // Set selected customer and order
@@ -390,7 +382,9 @@ export default {
 
     const updateAmount = () => {
       const amount = parseFloat(rawAmount.value) || 0;
-      form.amount = transactionType.value === 'debt' ? amount : -amount;
+      const currentType = typeOptions.find(o => o.value === transactionType.value);
+      form.amount = currentType?.isDebt ? amount : -amount;
+      form.type = transactionType.value;
     };
 
     const searchCustomers = async () => {
@@ -504,6 +498,28 @@ export default {
       return amount > 0 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800';
     };
 
+    const getTypeBadgeClass = (type) => {
+      const map = {
+        sale: 'bg-red-100 text-red-800',
+        payment: 'bg-green-100 text-green-800',
+        return: 'bg-blue-100 text-blue-800',
+        adjustment: 'bg-yellow-100 text-yellow-800',
+        offset: 'bg-purple-100 text-purple-800'
+      };
+      return map[type] || 'bg-gray-100 text-gray-800';
+    };
+
+    const getTypeLabel = (type) => {
+      const map = {
+        sale: '🛒 Bán hàng',
+        payment: '💵 Thanh toán',
+        return: '🔄 Trả hàng',
+        adjustment: '⚙️ Điều chỉnh',
+        offset: '⚖️ Cấn bằng'
+      };
+      return map[type] || type;
+    };
+
     const getBalanceColor = (balance) => {
       if (balance > 0) return 'text-red-600';
       if (balance < 0) return 'text-green-600';
@@ -570,7 +586,10 @@ export default {
       getTransactionType,
       getAmountColorClass,
       getBadgeClass,
-      getBalanceColor
+      getTypeBadgeClass,
+      getTypeLabel,
+      getBalanceColor,
+      typeOptions
     };
   }
 };

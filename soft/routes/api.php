@@ -384,7 +384,19 @@ Route::prefix('dashboard')->group(function () {
             Route::delete('/{customer}', [CustomerController::class, 'destroy']);
             Route::post('/bulk-delete', [CustomerController::class, 'bulkDelete']);
             Route::post('/import', [CustomerController::class, 'import']);
+
+            // Partner linking (KH ↔ NCC)
+            Route::post('/{customer}/link-supplier', [CustomerController::class, 'linkSupplier']);
+            Route::delete('/{customer}/unlink-supplier', [CustomerController::class, 'unlinkSupplier']);
+
+            // Debt offsetting (Cấn bằng công nợ)
+            Route::post('/{customer}/offset', [CustomerController::class, 'executeOffset']);
+            Route::post('/offsets/{offsetId}/cancel', [CustomerController::class, 'cancelOffset']);
         });
+
+        // Partner debt summary & offset history (read-only)
+        Route::get('/{customer}/partner-debt', [CustomerController::class, 'partnerDebtSummary']);
+        Route::get('/{customer}/offset-history', [CustomerController::class, 'offsetHistory']);
     });
 
     // ======================

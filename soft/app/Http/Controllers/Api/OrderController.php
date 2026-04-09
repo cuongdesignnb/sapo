@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
+use App\Models\CustomerDebt;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\OrderPayment;
@@ -393,17 +394,17 @@ class OrderController extends Controller
                 'changed_at' => now(),
             ]);
 
-            // Tạo customer debt (toàn bộ số tiền đơn hàng)
-            \App\Models\CustomerDebt::create([
-                'order_id' => $order->id,
-                'customer_id' => $request->customer_id,
-                'ref_code' => 'CD'.date('YmdHis').rand(100, 999),
-                'amount' => $total,
-                'debt_total' => 0, // Sẽ được tính tự động trong model
-                'note' => 'Công nợ từ đơn hàng '.$order->code,
-                'created_by' => auth()->id(),
-                'recorded_at' => now(),
-            ]);
+            // Tạo customer debt (chỉ phần chưa thanh toán)
+            $paid = $request->paid ?? 0;
+            $debt = max(0, $total - $paid);
+            if ($debt > 0) {
+                CustomerDebt::createSaleDebt(
+                    customerId: $request->customer_id,
+                    amount: $debt,
+                    orderId: $order->id,
+                    note: 'Công nợ từ đơn hàng ' . $order->code
+                );
+            }
 
             DB::commit();
 
@@ -511,82 +512,32 @@ class OrderController extends Controller
                 ]);
             }
 
-            // XỬ LÝ CÔNG NỢ KHI SỬA ĐỠN HÀNG
-            if ($oldCustomerId == $request->customer_id) {
-                // Cùng khách hàng - cập nhật debt hiện có
-                $debtDifference = $newDebt - $oldDebt;
+            // XỬ LÝ CÔNG NỢ KHI SỬA ĐƠN HÀNG
+            // Xóa nợ cũ (nếu có)
+            $existingDebt = CustomerDebt::where('order_id', $order->id)
+                ->where('type', CustomerDebt::TYPE_SALE)
+                ->first();
 
-                if ($debtDifference != 0) {
-                    // Tìm record debt của đơn hàng này
-                    $existingDebt = \App\Models\CustomerDebt::where('order_id', $order->id)->first();
-
-                    if ($existingDebt) {
-                        // Cập nhật record debt cũ
-                        $customer = Customer::find($request->customer_id);
-
-                        // Cập nhật tổng nợ của khách hàng
-                        $customer->total_debt = $customer->total_debt - $oldDebt + $newDebt;
-                        $customer->save();
-
-                        if ($newDebt > 0) {
-                            // Cập nhật record debt hiện có
-                            $existingDebt->update([
-                                'amount' => $newDebt,
-                                'debt_total' => $customer->total_debt,
-                                'note' => "Công nợ từ đơn hàng {$order->code} (đã cập nhật lúc ".now()->format('d/m/Y H:i').')',
-                                'recorded_at' => now(),
-                            ]);
-                        } else {
-                            // Nếu không còn nợ thì xóa record debt
-                            $existingDebt->delete();
-                        }
-                    } elseif ($newDebt > 0) {
-                        // Tạo record debt mới nếu chưa có và có nợ
-                        $customer = Customer::find($request->customer_id);
-                        $customer->total_debt += $newDebt;
-                        $customer->save();
-
-                        \App\Models\CustomerDebt::create([
-                            'order_id' => $order->id,
-                            'customer_id' => $request->customer_id,
-                            'ref_code' => 'CD'.date('YmdHis').rand(100, 999),
-                            'amount' => $newDebt,
-                            'debt_total' => $customer->total_debt,
-                            'note' => "Công nợ từ đơn hàng {$order->code}",
-                            'created_by' => auth()->id(),
-                            'recorded_at' => now(),
-                        ]);
-                    }
+            if ($existingDebt) {
+                // Tạo bút toán đảo để hủy nợ cũ
+                if ($existingDebt->amount != 0) {
+                    CustomerDebt::createAdjustment(
+                        customerId: $oldCustomerId,
+                        amount: -$existingDebt->amount,
+                        note: "Hủy nợ cũ khi sửa đơn {$order->code}",
+                        refCode: $order->code . '-ADJ-' . now()->format('ymdHis')
+                    );
                 }
-            } else {
-                // Khác khách hàng - xử lý phức tạp hơn
+            }
 
-                // Xóa debt cũ của khách hàng cũ
-                $existingDebt = \App\Models\CustomerDebt::where('order_id', $order->id)->first();
-                if ($existingDebt) {
-                    $oldCustomer = Customer::find($oldCustomerId);
-                    $oldCustomer->total_debt -= $oldDebt;
-                    $oldCustomer->save();
-                    $existingDebt->delete();
-                }
-
-                // Tạo debt mới cho khách hàng mới
-                if ($newDebt > 0) {
-                    $newCustomer = Customer::find($request->customer_id);
-                    $newCustomer->total_debt += $newDebt;
-                    $newCustomer->save();
-
-                    \App\Models\CustomerDebt::create([
-                        'order_id' => $order->id,
-                        'customer_id' => $request->customer_id,
-                        'ref_code' => 'CD'.date('YmdHis').rand(100, 999),
-                        'amount' => $newDebt,
-                        'debt_total' => $newCustomer->total_debt,
-                        'note' => "Công nợ từ đơn hàng {$order->code}",
-                        'created_by' => auth()->id(),
-                        'recorded_at' => now(),
-                    ]);
-                }
+            // Tạo nợ mới cho khách hàng mới (hoặc cùng KH)
+            if ($newDebt > 0) {
+                CustomerDebt::createSaleDebt(
+                    customerId: $request->customer_id,
+                    amount: $newDebt,
+                    orderId: $order->id,
+                    note: "Công nợ từ đơn hàng {$order->code}" . ($oldCustomerId != $request->customer_id ? ' (đổi khách)' : ' (cập nhật)')
+                );
             }
 
             DB::commit();
@@ -723,9 +674,17 @@ class OrderController extends Controller
      */
     private function cleanupOrderSideEffects(Order $order): void
     {
-        // 1. Xoá nợ khách hàng → Customer.total_debt tự cập nhật qua boot()
-        if ($order->customerDebt) {
-            $order->customerDebt->delete();
+        // 1. Hủy nợ khách hàng bằng bút toán đảo (giữ lịch sử)
+        $saleDebt = CustomerDebt::where('order_id', $order->id)
+            ->where('type', CustomerDebt::TYPE_SALE)
+            ->first();
+        if ($saleDebt && $saleDebt->amount != 0) {
+            CustomerDebt::createAdjustment(
+                customerId: $order->customer_id,
+                amount: -$saleDebt->amount,
+                note: "Hủy nợ khi xóa đơn hàng {$order->code}",
+                refCode: $order->code . '-DEL'
+            );
         }
 
         // 2. Trả serial về in_stock

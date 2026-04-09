@@ -28,6 +28,7 @@ class Supplier extends Model
         'payment_terms',
         'tags',
         'note',
+        'linked_customer_id',
     ];
 
     protected $casts = [
@@ -310,6 +311,70 @@ public function purchaseReceipts()
 {
     return $this->hasManyThrough(PurchaseReceipt::class, PurchaseOrder::class);
 }
+
+    // ====== PARTNER LINKING ======
+
+    /**
+     * KH liên kết (đối tác vừa là NCC vừa là KH)
+     */
+    public function linkedCustomer()
+    {
+        return $this->belongsTo(Customer::class, 'linked_customer_id');
+    }
+
+    /**
+     * Kiểm tra có phải đối tác 2 vai trò không
+     */
+    public function isLinkedPartner(): bool
+    {
+        return !is_null($this->linked_customer_id);
+    }
+
+    /**
+     * Liên kết với KH (đồng bộ 2 chiều)
+     */
+    public function linkToCustomer(int $customerId): void
+    {
+        $this->update(['linked_customer_id' => $customerId]);
+        Customer::where('id', $customerId)->update(['linked_supplier_id' => $this->id]);
+    }
+
+    /**
+     * Hủy liên kết (đồng bộ 2 chiều)
+     */
+    public function unlinkCustomer(): void
+    {
+        if ($this->linked_customer_id) {
+            Customer::where('id', $this->linked_customer_id)->update(['linked_supplier_id' => null]);
+        }
+        $this->update(['linked_customer_id' => null]);
+    }
+
+    /**
+     * Lấy tổng hợp công nợ 2 chiều
+     */
+    public function getPartnerDebtSummary(): ?array
+    {
+        if (!$this->isLinkedPartner()) return null;
+
+        $customer = $this->linkedCustomer;
+        if (!$customer) return null;
+
+        $payable = $this->total_debt ?? 0;      // Mình nợ NCC (phải trả)
+        $receivable = $customer->total_debt ?? 0; // KH nợ mình (phải thu)
+        $netDebt = $receivable - $payable;
+
+        return [
+            'supplier_id' => $this->id,
+            'customer_id' => $customer->id,
+            'supplier_name' => $this->name,
+            'customer_name' => $customer->name,
+            'payable' => $payable,         // Mình nợ NCC
+            'receivable' => $receivable,   // KH nợ mình
+            'net_debt' => $netDebt,        // >0: họ nợ mình, <0: mình nợ họ
+            'net_label' => $netDebt > 0 ? 'Họ nợ mình' : ($netDebt < 0 ? 'Mình nợ họ' : 'Cân bằng'),
+        ];
+    }
 
     /**
      * Boot the model

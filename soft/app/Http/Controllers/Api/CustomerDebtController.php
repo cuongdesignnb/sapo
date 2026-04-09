@@ -77,19 +77,27 @@ class CustomerDebtController extends Controller
             'order_id' => 'nullable|exists:orders,id',
             'ref_code' => 'nullable|string|max:255',
             'amount' => 'required|numeric',
+            'type' => 'nullable|in:sale,payment,return,adjustment',
             'note' => 'nullable|string',
             'recorded_at' => 'nullable|date'
         ]);
 
-        $validated['created_by'] = auth()->id();
-        $validated['recorded_at'] = $validated['recorded_at'] ?? now();
+        $type = $validated['type'] ?? ($validated['amount'] >= 0 ? 'sale' : 'payment');
 
-        $debt = CustomerDebt::create($validated);
+        $debt = CustomerDebt::createDebtRecord(
+            customerId: $validated['customer_id'],
+            amount: $validated['amount'],
+            type: $type,
+            refCode: $validated['ref_code'] ?? null,
+            orderId: $validated['order_id'] ?? null,
+            note: $validated['note'] ?? null
+        );
+
         $debt->load(['customer', 'order', 'creator']);
 
         return response()->json([
             'success' => true,
-            'message' => 'Customer debt created successfully',
+            'message' => 'Tạo bản ghi công nợ thành công',
             'data' => $debt
         ], 201);
     }
@@ -175,17 +183,17 @@ class CustomerDebtController extends Controller
         ]);
 
         $payment = CustomerDebt::createPayment(
-            $validated['customer_id'],
-            $validated['amount'],
-            $validated['note'] ?? 'Thanh toán',
-            $validated['ref_code']
+            customerId: $validated['customer_id'],
+            amount: $validated['amount'],
+            refCode: $validated['ref_code'] ?? null,
+            note: $validated['note'] ?? 'Thanh toán'
         );
 
         $payment->load(['customer', 'creator']);
 
         return response()->json([
             'success' => true,
-            'message' => 'Payment recorded successfully',
+            'message' => 'Ghi nhận thanh toán thành công',
             'data' => $payment
         ], 201);
     }
@@ -330,7 +338,7 @@ class CustomerDebtController extends Controller
                 'Mã khách hàng' => $debt->customer->code,
                 'Số tiền' => $debt->amount,
                 'Tổng nợ' => $debt->debt_total,
-                'Loại' => $debt->isDebt() ? 'Nợ' : 'Thanh toán',
+                'Loại' => $debt->type_text,
                 'Ghi chú' => $debt->note,
                 'Ngày ghi nhận' => $debt->recorded_at->format('d/m/Y H:i'),
                 'Người tạo' => $debt->creator->name ?? '',
@@ -365,10 +373,13 @@ class CustomerDebtController extends Controller
 
         foreach ($validated['data'] as $index => $debtData) {
             try {
-                $debtData['created_by'] = auth()->id();
-                $debtData['recorded_at'] = $debtData['recorded_at'] ?? now();
-                
-                CustomerDebt::create($debtData);
+                CustomerDebt::createDebtRecord(
+                    customerId: $debtData['customer_id'],
+                    amount: $debtData['amount'],
+                    type: $debtData['amount'] >= 0 ? CustomerDebt::TYPE_ADJUSTMENT : CustomerDebt::TYPE_PAYMENT,
+                    refCode: $debtData['ref_code'] ?? null,
+                    note: $debtData['note'] ?? 'Import công nợ'
+                );
                 $imported++;
             } catch (\Exception $e) {
                 $errors[] = "Row {$index}: " . $e->getMessage();
@@ -377,7 +388,7 @@ class CustomerDebtController extends Controller
 
         return response()->json([
             'success' => count($errors) === 0,
-            'message' => "Imported {$imported} records",
+            'message' => "Đã import {$imported} bản ghi",
             'imported_count' => $imported,
             'error_count' => count($errors),
             'errors' => $errors

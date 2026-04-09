@@ -127,6 +127,74 @@
 
         <!-- Right Column - Additional Info -->
         <div class="space-y-6">
+          <!-- 🔗 PARTNER DEBT PANEL -->
+          <div class="rounded-lg p-6 border-2" :class="customerData.partner_debt_summary ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200 bg-gray-50'">
+            <h3 class="text-lg font-medium text-gray-900 mb-4 flex items-center">
+              <span class="mr-2">🔗</span>
+              Đối tác 2 chiều (KH ↔ NCC)
+            </h3>
+
+            <!-- Đã liên kết -->
+            <div v-if="customerData.linked_supplier" class="space-y-3">
+              <div class="flex items-center justify-between bg-white rounded-lg px-4 py-3">
+                <div>
+                  <span class="text-xs text-gray-500">Liên kết với NCC</span>
+                  <p class="font-semibold text-indigo-700">{{ customerData.linked_supplier.name }}</p>
+                  <p class="text-xs text-gray-500">{{ customerData.linked_supplier.code }}</p>
+                </div>
+                <button @click="handleUnlinkSupplier" class="text-red-500 hover:text-red-700 text-sm">
+                  ✕ Hủy liên kết
+                </button>
+              </div>
+
+              <!-- Debt Summary Cards -->
+              <div v-if="customerData.partner_debt_summary" class="grid grid-cols-3 gap-2">
+                <div class="bg-white rounded-lg p-3 text-center">
+                  <p class="text-xs text-gray-500 mb-1">Phải thu (KH nợ)</p>
+                  <p class="text-sm font-bold text-red-600">{{ formatCurrency(customerData.partner_debt_summary.receivable) }}</p>
+                </div>
+                <div class="bg-white rounded-lg p-3 text-center">
+                  <p class="text-xs text-gray-500 mb-1">Phải trả (Nợ NCC)</p>
+                  <p class="text-sm font-bold text-blue-600">{{ formatCurrency(customerData.partner_debt_summary.payable) }}</p>
+                </div>
+                <div class="bg-white rounded-lg p-3 text-center">
+                  <p class="text-xs text-gray-500 mb-1">Chênh lệch ròng</p>
+                  <p class="text-sm font-bold" :class="customerData.partner_debt_summary.net_debt > 0 ? 'text-green-600' : customerData.partner_debt_summary.net_debt < 0 ? 'text-red-600' : 'text-gray-600'">
+                    {{ formatCurrency(Math.abs(customerData.partner_debt_summary.net_debt)) }}
+                  </p>
+                  <span class="text-xs px-2 py-0.5 rounded-full" :class="customerData.partner_debt_summary.net_debt > 0 ? 'bg-green-100 text-green-700' : customerData.partner_debt_summary.net_debt < 0 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'">
+                    {{ customerData.partner_debt_summary.net_label }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Offset Button -->
+              <div v-if="customerData.partner_debt_summary && customerData.partner_debt_summary.receivable > 0 && customerData.partner_debt_summary.payable > 0" class="mt-3">
+                <button @click="showOffsetModal = true" class="w-full py-2 text-sm font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition flex items-center justify-center">
+                  ⚖️ Cấn bằng công nợ
+                </button>
+              </div>
+
+              <!-- Offset History (recent) -->
+              <div v-if="offsetHistory.length > 0" class="mt-3">
+                <p class="text-xs text-gray-500 mb-1">Lịch sử cấn bằng gần đây:</p>
+                <div v-for="h in offsetHistory.slice(0, 3)" :key="h.id" class="flex items-center justify-between bg-white rounded px-3 py-1.5 mb-1 text-xs">
+                  <span class="text-gray-700">{{ h.code }}</span>
+                  <span class="font-medium text-amber-700">{{ formatCurrency(h.amount) }}</span>
+                  <span :class="h.status === 'active' ? 'text-green-600' : 'text-red-500'">{{ h.status === 'active' ? '✓' : '✗' }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Chưa liên kết -->
+            <div v-else class="text-center py-4">
+              <p class="text-sm text-gray-500 mb-3">Chưa liên kết với nhà cung cấp nào</p>
+              <button @click="showLinkModal = true" class="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition">
+                🔗 Liên kết NCC
+              </button>
+            </div>
+          </div>
+
           <!-- Pricing Info -->
           <div class="bg-gray-50 rounded-lg p-6">
             <h3 class="text-lg font-medium text-gray-900 mb-4">
@@ -421,6 +489,122 @@
       </div>
     </div>
 
+    <!-- 🔗 Link Supplier Modal -->
+    <div v-if="showLinkModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-lg p-6 w-full max-w-lg">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-medium text-gray-900">🔗 Liên kết Nhà cung cấp</h3>
+          <button @click="showLinkModal = false" class="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        
+        <div class="mb-4">
+          <input 
+            type="text" 
+            v-model="supplierSearch" 
+            @input="searchSuppliers"
+            placeholder="Tìm NCC theo tên, mã, SĐT..."
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          />
+        </div>
+
+        <div class="max-h-60 overflow-y-auto border rounded-lg">
+          <div v-if="searchingSuppliers" class="p-4 text-center text-gray-500">
+            <span class="animate-spin inline-block w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full mr-2"></span>
+            Đang tìm...
+          </div>
+          <div v-else-if="supplierResults.length === 0" class="p-4 text-center text-gray-500">
+            {{ supplierSearch ? 'Không tìm thấy NCC nào' : 'Nhập để tìm kiếm NCC' }}
+          </div>
+          <div 
+            v-for="supplier in supplierResults" 
+            :key="supplier.id"
+            @click="handleLinkSupplier(supplier.id)"
+            class="flex items-center justify-between px-4 py-3 hover:bg-indigo-50 cursor-pointer border-b last:border-b-0 transition"
+          >
+            <div>
+              <p class="font-medium text-gray-900">{{ supplier.name }}</p>
+              <p class="text-xs text-gray-500">{{ supplier.code }} · {{ supplier.phone || 'Chưa có SĐT' }}</p>
+            </div>
+            <div class="text-right">
+              <p class="text-sm font-medium" :class="supplier.total_debt > 0 ? 'text-red-600' : 'text-gray-400'">
+                {{ formatCurrency(supplier.total_debt) }}
+              </p>
+              <p class="text-xs text-gray-400">Nợ phải trả</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex justify-end">
+          <button @click="showLinkModal = false" class="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50">
+            Đóng
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⚖️ Offset Modal -->
+    <div v-if="showOffsetModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-lg p-6 w-full max-w-md">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-medium text-gray-900">⚖️ Cấn bằng công nợ</h3>
+          <button @click="showOffsetModal = false" class="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+
+        <div v-if="customerData.partner_debt_summary" class="space-y-4">
+          <div class="grid grid-cols-2 gap-3 bg-gray-50 rounded-lg p-3">
+            <div class="text-center">
+              <p class="text-xs text-gray-500">Phải thu (KH nợ)</p>
+              <p class="text-lg font-bold text-red-600">{{ formatCurrency(customerData.partner_debt_summary.receivable) }}</p>
+            </div>
+            <div class="text-center">
+              <p class="text-xs text-gray-500">Phải trả (Nợ NCC)</p>
+              <p class="text-lg font-bold text-blue-600">{{ formatCurrency(customerData.partner_debt_summary.payable) }}</p>
+            </div>
+          </div>
+
+          <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center">
+            <p class="text-xs text-amber-700 mb-1">Số tiền cấn bằng tối đa</p>
+            <p class="text-xl font-bold text-amber-700">{{ formatCurrency(maxOffsetAmount) }}</p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền cấn bằng</label>
+            <input 
+              type="number" 
+              v-model.number="offsetAmount"
+              :max="maxOffsetAmount"
+              :placeholder="'Tối đa: ' + formatCurrency(maxOffsetAmount)"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500"
+            />
+            <p class="text-xs text-gray-400 mt-1">Để trống = cấn bằng tối đa</p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+            <input 
+              type="text" 
+              v-model="offsetNote"
+              placeholder="VD: Cấn bằng tháng 4/2026"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+        </div>
+
+        <div class="mt-6 flex justify-end space-x-3">
+          <button @click="showOffsetModal = false" class="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50">
+            Hủy
+          </button>
+          <button 
+            @click="handleExecuteOffset"
+            :disabled="offsetting"
+            class="px-4 py-2 text-sm font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 transition"
+          >
+            {{ offsetting ? 'Đang xử lý...' : '⚖️ Xác nhận cấn bằng' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast Notifications -->
     <div v-if="toast.show" :class="[
       'fixed top-4 right-4 px-4 py-3 rounded-md shadow-lg z-50',
@@ -439,8 +623,9 @@
 </template>
 
 <script>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import customerApi from '../api/customerApi.js'
+import axios from 'axios'
 
 export default {
   name: 'CustomerDetail',
@@ -463,8 +648,30 @@ export default {
     const debts = ref([])
     const addresses = ref([])
     const showDeleteModal = ref(false)
+    const showLinkModal = ref(false)
     const hasMoreOrders = ref(true)
     const ordersPage = ref(1)
+    const supplierSearch = ref('')
+    const supplierResults = ref([])
+    const searchingSuppliers = ref(false)
+    const showOffsetModal = ref(false)
+    const offsetAmount = ref(null)
+    const offsetNote = ref('')
+    const offsetting = ref(false)
+    const offsetHistory = ref([])
+    const maxOffsetAmount = ref(0)
+    let searchTimeout = null
+
+    // Watch customerData to compute maxOffsetAmount
+    watch(customerData, (data) => {
+      if (data?.partner_debt_summary) {
+        const r = Math.max(0, data.partner_debt_summary.receivable || 0)
+        const p = Math.max(0, data.partner_debt_summary.payable || 0)
+        maxOffsetAmount.value = Math.min(r, p)
+      } else {
+        maxOffsetAmount.value = 0
+      }
+    }, { deep: true, immediate: true })
 
     const tabs = [
   { id: 'orders', name: 'Lịch sử mua hàng' },
@@ -501,6 +708,8 @@ export default {
           debts.value = response.data.recent_debts || []
           addresses.value = response.data.addresses || []
         }
+        // Load offset history
+        await loadOffsetHistory()
       } catch (error) {
         showToast('error', error.message || 'Lỗi khi tải thông tin khách hàng')
       } finally {
@@ -568,8 +777,96 @@ export default {
     }
 
     const changeGroup = () => {
-      // Implementation for changing customer group
       showToast('info', 'Chức năng đang phát triển')
+    }
+
+    // ====== PARTNER LINKING ======
+    const searchSuppliers = () => {
+      if (searchTimeout) clearTimeout(searchTimeout)
+      searchTimeout = setTimeout(async () => {
+        if (!supplierSearch.value || supplierSearch.value.length < 1) {
+          supplierResults.value = []
+          return
+        }
+        searchingSuppliers.value = true
+        try {
+          const response = await axios.get('/api/suppliers', {
+            params: { search: supplierSearch.value, per_page: 10 }
+          })
+          if (response.data.success) {
+            supplierResults.value = response.data.data.data || response.data.data || []
+          }
+        } catch (e) {
+          console.error('Search suppliers error:', e)
+        } finally {
+          searchingSuppliers.value = false
+        }
+      }, 300)
+    }
+
+    const handleLinkSupplier = async (supplierId) => {
+      try {
+        const response = await axios.post(`/api/customers/${customerData.value.id}/link-supplier`, {
+          supplier_id: supplierId
+        })
+        if (response.data.success) {
+          showToast('success', 'Liên kết đối tác thành công!')
+          showLinkModal.value = false
+          supplierSearch.value = ''
+          supplierResults.value = []
+          await loadCustomer()
+        }
+      } catch (e) {
+        showToast('error', e.response?.data?.message || 'Lỗi liên kết')
+      }
+    }
+
+    const handleUnlinkSupplier = async () => {
+      if (!confirm('Bạn có chắc muốn hủy liên kết đối tác này?')) return
+      try {
+        const response = await axios.delete(`/api/customers/${customerData.value.id}/unlink-supplier`)
+        if (response.data.success) {
+          showToast('success', 'Đã hủy liên kết')
+          await loadCustomer()
+        }
+      } catch (e) {
+        showToast('error', e.response?.data?.message || 'Lỗi hủy liên kết')
+      }
+    }
+
+    // ====== DEBT OFFSET ======
+
+    const loadOffsetHistory = async () => {
+      try {
+        const response = await axios.get(`/api/customers/${customerData.value.id}/offset-history`)
+        if (response.data.success) {
+          offsetHistory.value = response.data.data || []
+        }
+      } catch (e) {
+        console.error('Load offset history error:', e)
+      }
+    }
+
+    const handleExecuteOffset = async () => {
+      offsetting.value = true
+      try {
+        const payload = {}
+        if (offsetAmount.value) payload.amount = offsetAmount.value
+        if (offsetNote.value) payload.note = offsetNote.value
+
+        const response = await axios.post(`/api/customers/${customerData.value.id}/offset`, payload)
+        if (response.data.success) {
+          showToast('success', response.data.message)
+          showOffsetModal.value = false
+          offsetAmount.value = null
+          offsetNote.value = ''
+          await loadCustomer()
+        }
+      } catch (e) {
+        showToast('error', e.response?.data?.message || 'Lỗi cấn bằng')
+      } finally {
+        offsetting.value = false
+      }
     }
 
     const confirmDelete = async () => {
@@ -650,9 +947,19 @@ export default {
       debts,
       addresses,
       showDeleteModal,
+      showLinkModal,
+      showOffsetModal,
       hasMoreOrders,
       tabs,
       toast,
+      supplierSearch,
+      supplierResults,
+      searchingSuppliers,
+      offsetAmount,
+      offsetNote,
+      offsetting,
+      offsetHistory,
+      maxOffsetAmount,
       loadMoreOrders,
       goBack,
       editPersonalInfo,
@@ -665,6 +972,10 @@ export default {
       deleteAddress,
       changeGroup,
       confirmDelete,
+      searchSuppliers,
+      handleLinkSupplier,
+      handleUnlinkSupplier,
+      handleExecuteOffset,
       formatCurrency,
       formatDate,
       getGenderText,

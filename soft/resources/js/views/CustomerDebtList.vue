@@ -3,8 +3,15 @@
     <!-- Header -->
     <div class="flex justify-between items-center mb-6">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">Quản lý công nợ khách hàng</h1>
-        <p class="text-gray-600 mt-1">Theo dõi và quản lý các giao dịch công nợ</p>
+        <div class="flex items-center gap-3">
+          <div class="p-2 bg-red-100 rounded-lg">
+            <i class="fas fa-hand-holding-usd text-red-600 text-xl"></i>
+          </div>
+          <div>
+            <h1 class="text-2xl font-bold text-gray-900">Công nợ phải thu</h1>
+            <p class="text-red-600 font-medium text-sm">Khách hàng nợ cửa hàng</p>
+          </div>
+        </div>
       </div>
       <div class="flex gap-3">
         <button @click="showQuickPayment = true" class="btn btn-success">
@@ -53,8 +60,11 @@
           <label class="block text-sm font-medium text-gray-700 mb-1">Loại giao dịch</label>
           <select v-model="filters.type" class="form-select w-full">
             <option value="">Tất cả</option>
-            <option value="debt">Nợ phát sinh</option>
-            <option value="payment">Thanh toán</option>
+            <option value="sale">🛒 Bán hàng (tăng nợ)</option>
+            <option value="payment">💵 Thanh toán (giảm nợ)</option>
+            <option value="return">🔄 Trả hàng (giảm nợ)</option>
+            <option value="adjustment">⚙️ Điều chỉnh</option>
+            <option value="offset">⚖️ Cấn bằng</option>
           </select>
         </div>
 
@@ -258,8 +268,9 @@
                 <span class="font-bold">{{ formatCurrency(debt.debt_total) }}</span>
               </td>
               <td class="px-6 py-4">
-                <span :class="getBadgeClass(debt.amount)" class="px-2 py-1 rounded-full text-xs font-medium">
-                  {{ getTransactionType(debt.amount) }}
+                <span :class="getTypeBadgeClass(debt.type)" class="px-2 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1">
+                  <span>{{ getTypeIcon(debt.type) }}</span>
+                  <span>{{ getTypeText(debt.type) }}</span>
                 </span>
               </td>
               <td class="px-6 py-4">
@@ -638,6 +649,39 @@ export default {
       return prefix + new Intl.NumberFormat('vi-VN').format(Math.abs(amount)) + ' VNĐ';
     };
 
+    const getTypeText = (type) => {
+      const map = {
+        sale: 'Bán hàng',
+        payment: 'Thanh toán',
+        return: 'Trả hàng',
+        adjustment: 'Điều chỉnh',
+        offset: 'Cấn bằng'
+      };
+      return map[type] || type || 'Không xác định';
+    };
+
+    const getTypeIcon = (type) => {
+      const map = {
+        sale: '🛒',
+        payment: '💵',
+        return: '🔄',
+        adjustment: '⚙️',
+        offset: '⚖️'
+      };
+      return map[type] || '❓';
+    };
+
+    const getTypeBadgeClass = (type) => {
+      const map = {
+        sale: 'bg-red-100 text-red-800',
+        payment: 'bg-green-100 text-green-800',
+        return: 'bg-blue-100 text-blue-800',
+        adjustment: 'bg-yellow-100 text-yellow-800',
+        offset: 'bg-purple-100 text-purple-800'
+      };
+      return map[type] || 'bg-gray-100 text-gray-800';
+    };
+
     const getTransactionType = (amount) => {
       return amount > 0 ? 'Nợ' : 'Thanh toán';
     };
@@ -710,6 +754,9 @@ export default {
       // Utilities
       formatCurrency,
       formatAmount,
+      getTypeText,
+      getTypeIcon,
+      getTypeBadgeClass,
       getTransactionType,
       getAmountColorClass,
       getBadgeClass,
