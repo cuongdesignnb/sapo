@@ -158,9 +158,11 @@ class TimekeepingService
                     $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    // OT SAU CA: chỉ phần giờ vượt quá schedule_end mới tính lương OT
-                    $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
-                    $rawOt = max(0, $rawOt - $otAfter);
+                    // OT SAU CA: ot_after là ngưỡng tối thiểu (không trừ), khớp KiotViet
+                    $rawOt = (int) abs($checkOutCarbon->diffInMinutes($scheduleEnd));
+                    if ($rawOt < $otAfter) {
+                        $rawOt = 0;
+                    }
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
@@ -340,8 +342,11 @@ class TimekeepingService
                 }
                 if ((bool) Setting::get('attendance_overtime_before_enabled', true)) {
                     if ($checkInCarbon->lessThan($scheduleStart)) {
-                        $rawBeforeOt = abs($scheduleStart->diffInMinutes($checkInCarbon));
-                        $rawBeforeOt = max(0, $rawBeforeOt - (int) Setting::get('attendance_overtime_before_minutes', 0));
+                        $rawBeforeOt = (int) abs($scheduleStart->diffInMinutes($checkInCarbon));
+                        $otBefore = (int) Setting::get('attendance_overtime_before_minutes', 0);
+                        if ($rawBeforeOt < $otBefore) {
+                            $rawBeforeOt = 0;
+                        }
                         if ($otRounding > 0) {
                             $rawBeforeOt = intdiv($rawBeforeOt, $otRounding) * $otRounding;
                         }
@@ -356,8 +361,10 @@ class TimekeepingService
                     $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
-                    $rawOt = max(0, $rawOt - $otAfter);
+                    $rawOt = (int) abs($checkOutCarbon->diffInMinutes($scheduleEnd));
+                    if ($rawOt < $otAfter) {
+                        $rawOt = 0;
+                    }
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
