@@ -31,6 +31,7 @@ class TimekeepingSettingController extends Controller
                     'enforce_shift_checkin_window' => false,
                     'ot_rounding_minutes' => 0,
                     'ot_after_minutes' => 0,
+                    'ot_before_minutes' => 1,
                     'status' => 'active',
                 ],
             ]);
@@ -53,6 +54,7 @@ class TimekeepingSettingController extends Controller
             'enforce_shift_checkin_window' => ['nullable', 'boolean'],
             'ot_rounding_minutes' => ['nullable', 'integer', 'min:0', 'max:120'],
             'ot_after_minutes' => ['nullable', 'integer', 'min:0', 'max:300'],
+            'ot_before_minutes' => ['nullable', 'integer', 'min:0', 'max:300'],
             'status' => ['nullable', 'in:active,inactive'],
         ]);
 
@@ -70,6 +72,7 @@ class TimekeepingSettingController extends Controller
                 'enforce_shift_checkin_window' => $data['enforce_shift_checkin_window'] ?? false,
                 'ot_rounding_minutes' => $data['ot_rounding_minutes'] ?? 0,
                 'ot_after_minutes' => $data['ot_after_minutes'] ?? 0,
+                'ot_before_minutes' => $data['ot_before_minutes'] ?? 1,
                 'status' => $data['status'] ?? 'active',
                 'updated_by' => $userId,
             ]
