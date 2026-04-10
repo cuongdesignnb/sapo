@@ -38,8 +38,11 @@ Route::get('/', [DashboardController::class, 'index'])->middleware('permission:d
 // ONE-TIME: Fix TẤT CẢ dữ liệu chấm công theo ca hiện tại
 // Truy cập: /fix-schedules → xóa route này sau khi chạy xong
 Route::get('/fix-schedules', function () {
+    // Clear OPcache để đảm bảo code mới nhất
+    if (function_exists('opcache_reset')) opcache_reset();
+
     $shifts = \App\Models\Shift::all()->keyBy('id');
-    $result = ['schedules_fixed' => 0, 'timekeeping_fixed' => 0, 'details' => []];
+    $result = ['version' => 'v5-direct-db', 'schedules_fixed' => 0, 'timekeeping_fixed' => 0, 'total_records' => 0, 'details' => []];
 
     // Bước 1: Sync EmployeeWorkSchedule times với Shift
     foreach ($shifts as $shift) {
@@ -158,6 +161,116 @@ Route::get('/debug-ot2', function (\Illuminate\Http\Request $request) {
         'total' => ($weekdayOt + $satOt) . 'min',
         'kiotviet' => 'weekday=339min(5h39p), sat=146min(2h26p), total=485min',
         'records' => $rows,
+    ]);
+});
+
+// ONE-TIME: Fix timekeeping + recalculate salary (KHÔNG gọi recalculateForRange)
+Route::get('/fix-and-recalc', function () {
+    if (function_exists('opcache_reset')) opcache_reset();
+
+    // Bước 1: Fix timekeeping OT
+    $shifts = \App\Models\Shift::all()->keyBy('id');
+    $fixed = 0;
+
+    $tkRecords = \App\Models\TimekeepingRecord::whereNotNull('shift_id')
+        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
+        ->get();
+
+    foreach ($tkRecords as $tk) {
+        $shift = $shifts[$tk->shift_id] ?? null;
+        if (!$shift) continue;
+
+        $workDate = \Carbon\Carbon::parse($tk->work_date)->startOfDay();
+        $newStart = $workDate->copy()->setTimeFromTimeString((string) $shift->start_time);
+        $newEnd = $workDate->copy()->setTimeFromTimeString((string) $shift->end_time);
+        if ($newEnd <= $newStart) $newEnd->addDay();
+
+        $otMinutes = 0;
+        if ($tk->check_out_at && !$tk->is_holiday) {
+            $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
+            if ($checkOut->greaterThan($newEnd)) {
+                $otMinutes = (int) round(abs($checkOut->diffInSeconds($newEnd)) / 60);
+            }
+        }
+
+        \Illuminate\Support\Facades\DB::table('timekeeping_records')
+            ->where('id', $tk->id)
+            ->update([
+                'scheduled_start_at' => $newStart,
+                'scheduled_end_at' => $newEnd,
+                'ot_minutes' => $otMinutes,
+            ]);
+        if ($tk->ot_minutes != $otMinutes) $fixed++;
+    }
+
+    // Bước 2: Tính lại lương — gọi calculateSalaryForRange (KHÔNG gọi recalculateForRange)
+    $paysheet = \App\Models\Paysheet::where('period_start', '<=', '2026-03-31')
+        ->where('period_end', '>=', '2026-03-01')
+        ->where('status', '!=', 'locked')
+        ->with('payslips')
+        ->first();
+
+    $salaryResults = [];
+    if ($paysheet) {
+        $periodStart = \Carbon\Carbon::parse($paysheet->period_start);
+        $periodEnd = \Carbon\Carbon::parse($paysheet->period_end);
+
+        foreach ($paysheet->payslips as $slip) {
+            $employee = \App\Models\Employee::with(['salarySetting'])->find($slip->employee_id);
+            if (!$employee) continue;
+
+            $calc = $employee->calculateSalaryForRange($periodStart, $periodEnd);
+
+            $adjs = $slip->adjustments()->get();
+            $adjBonus = $adjs->where('type', 'bonus')->sum('amount');
+            $adjAllowance = $adjs->where('type', 'allowance')->sum('amount');
+            $adjDeduction = $adjs->where('type', 'deduction')->sum('amount');
+            $adjOt = $adjs->where('type', 'ot')->sum('amount');
+
+            $autoOt = ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0);
+            $autoLatePenalty = $calc['late_penalty'] ?? 0;
+
+            $totalBonus = $adjs->where('type', 'bonus')->count() > 0 ? $adjBonus : ($calc['bonus'] ?? 0);
+            $totalAllowance = $adjs->where('type', 'allowance')->count() > 0 ? $adjAllowance : ($calc['allowances'] ?? 0);
+            $totalDeduction = $adjs->where('type', 'deduction')->count() > 0
+                ? ($adjDeduction + $autoLatePenalty)
+                : ($calc['deductions'] ?? 0);
+            $totalOt = $autoOt + $adjOt;
+            $totalSalary = max(0, $calc['base'] + $totalBonus + ($calc['commission'] ?? 0) + $totalAllowance + $totalOt - $totalDeduction);
+
+            $slip->update([
+                'base_salary' => $calc['base'],
+                'bonus' => $totalBonus,
+                'commission' => $calc['commission'] ?? 0,
+                'allowances' => $totalAllowance,
+                'deductions' => $totalDeduction,
+                'ot_pay' => $totalOt,
+                'total_salary' => $totalSalary,
+                'remaining' => max(0, $totalSalary - $slip->paid_amount),
+                'work_units' => $calc['work_units'],
+                'paid_leave_units' => $calc['paid_leave_units'] ?? 0,
+                'ot_minutes' => $calc['ot_minutes'] ?? 0,
+                'details' => $calc,
+            ]);
+
+            $salaryResults[] = [
+                'employee' => $employee->name,
+                'ot_minutes' => $calc['ot_minutes'] ?? 0,
+                'ot_pay' => $totalOt,
+                'total_salary' => $totalSalary,
+            ];
+        }
+
+        $paysheet->status = 'calculated';
+        $paysheet->needs_recalc = false;
+        $paysheet->save();
+        $paysheet->recalculateTotals();
+    }
+
+    return response()->json([
+        'timekeeping_fixed' => $fixed,
+        'paysheet_found' => !!$paysheet,
+        'salary_results' => $salaryResults,
     ]);
 });
 
