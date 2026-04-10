@@ -147,16 +147,8 @@ class TimekeepingService
                     $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
                 }
 
-                if ($overtimeBeforeEnabled) {
-                    if ($checkInCarbon->lessThan($scheduleStart)) {
-                        $rawBeforeOt = abs($scheduleStart->diffInMinutes($checkInCarbon));
-                        $rawBeforeOt = max(0, $rawBeforeOt - $overtimeBeforeMinutes);
-                        if ($otRounding > 0) {
-                            $rawBeforeOt = intdiv($rawBeforeOt, $otRounding) * $otRounding;
-                        }
-                        $otMinutes += $rawBeforeOt;
-                    }
-                }
+                // OT trước ca: chỉ ghi nhận, KHÔNG cộng vào ot_minutes (dùng tính lương)
+                // KiotViet chỉ tính OT SAU CA vào lương làm thêm
             }
 
             if ($scheduleEnd && $checkOut) {
@@ -166,12 +158,13 @@ class TimekeepingService
                     $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
+                    // OT SAU CA: chỉ phần giờ vượt quá schedule_end mới tính lương OT
                     $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
                     $rawOt = max(0, $rawOt - $otAfter);
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
-                    $otMinutes += $rawOt; // Cộng dồn với OT trước ca (nếu có)
+                    $otMinutes = $rawOt;
                 }
             }
 
