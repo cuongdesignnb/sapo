@@ -203,15 +203,34 @@ Route::get('/fix-and-recalc', function () {
         if ($tk->ot_minutes != $otMinutes) $fixed++;
     }
 
-    // Bước 2: Tính lại lương — gọi calculateSalaryForRange (KHÔNG gọi recalculateForRange)
-    $paysheet = \App\Models\Paysheet::where('period_start', '<=', '2026-03-31')
-        ->where('period_end', '>=', '2026-03-01')
-        ->where('status', '!=', 'locked')
+    // Bước 2: Tính lại lương — tìm paysheet THÁNG 3/2026
+    $allPaysheets = \App\Models\Paysheet::where('status', '!=', 'locked')
         ->with('payslips')
-        ->first();
+        ->orderBy('period_start', 'desc')
+        ->get();
+
+    // Tìm paysheet tháng 3 cụ thể (period_start trong tháng 3)
+    $paysheet = $allPaysheets->first(function ($ps) {
+        $start = \Carbon\Carbon::parse($ps->period_start);
+        return $start->month == 3 && $start->year == 2026;
+    });
+
+    // Fallback: paysheet đầu tiên overlap tháng 3
+    if (!$paysheet) {
+        $paysheet = $allPaysheets->first(function ($ps) {
+            return $ps->period_start <= '2026-03-31' && $ps->period_end >= '2026-03-01';
+        });
+    }
 
     $salaryResults = [];
+    $paysheetInfo = null;
     if ($paysheet) {
+        $paysheetInfo = [
+            'id' => $paysheet->id,
+            'period_start' => $paysheet->period_start,
+            'period_end' => $paysheet->period_end,
+            'status' => $paysheet->status,
+        ];
         $periodStart = \Carbon\Carbon::parse($paysheet->period_start);
         $periodEnd = \Carbon\Carbon::parse($paysheet->period_end);
 
@@ -276,7 +295,7 @@ Route::get('/fix-and-recalc', function () {
 
     return response()->json([
         'timekeeping_fixed' => $fixed,
-        'paysheet_found' => !!$paysheet,
+        'paysheet' => $paysheetInfo,
         'salary_results' => $salaryResults,
     ]);
 });
