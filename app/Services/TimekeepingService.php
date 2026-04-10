@@ -41,8 +41,6 @@ class TimekeepingService
         $payrollSetting = \App\Models\PayrollSetting::first();
         $lateHalfDayEnabled = (bool) ($payrollSetting->late_half_day_enabled ?? false);
         $lateHalfDayThreshold = (int) ($payrollSetting->late_half_day_threshold ?? 120);
-        $overtimeBeforeEnabled = (bool) Setting::get('attendance_overtime_before_enabled', true);
-        $overtimeBeforeMinutes = (int) Setting::get('attendance_overtime_before_minutes', 0);
 
         $created = 0;
         $updated = 0;
@@ -143,13 +141,9 @@ class TimekeepingService
 
             if ($scheduleStart && $checkIn) {
                 $checkInCarbon = Carbon::parse($checkIn);
-                // Carbon 3: diffInMinutes trả về giá trị có dấu → dùng abs() + kiểm tra hướng
                 if ($checkInCarbon->greaterThan($scheduleStart)) {
                     $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
                 }
-
-                // OT trước ca: chỉ ghi nhận, KHÔNG cộng vào ot_minutes (dùng tính lương)
-                // KiotViet chỉ tính OT SAU CA vào lương làm thêm
             }
 
             if ($scheduleEnd && $checkOut) {
