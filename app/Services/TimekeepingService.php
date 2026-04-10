@@ -147,8 +147,14 @@ class TimekeepingService
                     $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
                 }
 
-                // OT trước ca: chỉ ghi nhận, KHÔNG cộng vào ot_minutes (dùng tính lương)
-                // KiotViet chỉ tính OT SAU CA vào lương làm thêm
+                // OT TRƯỚC CA: nhân viên đến sớm (KiotViet: "Tính làm thêm giờ trước ca: X phút")
+                $otBeforeShift = (int) ($setting?->ot_before_minutes ?? 0);
+                if ($otBeforeShift > 0 && $checkInCarbon->lessThan($scheduleStart)) {
+                    $earlyArrival = intdiv(abs($scheduleStart->diffInSeconds($checkInCarbon)), 60);
+                    if ($earlyArrival >= $otBeforeShift) {
+                        $otMinutes += $earlyArrival;
+                    }
+                }
             }
 
             if ($scheduleEnd && $checkOut) {
@@ -158,15 +164,16 @@ class TimekeepingService
                     $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    // OT SAU CA: ot_after là ngưỡng tối thiểu (không trừ), khớp KiotViet
-                    $rawOt = (int) abs($checkOutCarbon->diffInMinutes($scheduleEnd));
+                    // OT SAU CA: dùng intdiv (floor) thay diffInMinutes (round) — khớp KiotViet
+                    $rawOt = intdiv(abs($checkOutCarbon->diffInSeconds($scheduleEnd)), 60);
+                    // ot_after là ngưỡng tối thiểu: OT < threshold → bỏ qua
                     if ($rawOt < $otAfter) {
                         $rawOt = 0;
                     }
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
-                    $otMinutes = $rawOt;
+                    $otMinutes += $rawOt;
                 }
             }
 
