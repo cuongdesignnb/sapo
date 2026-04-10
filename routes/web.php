@@ -35,6 +35,36 @@ Route::middleware('auth')->group(function () {
 
 Route::get('/', [DashboardController::class, 'index'])->middleware('permission:dashboard.view')->name('dashboard');
 
+// ONE-TIME: Sync tất cả EmployeeWorkSchedule.start_time/end_time với Shift definition
+// Truy cập: /fix-schedules → xóa route này sau khi chạy xong
+Route::get('/fix-schedules', function () {
+    $shifts = \App\Models\Shift::all();
+    $fixed = 0;
+    foreach ($shifts as $shift) {
+        $count = \App\Models\EmployeeWorkSchedule::where('shift_id', $shift->id)
+            ->where(function ($q) use ($shift) {
+                $q->where('start_time', '!=', $shift->start_time)
+                  ->orWhere('end_time', '!=', $shift->end_time);
+            })
+            ->update([
+                'start_time' => $shift->start_time,
+                'end_time' => $shift->end_time,
+                'shift_name' => $shift->name,
+            ]);
+        $fixed += $count;
+    }
+    return response()->json([
+        'success' => true,
+        'message' => "Đã sync {$fixed} lịch làm việc với ca tương ứng. Hãy bấm 'Tính lại' trên bảng lương.",
+        'shifts' => $shifts->map(fn($s) => [
+            'id' => $s->id,
+            'name' => $s->name,
+            'start' => $s->start_time,
+            'end' => $s->end_time,
+        ]),
+    ]);
+});
+
 // ===== PRODUCTS =====
 Route::middleware('permission:products.view')->group(function () {
     Route::get('/products', [ProductController::class, 'index'])->name('products.index');
