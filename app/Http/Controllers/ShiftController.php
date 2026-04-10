@@ -119,14 +119,6 @@ class ShiftController extends Controller
             'notes' => $data['notes'] ?? $shift->notes,
         ]);
 
-        // Khi đổi ca → sync start_time/end_time xuống TẤT CẢ lịch làm việc dùng ca này
-        EmployeeWorkSchedule::where('shift_id', $shift->id)
-            ->update([
-                'start_time' => $data['start_time'],
-                'end_time' => $data['end_time'],
-                'shift_name' => $data['name'],
-            ]);
-
         $shift->load(['branch:id,name']);
 
         // Tự động tính lại chấm công + bảng lương chưa chốt

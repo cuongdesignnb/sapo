@@ -204,9 +204,10 @@ class SalaryCalculationService
             }
         }
         if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
-            // Hệ số OT từ cài đặt lương NV (dùng chung cho mọi loại ngày)
-            // Vì hệ số ngày nghỉ/lễ đã nhân vào work_units ở bước tính lương chính
+            // Hệ số OT từ cài đặt lương riêng của nhân viên
             $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // VD: 150% = 1.5x
+            $restDayOtRate = ($setting->holiday_rate ?? 200) / 100; // VD: 200% = 2x
+            $tetOtRate = ($setting->tet_rate ?? 300) / 100; // VD: 300% = 3x
 
             // Lương theo ngày
             $dailyWage = ($standardWorkUnits > 0) ? $setting->base_salary / $standardWorkUnits : 0;
@@ -347,13 +348,12 @@ class SalaryCalculationService
 
                 if ($restDayOtMins > 0) {
                     $hours = round($restDayOtMins / 60, 2);
-                    // Dùng overtimeRate (150%) — vì hệ số ngày nghỉ (2x) đã tính trong lương chính
-                    $amount = round($hours * $hourlyRate * $overtimeRate);
+                    $amount = round($hours * $hourlyRate * $restDayOtRate);
                     $otPay += $amount;
                     $otBreakdown[] = [
                         'type' => 'rest_day',
-                        'label' => 'Vượt ca ngày nghỉ',
-                        'rate_percent' => round($overtimeRate * 100),
+                        'label' => 'Ngày nghỉ',
+                        'rate_percent' => round($restDayOtRate * 100),
                         'hourly_rate' => round($hourlyRate),
                         'hours' => $hours,
                         'minutes' => $restDayOtMins,
@@ -363,13 +363,12 @@ class SalaryCalculationService
 
                 if ($holidayOtMins > 0) {
                     $hours = round($holidayOtMins / 60, 2);
-                    // Dùng overtimeRate (150%) — vì hệ số lễ tết (3x) đã tính trong lương chính
-                    $amount = round($hours * $hourlyRate * $overtimeRate);
+                    $amount = round($hours * $hourlyRate * $tetOtRate);
                     $otPay += $amount;
                     $otBreakdown[] = [
                         'type' => 'holiday',
-                        'label' => 'Vượt ca ngày lễ tết',
-                        'rate_percent' => round($overtimeRate * 100),
+                        'label' => 'Ngày lễ tết',
+                        'rate_percent' => round($tetOtRate * 100),
                         'hourly_rate' => round($hourlyRate),
                         'hours' => $hours,
                         'minutes' => $holidayOtMins,

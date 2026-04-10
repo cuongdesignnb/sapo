@@ -41,6 +41,8 @@ class TimekeepingService
         $payrollSetting = \App\Models\PayrollSetting::first();
         $lateHalfDayEnabled = (bool) ($payrollSetting->late_half_day_enabled ?? false);
         $lateHalfDayThreshold = (int) ($payrollSetting->late_half_day_threshold ?? 120);
+        $overtimeBeforeEnabled = (bool) Setting::get('attendance_overtime_before_enabled', true);
+        $overtimeBeforeMinutes = (int) Setting::get('attendance_overtime_before_minutes', 0);
 
         $created = 0;
         $updated = 0;
@@ -55,17 +57,16 @@ class TimekeepingService
             $shift = $schedule->shift_id ? ($shifts->all()[$schedule->shift_id] ?? null) : null;
             $setting = $settings->all()[(string) $schedule->branch_id] ?? $globalSetting;
 
-            // Xác định thời gian ca: ưu tiên Shift khi có (KiotViet luôn dùng Shift definition)
-            // Schedule override chỉ dùng khi không gán Shift
+            // Xác định thời gian ca
             $scheduleStart = $this->buildScheduleDateTime(
                 $schedule->work_date,
-                $shift?->start_time,        // Shift ưu tiên
-                $schedule->start_time       // Schedule fallback
+                $schedule->start_time,
+                $shift?->start_time
             );
             $scheduleEnd = $this->buildScheduleDateTime(
                 $schedule->work_date,
-                $shift?->end_time,          // Shift ưu tiên
-                $schedule->end_time         // Schedule fallback
+                $schedule->end_time,
+                $shift?->end_time
             );
 
             // Ca đêm
@@ -141,37 +142,29 @@ class TimekeepingService
 
             if ($scheduleStart && $checkIn) {
                 $checkInCarbon = Carbon::parse($checkIn);
+                // Carbon 3: diffInMinutes trả về giá trị có dấu → dùng abs() + kiểm tra hướng
                 if ($checkInCarbon->greaterThan($scheduleStart)) {
-                    $lateMinutes = max(0, intdiv(abs($checkInCarbon->diffInSeconds($scheduleStart)), 60) - $allowLate);
+                    $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
                 }
+
+                // OT trước ca: chỉ ghi nhận, KHÔNG cộng vào ot_minutes (dùng tính lương)
+                // KiotViet chỉ tính OT SAU CA vào lương làm thêm
             }
 
             if ($scheduleEnd && $checkOut) {
                 $checkOutCarbon = Carbon::parse($checkOut);
 
                 if ($checkOutCarbon->lessThan($scheduleEnd)) {
-                    $diffEarly = intdiv(abs($scheduleEnd->diffInSeconds($checkOutCarbon)), 60);
+                    $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    // OT SAU CA: floor - otAfter (KiotViet: "Tính làm thêm giờ sau ca: X phút")
-                    $rawOt = intdiv(abs($checkOutCarbon->diffInSeconds($scheduleEnd)), 60);
+                    // OT SAU CA: chỉ phần giờ vượt quá schedule_end mới tính lương OT
+                    $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
                     $rawOt = max(0, $rawOt - $otAfter);
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
                     $otMinutes = $rawOt;
-                }
-            }
-
-            // OT TRƯỚC CA: nhân viên đến sớm (KiotViet: "Tính làm thêm giờ trước ca: X phút")
-            $otBeforeShift = (int) ($setting?->ot_before_minutes ?? 0);
-            if ($scheduleStart && $checkIn && $otBeforeShift > 0) {
-                $checkInCarbon = Carbon::parse($checkIn);
-                if ($checkInCarbon->lessThan($scheduleStart)) {
-                    $earlyArrival = intdiv(abs($scheduleStart->diffInSeconds($checkInCarbon)), 60);
-                    if ($earlyArrival >= $otBeforeShift) {
-                        $otMinutes += $earlyArrival;
-                    }
                 }
             }
 
@@ -187,18 +180,9 @@ class TimekeepingService
                 $isRestDay = !in_array($dayOfWeek, $weekDays);
             }
 
-            // Ngày nghỉ / ngày lễ: OT chỉ tính giờ VƯỢT CA (không phải toàn bộ giờ)
-            // work_units vẫn tính bình thường (1.0 / 0.5), sẽ được nhân hệ số trong SalaryCalculationService
-            if (((bool) $holiday || $isRestDay) && $workedMinutes > 0) {
-                // Dùng thời lượng ca thực tế (VD: 8:30-18:30 = 600 phút)
-                // Nếu không có lịch ca, fallback về standard_hours
-                $shiftDurationMinutes = ($scheduleStart && $scheduleEnd)
-                    ? abs(Carbon::parse($scheduleStart)->diffInMinutes(Carbon::parse($scheduleEnd)))
-                    : ($standardHours * 60);
-                $otMinutes = max(0, $workedMinutes - $shiftDurationMinutes);
-                $lateMinutes = 0;
-                $earlyMinutes = 0;
-            }
+            // Ngày nghỉ / ngày lễ: OT, late, early tính BÌNH THƯỜNG theo ca
+            // work_units vẫn tính bình thường (1.0 / 0.5)
+            // Hệ số nhân (2x, 3x) áp dụng trong SalaryCalculationService qua holiday_multiplier
 
             // Tính work_units: 0 (vắng), 0.5 (nửa ngày), 1 (đủ ngày)
             $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
@@ -307,6 +291,30 @@ class TimekeepingService
             // Chỉ tạo record cho ngày nghỉ/lễ (ngày thường không có schedule = không tính)
             if (!$holiday && !$isRestDay) continue;
 
+            // Lấy shift thực tế của nhân viên từ lịch làm việc gần nhất trong kỳ
+            $empSchedule = EmployeeWorkSchedule::where('employee_id', $empId)
+                ->whereBetween('work_date', [$from, $to])
+                ->whereNotNull('shift_id')
+                ->orderByRaw("ABS(DATEDIFF(work_date, ?))", [$dateStr])
+                ->first();
+            $empShift = $empSchedule?->shift_id ? ($shifts->all()[$empSchedule->shift_id] ?? Shift::find($empSchedule->shift_id)) : null;
+            if (!$empShift) {
+                $empShift = Shift::where('branch_id', $employee->branch_id)->first() ?? Shift::first();
+            }
+
+            $setting = $settings->all()[(string) $employee->branch_id] ?? $globalSetting;
+
+            // Xác định thời gian ca từ shift thực tế của nhân viên
+            $scheduleStart = $empShift
+                ? $this->buildScheduleDateTime($dateStr, null, $empShift->start_time)
+                : Carbon::parse($dateStr)->setTimeFromTimeString('08:30');
+            $scheduleEnd = $empShift
+                ? $this->buildScheduleDateTime($dateStr, null, $empShift->end_time)
+                : Carbon::parse($dateStr)->setTimeFromTimeString('18:00');
+            if ($scheduleStart && $scheduleEnd && $scheduleEnd <= $scheduleStart) {
+                $scheduleEnd->addDay();
+            }
+
             // Tính check_in / check_out từ logs
             $checkIn = $logs->first()->punched_at;
             $checkOut = $logs->count() > 1 ? $logs->last()->punched_at : null;
@@ -316,28 +324,85 @@ class TimekeepingService
                 $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
             }
 
-            // Ngày nghỉ: toàn bộ giờ làm = OT
-            $otMinutes = $workedMinutes;
+            // Tính late/early/OT theo ca mặc định (giống ngày thường)
+            $useShiftAllowances = (bool) ($setting?->use_shift_allowances ?? true);
+            $allowLate = $useShiftAllowances ? ($empShift?->allow_late_minutes ?? 0) : ($setting?->late_grace_minutes ?? 0);
+            $allowEarly = $useShiftAllowances ? ($empShift?->allow_early_minutes ?? 0) : ($setting?->early_grace_minutes ?? 0);
+            $otAfter = (int) ($setting?->ot_after_minutes ?? 0);
+            $otRounding = (int) ($setting?->ot_rounding_minutes ?? 0);
+
+            $lateMinutes = $earlyMinutes = $otMinutes = 0;
+
+            if ($scheduleStart && $checkIn) {
+                $checkInCarbon = Carbon::parse($checkIn);
+                if ($checkInCarbon->greaterThan($scheduleStart)) {
+                    $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
+                }
+                if ((bool) Setting::get('attendance_overtime_before_enabled', true)) {
+                    if ($checkInCarbon->lessThan($scheduleStart)) {
+                        $rawBeforeOt = abs($scheduleStart->diffInMinutes($checkInCarbon));
+                        $rawBeforeOt = max(0, $rawBeforeOt - (int) Setting::get('attendance_overtime_before_minutes', 0));
+                        if ($otRounding > 0) {
+                            $rawBeforeOt = intdiv($rawBeforeOt, $otRounding) * $otRounding;
+                        }
+                        $otMinutes += $rawBeforeOt;
+                    }
+                }
+            }
+
+            if ($scheduleEnd && $checkOut) {
+                $checkOutCarbon = Carbon::parse($checkOut);
+                if ($checkOutCarbon->lessThan($scheduleEnd)) {
+                    $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
+                    $earlyMinutes = max(0, $diffEarly - $allowEarly);
+                } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
+                    $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
+                    $rawOt = max(0, $rawOt - $otAfter);
+                    if ($otRounding > 0) {
+                        $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
+                    }
+                    $otMinutes += $rawOt;
+                }
+            }
+
+            // Tính work_units
+            $standardHoursRestDay = (float) ($setting?->standard_hours_per_day ?? 8);
+            $halfDayThresholdRest = $standardHoursRestDay / 2;
+            $workUnitsRest = 0;
+            if ($workedMinutes > 0) {
+                if ($halfWorkEnabled) {
+                    if ($workedMinutes < $halfWorkMinMinutes) {
+                        $workUnitsRest = 0;
+                    } elseif ($workedMinutes <= $halfWorkMaxMinutes) {
+                        $workUnitsRest = 0.5;
+                    } else {
+                        $workUnitsRest = 1.0;
+                    }
+                } else {
+                    $workedHoursRest = $workedMinutes / 60;
+                    $workUnitsRest = ($workedHoursRest >= $halfDayThresholdRest) ? 1.0 : 0.5;
+                }
+            }
 
             $attributes = [
                 'employee_id' => $empId,
                 'employee_work_schedule_id' => null,
                 'branch_id' => $employee->branch_id,
-                'shift_id' => null,
+                'shift_id' => $empShift?->id,
                 'work_date' => $dateStr,
                 'slot' => 1,
-                'scheduled_start_at' => null,
-                'scheduled_end_at' => null,
+                'scheduled_start_at' => $scheduleStart,
+                'scheduled_end_at' => $scheduleEnd,
                 'check_in_at' => $checkIn,
                 'check_out_at' => $checkOut,
                 'source' => 'device',
                 'attendance_type' => 'work',
                 'manual_override' => false,
-                'late_minutes' => 0,
-                'early_minutes' => 0,
+                'late_minutes' => $lateMinutes,
+                'early_minutes' => $earlyMinutes,
                 'ot_minutes' => $otMinutes,
                 'worked_minutes' => $workedMinutes,
-                'work_units' => 0, // Không tính công, lương qua OT
+                'work_units' => $workUnitsRest,
                 'is_holiday' => true,
                 'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : 2.0,
                 'raw' => [

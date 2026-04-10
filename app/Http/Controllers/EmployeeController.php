@@ -112,7 +112,7 @@ class EmployeeController extends Controller
                 'early_enabled' => (bool) Setting::get('attendance_early_enabled', false),
                 'overtime_before_enabled' => (bool) Setting::get('attendance_overtime_before_enabled', true),
                 'overtime_after_enabled' => (bool) Setting::get('attendance_overtime_after_enabled', true),
-                'overtime_before_minutes' => (int) ($timekeeping?->ot_before_minutes ?? 1),
+                'overtime_before_minutes' => (int) Setting::get('attendance_overtime_before_minutes', 1),
                 'auto_attendance' => (bool) Setting::get('attendance_auto_enabled', false),
                 'mobile_attendance' => (bool) Setting::get('attendance_mobile_enabled', true),
                 'mobile_gps_required' => (bool) Setting::get('attendance_mobile_gps_required', true),
@@ -269,7 +269,6 @@ class EmployeeController extends Controller
                     'enforce_shift_checkin_window' => false,
                     'ot_rounding_minutes' => 0,
                     'ot_after_minutes' => ($preferences['overtime_after_enabled'] ?? false) ? ($validated['ot_after_minutes'] ?? 0) : 0,
-                    'ot_before_minutes' => ($preferences['overtime_before_enabled'] ?? false) ? ($preferences['overtime_before_minutes'] ?? 1) : 0,
                     'status' => 'active',
                     'updated_by' => $userId,
                 ]

@@ -33,357 +33,89 @@ Route::post('/logout', [LoginController::class, 'logout'])->name('logout')->midd
 // All app routes require authentication
 Route::middleware('auth')->group(function () {
 
-Route::get('/', [DashboardController::class, 'index'])->middleware('permission:dashboard.view')->name('dashboard');
-
-// ONE-TIME: Fix TẤT CẢ dữ liệu chấm công theo ca hiện tại
-// Truy cập: /fix-schedules → xóa route này sau khi chạy xong
-Route::get('/fix-schedules', function () {
-    // Clear OPcache để đảm bảo code mới nhất
-    if (function_exists('opcache_reset')) opcache_reset();
-
-    $shifts = \App\Models\Shift::all()->keyBy('id');
-    $result = ['version' => 'v5-direct-db', 'schedules_fixed' => 0, 'timekeeping_fixed' => 0, 'total_records' => 0, 'details' => []];
-
-    // Bước 1: Sync EmployeeWorkSchedule times với Shift
-    foreach ($shifts as $shift) {
-        $count = \App\Models\EmployeeWorkSchedule::where('shift_id', $shift->id)
-            ->where(function ($q) use ($shift) {
-                $q->where('start_time', '!=', $shift->start_time)
-                  ->orWhere('end_time', '!=', $shift->end_time);
-            })
-            ->update([
-                'start_time' => $shift->start_time,
-                'end_time' => $shift->end_time,
-                'shift_name' => $shift->name,
-            ]);
-        $result['schedules_fixed'] += $count;
-    }
-
-    // Bước 2: Fix TẤT CẢ timekeeping_records (không chỉ sai schedule_end)
-    $tkRecords = \App\Models\TimekeepingRecord::whereNotNull('shift_id')
-        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
-        ->get();
-
-    foreach ($tkRecords as $tk) {
-        $shift = $shifts[$tk->shift_id] ?? null;
-        if (!$shift) continue;
-
-        $workDate = \Carbon\Carbon::parse($tk->work_date)->startOfDay();
-        $newStart = $workDate->copy()->setTimeFromTimeString((string) $shift->start_time);
-        $newEnd = $workDate->copy()->setTimeFromTimeString((string) $shift->end_time);
-        if ($newEnd <= $newStart) $newEnd->addDay();
-
-        // === CÔNG THỨC KIOTVIET (tính OT tất cả ngày, kể cả ngày nghỉ) ===
-        $otAfter = 0;
-        $otBefore = 0;
-
-        if ($tk->check_out_at) {
-            $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
-            if ($checkOut->greaterThan($newEnd)) {
-                $otAfter = max(0, intdiv(abs($checkOut->diffInSeconds($newEnd)), 60) - 1);
-            }
-        }
-        if ($tk->check_in_at) {
-            $checkIn = \Carbon\Carbon::parse($tk->check_in_at);
-            if ($checkIn->lessThan($newStart)) {
-                $earlyMin = intdiv(abs($newStart->diffInSeconds($checkIn)), 60);
-                if ($earlyMin >= 1) $otBefore = $earlyMin;
-            }
-        }
-        $otMinutes = $otAfter + $otBefore;
-
-        $oldOt = $tk->ot_minutes;
-        if ($oldOt != $otMinutes || $tk->scheduled_end_at != $newEnd->toDateTimeString()) {
-            // Dùng raw DB update để bypass model fillable/guarded
-            \Illuminate\Support\Facades\DB::table('timekeeping_records')
-                ->where('id', $tk->id)
-                ->update([
-                    'scheduled_start_at' => $newStart,
-                    'scheduled_end_at' => $newEnd,
-                    'ot_minutes' => $otMinutes,
-                ]);
-
-            $result['details'][] = [
-                'date' => $workDate->format('d/m D'),
-                'employee_id' => $tk->employee_id,
-                'old_end' => $tk->scheduled_end_at ? \Carbon\Carbon::parse($tk->scheduled_end_at)->format('H:i') : null,
-                'new_end' => $newEnd->format('H:i'),
-                'checkout' => $tk->check_out_at ? \Carbon\Carbon::parse($tk->check_out_at)->format('H:i:s') : null,
-                'old_ot' => $oldOt,
-                'new_ot' => $otMinutes,
-            ];
-            $result['timekeeping_fixed']++;
-        }
-    }
-
-    return response()->json($result);
+Route::get('/run-migrations', function () {
+    return \Illuminate\Support\Facades\Schema::getColumnListing('invoices');
 });
 
-// TEMP: Debug chi tiết OT theo ngày (có giây) — xóa sau debug
-Route::get('/debug-ot2', function (\Illuminate\Http\Request $request) {
+Route::get('/', [DashboardController::class, 'index'])->middleware('permission:dashboard.view')->name('dashboard');
+
+Route::get('/check-schema', function () {
+    return response()->json(\Illuminate\Support\Facades\Schema::getColumnListing('invoices'));
+});
+
+// TEMP: Debug OT per day — xóa sau khi fix xong
+Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
     $code = $request->query('employee', 'NV000028');
+    $from = $request->query('from', '2026-03-01');
+    $to = $request->query('to', '2026-03-31');
+
     $emp = \App\Models\Employee::where('code', $code)->first();
-    if (!$emp) return response()->json(['error' => 'Not found']);
+    if (!$emp) return response()->json(['error' => "Employee {$code} not found"]);
 
-    $recs = \App\Models\TimekeepingRecord::where('employee_id', $emp->id)
-        ->whereBetween('work_date', ['2026-03-01', '2026-03-31'])
-        ->orderBy('work_date')->get();
+    $setting = $emp->salarySetting;
+    $recs = $emp->timekeepingRecords()
+        ->whereBetween('work_date', [$from, $to])
+        ->orderBy('work_date')
+        ->get();
 
-    $weekdayOt = 0; $satOt = 0; $rows = [];
+    $rows = [];
+    $summary = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'total' => 0];
 
     foreach ($recs as $r) {
         $dow = \Carbon\Carbon::parse($r->work_date)->dayOfWeek;
         $type = $r->is_holiday ? 'Holiday' : ($dow === 0 ? 'CN' : ($dow === 6 ? 'T7' : 'Weekday'));
 
         if ($r->ot_minutes > 0) {
-            if ($type === 'T7') $satOt += $r->ot_minutes;
-            elseif ($type === 'Weekday') $weekdayOt += $r->ot_minutes;
-        }
-
-        // Tính toán OT (manual check) để so sánh
-        $manualOt = 0;
-        if ($r->check_out_at && $r->scheduled_end_at) {
-            $co = \Carbon\Carbon::parse($r->check_out_at);
-            $se = \Carbon\Carbon::parse($r->scheduled_end_at);
-            if ($co->greaterThan($se)) {
-                $manualOt = intdiv(abs($co->diffInSeconds($se)), 60);
-            }
+            $summary['total'] += $r->ot_minutes;
+            if ($dow === 0 || $r->is_holiday) $summary['sunday'] += $r->ot_minutes;
+            elseif ($dow === 6) $summary['saturday'] += $r->ot_minutes;
+            else $summary['weekday'] += $r->ot_minutes;
         }
 
         $rows[] = [
-            'date' => \Carbon\Carbon::parse($r->work_date)->format('d/m D'),
-            'type' => $type,
-            'check_in' => $r->check_in_at ? \Carbon\Carbon::parse($r->check_in_at)->format('H:i:s') : null,
-            'check_out' => $r->check_out_at ? \Carbon\Carbon::parse($r->check_out_at)->format('H:i:s') : null,
-            'schedule_end' => $r->scheduled_end_at ? \Carbon\Carbon::parse($r->scheduled_end_at)->format('H:i:s') : null,
-            'shift_id' => $r->shift_id,
-            'ot_db' => $r->ot_minutes,
-            'ot_round' => $manualOt,
-            'diff' => $manualOt - $r->ot_minutes,
-            'manual_override' => $r->manual_override,
+            'date' => $r->work_date,
+            'day' => $type,
+            'check_in' => $r->check_in_at ? \Carbon\Carbon::parse($r->check_in_at)->format('H:i') : null,
+            'check_out' => $r->check_out_at ? \Carbon\Carbon::parse($r->check_out_at)->format('H:i') : null,
+            'schedule_start' => $r->scheduled_start_at ? \Carbon\Carbon::parse($r->scheduled_start_at)->format('H:i') : null,
+            'schedule_end' => $r->scheduled_end_at ? \Carbon\Carbon::parse($r->scheduled_end_at)->format('H:i') : null,
+            'worked_min' => $r->worked_minutes,
+            'ot_min' => $r->ot_minutes,
+            'work_units' => $r->work_units,
+            'is_holiday' => $r->is_holiday,
         ];
     }
 
-    // Debug: shift + salary settings
-    $shift = \App\Models\Shift::find(1);
-    $salarySetting = $emp->salarySetting;
+    // Shift info
+    $schedule = \App\Models\EmployeeWorkSchedule::where('employee_id', $emp->id)
+        ->whereBetween('work_date', [$from, $to])
+        ->whereNotNull('shift_id')
+        ->first();
+    $shift = $schedule?->shift;
 
     return response()->json([
-        'employee' => $emp->name,
-        'shift_settings' => $shift ? [
+        'employee' => ['id' => $emp->id, 'code' => $emp->code, 'name' => $emp->name],
+        'salary_setting' => [
+            'base_salary' => $setting?->base_salary,
+            'overtime_rate' => $setting?->overtime_rate,
+            'holiday_rate' => $setting?->holiday_rate,
+            'tet_rate' => $setting?->tet_rate,
+            'has_overtime' => $setting?->has_overtime,
+        ],
+        'shift' => $shift ? [
             'name' => $shift->name,
             'start' => $shift->start_time,
             'end' => $shift->end_time,
             'duration_minutes' => $shift->duration_minutes,
-            'allow_late' => $shift->allow_late_minutes,
-            'allow_early' => $shift->allow_early_minutes,
         ] : null,
-        'salary_settings' => $salarySetting ? [
-            'ot_after_minutes' => $salarySetting->ot_after_minutes,
-            'ot_rounding_minutes' => $salarySetting->ot_rounding_minutes,
-            'has_overtime' => $salarySetting->has_overtime,
-            'overtime_rate' => $salarySetting->overtime_rate,
-            'use_shift_allowances' => $salarySetting->use_shift_allowances,
-        ] : null,
-        'weekday_ot' => $weekdayOt . 'min = ' . floor($weekdayOt/60) . 'h' . ($weekdayOt%60) . 'p',
-        'saturday_ot' => $satOt . 'min = ' . floor($satOt/60) . 'h' . ($satOt%60) . 'p',
-        'total' => ($weekdayOt + $satOt) . 'min',
-        'kiotviet' => 'weekday=339min(5h39p), sat=146min(2h26p), total=485min',
+        'summary' => [
+            'weekday_ot' => $summary['weekday'] . 'min = ' . round($summary['weekday']/60, 2) . 'h',
+            'saturday_ot' => $summary['saturday'] . 'min = ' . round($summary['saturday']/60, 2) . 'h',
+            'sunday_ot' => $summary['sunday'] . 'min = ' . round($summary['sunday']/60, 2) . 'h',
+            'total_ot' => $summary['total'] . 'min = ' . round($summary['total']/60, 2) . 'h',
+            'kiotviet_target' => 'weekday=339min(5.65h), saturday=146min(2.43h), total=485min(8.08h)',
+        ],
         'records' => $rows,
-    ]);
-});
-
-// ONE-TIME: Fix timekeeping + recalculate salary (KHÔNG gọi recalculateForRange)
-Route::get('/fix-and-recalc', function () {
-    if (function_exists('opcache_reset')) opcache_reset();
-
-    // Bước 1: Fix timekeeping OT — xử lý TẤT CẢ records (kể cả thiếu shift_id)
-    $shifts = \App\Models\Shift::all()->keyBy('id');
-    $defaultShift = $shifts->first(); // Shift mặc định (ID=1)
-    $fixed = 0;
-
-    $tkRecords = \App\Models\TimekeepingRecord::whereBetween('work_date', ['2026-03-01', '2026-03-31'])
-        ->get();
-
-    foreach ($tkRecords as $tk) {
-        $shift = ($tk->shift_id ? ($shifts[$tk->shift_id] ?? null) : null) ?? $defaultShift;
-        if (!$shift) continue;
-
-        $workDate = \Carbon\Carbon::parse($tk->work_date)->startOfDay();
-        $newStart = $workDate->copy()->setTimeFromTimeString((string) $shift->start_time);
-        $newEnd = $workDate->copy()->setTimeFromTimeString((string) $shift->end_time);
-        if ($newEnd <= $newStart) $newEnd->addDay();
-
-        // === CÔNG THỨC KIOTVIET ===
-        // OT tính cho TẤT CẢ ngày (kể cả ngày nghỉ/lễ) — chỉ phần vượt ca
-        // "Tính làm thêm giờ sau ca: 1 phút" → OT = floor - 1
-        // "Tính làm thêm giờ trước ca: 1 phút" → OT đến sớm, threshold >= 1 phút
-        $otAfter = 0;
-        $otBefore = 0;
-
-        // OT SAU CA: checkout - schedule_end, trừ 1 phút
-        if ($tk->check_out_at) {
-            $checkOut = \Carbon\Carbon::parse($tk->check_out_at);
-            if ($checkOut->greaterThan($newEnd)) {
-                $otAfter = max(0, intdiv(abs($checkOut->diffInSeconds($newEnd)), 60) - 1);
-            }
-        }
-
-        // OT TRƯỚC CA: schedule_start - check_in, threshold >= 1 phút
-        if ($tk->check_in_at) {
-            $checkIn = \Carbon\Carbon::parse($tk->check_in_at);
-            if ($checkIn->lessThan($newStart)) {
-                $earlyMin = intdiv(abs($newStart->diffInSeconds($checkIn)), 60);
-                if ($earlyMin >= 1) {
-                    $otBefore = $earlyMin;
-                }
-            }
-        }
-        $otMinutes = $otAfter + $otBefore;
-
-        \Illuminate\Support\Facades\DB::table('timekeeping_records')
-            ->where('id', $tk->id)
-            ->update([
-                'scheduled_start_at' => $newStart,
-                'scheduled_end_at' => $newEnd,
-                'ot_minutes' => $otMinutes,
-            ]);
-        if ($tk->ot_minutes != $otMinutes) $fixed++;
-    }
-
-    // Bước 2: Tính lại lương — tìm paysheet THÁNG 3/2026 (KHÔNG cancelled, KHÔNG locked)
-    $allPaysheets = \App\Models\Paysheet::whereNotIn('status', ['locked', 'cancelled'])
-        ->with('payslips')
-        ->orderBy('period_start', 'desc')
-        ->get();
-
-    // Debug: liệt kê TẤT CẢ paysheets (kể cả cancelled) để tìm đúng
-    $allPsDebug = \App\Models\Paysheet::orderBy('period_start', 'desc')
-        ->get(['id', 'period_start', 'period_end', 'status', 'branch_id']);
-
-    // Tìm paysheet tháng 3 cụ thể — ưu tiên period_end mới nhất (full tháng)
-    $marchPaysheets = $allPaysheets->filter(function ($ps) {
-        $start = \Carbon\Carbon::parse($ps->period_start);
-        return $start->month == 3 && $start->year == 2026;
-    })->sortByDesc('period_end');
-
-    $paysheet = $marchPaysheets->first();
-
-    // Fallback: paysheet đầu tiên overlap tháng 3
-    if (!$paysheet) {
-        $paysheet = $allPaysheets->filter(function ($ps) {
-            return $ps->period_start <= '2026-03-31' && $ps->period_end >= '2026-03-01';
-        })->sortByDesc('period_end')->first();
-    }
-
-    $salaryResults = [];
-    $paysheetInfo = null;
-    if ($paysheet) {
-        $paysheetInfo = [
-            'id' => $paysheet->id,
-            'period_start' => $paysheet->period_start,
-            'period_end' => $paysheet->period_end,
-            'status' => $paysheet->status,
-        ];
-        $periodStart = \Carbon\Carbon::parse($paysheet->period_start);
-        $periodEnd = \Carbon\Carbon::parse($paysheet->period_end);
-
-        foreach ($paysheet->payslips as $slip) {
-            $employee = \App\Models\Employee::with(['salarySetting'])->find($slip->employee_id);
-            if (!$employee) continue;
-
-            $calc = $employee->calculateSalaryForRange($periodStart, $periodEnd);
-
-            $adjs = $slip->adjustments()->get();
-            $adjBonus = $adjs->where('type', 'bonus')->sum('amount');
-            $adjAllowance = $adjs->where('type', 'allowance')->sum('amount');
-            $adjDeduction = $adjs->where('type', 'deduction')->sum('amount');
-            $adjOt = $adjs->where('type', 'ot')->sum('amount');
-
-            $autoOt = ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0);
-            $autoLatePenalty = $calc['late_penalty'] ?? 0;
-
-            $totalBonus = $adjs->where('type', 'bonus')->count() > 0 ? $adjBonus : ($calc['bonus'] ?? 0);
-            $totalAllowance = $adjs->where('type', 'allowance')->count() > 0 ? $adjAllowance : ($calc['allowances'] ?? 0);
-            $totalDeduction = $adjs->where('type', 'deduction')->count() > 0
-                ? ($adjDeduction + $autoLatePenalty)
-                : ($calc['deductions'] ?? 0);
-            $totalOt = $autoOt + $adjOt;
-            $totalSalary = max(0, $calc['base'] + $totalBonus + ($calc['commission'] ?? 0) + $totalAllowance + $totalOt - $totalDeduction);
-
-            $slip->update([
-                'base_salary' => $calc['base'],
-                'bonus' => $totalBonus,
-                'commission' => $calc['commission'] ?? 0,
-                'allowances' => $totalAllowance,
-                'deductions' => $totalDeduction,
-                'ot_pay' => $totalOt,
-                'total_salary' => $totalSalary,
-                'remaining' => max(0, $totalSalary - $slip->paid_amount),
-                'work_units' => $calc['work_units'],
-                'paid_leave_units' => $calc['paid_leave_units'] ?? 0,
-                'ot_minutes' => $calc['ot_minutes'] ?? 0,
-                'details' => $calc,
-            ]);
-
-            // Debug: per-day OT + records thiếu shift_id
-            $allRecords = \App\Models\TimekeepingRecord::where('employee_id', $employee->id)
-                ->whereBetween('work_date', [$periodStart, $periodEnd])
-                ->orderBy('work_date')
-                ->get();
-
-            $dayBreakdown = [];
-            $noShiftRecords = [];
-            foreach ($allRecords as $rec) {
-                $entry = [
-                    'date' => $rec->work_date,
-                    'shift_id' => $rec->shift_id,
-                    'ot_minutes' => (int) $rec->ot_minutes,
-                    'is_holiday' => (bool) $rec->is_holiday,
-                    'check_in' => $rec->check_in_at,
-                    'check_out' => $rec->check_out_at,
-                    'scheduled_end' => $rec->scheduled_end_at,
-                    'manual' => (bool) $rec->manual_override,
-                ];
-                if (!$rec->shift_id) {
-                    $noShiftRecords[] = $entry;
-                }
-                if ($rec->ot_minutes > 0) {
-                    $dayBreakdown[] = $entry;
-                }
-            }
-
-            $salaryResults[] = [
-                'employee' => $employee->name,
-                'ot_minutes' => $calc['ot_minutes'] ?? 0,
-                'ot_pay_calc' => $calc['ot_pay'] ?? 0,
-                'holiday_pay_calc' => $calc['holiday_pay'] ?? 0,
-                'ot_pay_total' => $totalOt,
-                'base' => $calc['base'] ?? 0,
-                'work_units' => $calc['work_units'] ?? 0,
-                'standard_work_units' => $calc['standard_work_units'] ?? 0,
-                'repair_performance' => $calc['repair_performance'] ?? null,
-                'total_salary' => $totalSalary,
-                'ot_breakdown' => $calc['details']['ot'] ?? [],
-                'ot_day_detail' => $dayBreakdown,
-                'no_shift_records' => $noShiftRecords,
-                'total_records' => $allRecords->count(),
-                'records_with_shift' => $allRecords->whereNotNull('shift_id')->count(),
-                'records_no_shift' => $allRecords->whereNull('shift_id')->count(),
-            ];
-        }
-
-        $paysheet->status = 'calculated';
-        $paysheet->needs_recalc = false;
-        $paysheet->save();
-        $paysheet->recalculateTotals();
-    }
-
-    return response()->json([
-        'timekeeping_fixed' => $fixed,
-        'paysheet_selected' => $paysheetInfo,
-        'all_paysheets' => $allPsDebug,
-        'salary_results' => $salaryResults,
     ]);
 });
 
@@ -507,6 +239,91 @@ Route::middleware('permission:purchase_orders.create')->group(function () {
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store'])->name('purchase-orders.store');
 });
 
+Route::get('/run-migrate', function () {
+    try {
+        \Illuminate\Support\Facades\Schema::dropIfExists('return_items');
+        \Illuminate\Support\Facades\Schema::dropIfExists('returns');
+
+        \Illuminate\Support\Facades\Schema::create('returns', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->string('code')->unique();
+            $table->foreignId('invoice_id')->nullable()->constrained('invoices')->nullOnDelete();
+            $table->foreignId('customer_id')->nullable()->constrained('customers')->nullOnDelete();
+            $table->foreignId('branch_id')->nullable()->constrained('branches')->nullOnDelete();
+            $table->string('status')->default('Đã trả'); // Đã trả, Đã hủy
+            $table->decimal('subtotal', 15, 2)->default(0); // Tổng tiền hàng trả
+            $table->decimal('discount', 15, 2)->default(0); // Giảm giá phiếu trả
+            $table->decimal('fee', 15, 2)->default(0); // Phí trả hàng
+            $table->decimal('total', 15, 2)->default(0); // Cần trả khách (Tổng)
+            $table->decimal('paid_to_customer', 15, 2)->default(0); // Đã trả khách
+            $table->text('note')->nullable();
+
+            $table->string('created_by_name')->nullable();
+            $table->string('seller_name')->nullable();
+            $table->string('sales_channel')->nullable();
+            $table->string('price_book_name')->nullable();
+
+            $table->timestamps();
+        });
+
+        \Illuminate\Support\Facades\Schema::create('return_items', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->foreignId('return_id')->constrained('returns')->cascadeOnDelete();
+            $table->foreignId('product_id')->constrained('products');
+            $table->integer('quantity')->default(1);
+            $table->decimal('price', 15, 2)->default(0); // Giá trả hàng
+            $table->decimal('discount', 15, 2)->default(0); // Giảm giá
+            $table->decimal('import_price', 15, 2)->default(0); // Giá nhập lại
+            $table->timestamps();
+        });
+
+        return 'Migrated Returns Tables directly.';
+    } catch (\Exception $e) {
+        return 'Error: ' . $e->getMessage();
+    }
+});
+
+Route::get('/run-migrate-2', function () {
+    try {
+        \Illuminate\Support\Facades\Schema::dropIfExists('return_items');
+        \Illuminate\Support\Facades\Schema::dropIfExists('returns');
+
+        \Illuminate\Support\Facades\Schema::create('returns', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->string('code')->unique();
+            $table->foreignId('invoice_id')->nullable()->constrained('invoices')->nullOnDelete();
+            $table->foreignId('customer_id')->nullable()->constrained('customers')->nullOnDelete();
+            $table->foreignId('branch_id')->nullable()->constrained('branches')->nullOnDelete();
+            $table->string('status')->default('Đã trả');
+            $table->decimal('subtotal', 15, 2)->default(0);
+            $table->decimal('discount', 15, 2)->default(0);
+            $table->decimal('fee', 15, 2)->default(0);
+            $table->decimal('total', 15, 2)->default(0);
+            $table->decimal('paid_to_customer', 15, 2)->default(0);
+            $table->text('note')->nullable();
+            $table->string('created_by_name')->nullable();
+            $table->string('seller_name')->nullable();
+            $table->string('sales_channel')->nullable();
+            $table->string('price_book_name')->nullable();
+            $table->timestamps();
+        });
+
+        \Illuminate\Support\Facades\Schema::create('return_items', function (\Illuminate\Database\Schema\Blueprint $table) {
+            $table->id();
+            $table->foreignId('return_id')->constrained('returns')->cascadeOnDelete();
+            $table->foreignId('product_id')->constrained('products');
+            $table->integer('quantity')->default(1);
+            $table->decimal('price', 15, 2)->default(0);
+            $table->decimal('discount', 15, 2)->default(0);
+            $table->decimal('import_price', 15, 2)->default(0);
+            $table->timestamps();
+        });
+
+        return 'Migrated Returns Tables 2 directly.';
+    } catch (\Exception $e) {
+        return 'Error: ' . $e->getMessage();
+    }
+});
 
 // ===== INVOICES =====
 Route::middleware('permission:invoices.view')->group(function () {
