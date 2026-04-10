@@ -256,8 +256,15 @@ Route::get('/fix-and-recalc', function () {
             $salaryResults[] = [
                 'employee' => $employee->name,
                 'ot_minutes' => $calc['ot_minutes'] ?? 0,
-                'ot_pay' => $totalOt,
+                'ot_pay_calc' => $calc['ot_pay'] ?? 0,
+                'holiday_pay_calc' => $calc['holiday_pay'] ?? 0,
+                'ot_pay_total' => $totalOt,
+                'base' => $calc['base'] ?? 0,
+                'work_units' => $calc['work_units'] ?? 0,
+                'standard_work_units' => $calc['standard_work_units'] ?? 0,
+                'repair_performance' => $calc['repair_performance'] ?? null,
                 'total_salary' => $totalSalary,
+                'ot_breakdown' => $calc['details']['ot'] ?? [],
             ];
         }
 
