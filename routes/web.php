@@ -43,6 +43,82 @@ Route::get('/check-schema', function () {
     return response()->json(\Illuminate\Support\Facades\Schema::getColumnListing('invoices'));
 });
 
+// TEMP: Debug OT per day — xóa sau khi fix xong
+Route::get('/debug-ot', function (\Illuminate\Http\Request $request) {
+    $code = $request->query('employee', 'NV000028');
+    $from = $request->query('from', '2026-03-01');
+    $to = $request->query('to', '2026-03-31');
+
+    $emp = \App\Models\Employee::where('code', $code)->first();
+    if (!$emp) return response()->json(['error' => "Employee {$code} not found"]);
+
+    $setting = $emp->salarySetting;
+    $recs = $emp->timekeepingRecords()
+        ->whereBetween('work_date', [$from, $to])
+        ->orderBy('work_date')
+        ->get();
+
+    $rows = [];
+    $summary = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'total' => 0];
+
+    foreach ($recs as $r) {
+        $dow = \Carbon\Carbon::parse($r->work_date)->dayOfWeek;
+        $type = $r->is_holiday ? 'Holiday' : ($dow === 0 ? 'CN' : ($dow === 6 ? 'T7' : 'Weekday'));
+
+        if ($r->ot_minutes > 0) {
+            $summary['total'] += $r->ot_minutes;
+            if ($dow === 0 || $r->is_holiday) $summary['sunday'] += $r->ot_minutes;
+            elseif ($dow === 6) $summary['saturday'] += $r->ot_minutes;
+            else $summary['weekday'] += $r->ot_minutes;
+        }
+
+        $rows[] = [
+            'date' => $r->work_date,
+            'day' => $type,
+            'check_in' => $r->check_in_at ? \Carbon\Carbon::parse($r->check_in_at)->format('H:i') : null,
+            'check_out' => $r->check_out_at ? \Carbon\Carbon::parse($r->check_out_at)->format('H:i') : null,
+            'schedule_start' => $r->scheduled_start_at ? \Carbon\Carbon::parse($r->scheduled_start_at)->format('H:i') : null,
+            'schedule_end' => $r->scheduled_end_at ? \Carbon\Carbon::parse($r->scheduled_end_at)->format('H:i') : null,
+            'worked_min' => $r->worked_minutes,
+            'ot_min' => $r->ot_minutes,
+            'work_units' => $r->work_units,
+            'is_holiday' => $r->is_holiday,
+        ];
+    }
+
+    // Shift info
+    $schedule = \App\Models\EmployeeWorkSchedule::where('employee_id', $emp->id)
+        ->whereBetween('work_date', [$from, $to])
+        ->whereNotNull('shift_id')
+        ->first();
+    $shift = $schedule?->shift;
+
+    return response()->json([
+        'employee' => ['id' => $emp->id, 'code' => $emp->code, 'name' => $emp->name],
+        'salary_setting' => [
+            'base_salary' => $setting?->base_salary,
+            'overtime_rate' => $setting?->overtime_rate,
+            'holiday_rate' => $setting?->holiday_rate,
+            'tet_rate' => $setting?->tet_rate,
+            'has_overtime' => $setting?->has_overtime,
+        ],
+        'shift' => $shift ? [
+            'name' => $shift->name,
+            'start' => $shift->start_time,
+            'end' => $shift->end_time,
+            'duration_minutes' => $shift->duration_minutes,
+        ] : null,
+        'summary' => [
+            'weekday_ot' => $summary['weekday'] . 'min = ' . round($summary['weekday']/60, 2) . 'h',
+            'saturday_ot' => $summary['saturday'] . 'min = ' . round($summary['saturday']/60, 2) . 'h',
+            'sunday_ot' => $summary['sunday'] . 'min = ' . round($summary['sunday']/60, 2) . 'h',
+            'total_ot' => $summary['total'] . 'min = ' . round($summary['total']/60, 2) . 'h',
+            'kiotviet_target' => 'weekday=339min(5.65h), saturday=146min(2.43h), total=485min(8.08h)',
+        ],
+        'records' => $rows,
+    ]);
+});
+
 // ===== PRODUCTS =====
 Route::middleware('permission:products.view')->group(function () {
     Route::get('/products', [ProductController::class, 'index'])->name('products.index');
