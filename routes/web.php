@@ -217,7 +217,7 @@ Route::get('/fix-and-recalc', function () {
                 'details' => $calc,
             ]);
 
-            // Debug: per-day OT + records thiếu shift_id
+            // Debug: per-day OT + records thiếu shift_id + work_units breakdown
             $allRecords = \App\Models\TimekeepingRecord::where('employee_id', $employee->id)
                 ->whereBetween('work_date', [$periodStart, $periodEnd])
                 ->orderBy('work_date')
@@ -225,7 +225,9 @@ Route::get('/fix-and-recalc', function () {
 
             $dayBreakdown = [];
             $noShiftRecords = [];
+            $workUnitsBreakdown = []; // DEBUG: chi tiết work_units mỗi ngày
             foreach ($allRecords as $rec) {
+                $dateLocal = \Carbon\Carbon::parse($rec->work_date)->addHours(7)->format('Y-m-d (D)');
                 $entry = [
                     'date' => $rec->work_date,
                     'shift_id' => $rec->shift_id,
@@ -241,6 +243,13 @@ Route::get('/fix-and-recalc', function () {
                 if ($rec->ot_minutes > 0) {
                     $dayBreakdown[] = $entry;
                 }
+                // Luôn ghi work_units để debug
+                $workUnitsBreakdown[] = [
+                    'date' => $dateLocal,
+                    'work_units' => (float) $rec->work_units,
+                    'attendance_type' => $rec->attendance_type,
+                    'is_holiday' => (bool) $rec->is_holiday,
+                ];
             }
 
             $salaryResults[] = [
@@ -259,6 +268,7 @@ Route::get('/fix-and-recalc', function () {
                 'ot_day_detail' => $dayBreakdown,
                 'no_shift_records' => $noShiftRecords,
                 'records_no_shift' => $allRecords->whereNull('shift_id')->count(),
+                'work_units_per_day' => $workUnitsBreakdown,
             ];
         }
 
