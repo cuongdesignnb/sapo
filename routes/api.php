@@ -23,8 +23,8 @@ Route::get('/user', function (Request $request) {
 // 🔓 DEBUG ROUTES (public, for testing)
 // =======================
 
-// DELETE a specific timekeeping record by ID (DEBUG ONLY)
-Route::delete('/debug/timekeeping-records/{id}', function ($id) {
+// DELETE a specific timekeeping record by ID (GET for browser access)
+Route::get('/debug/delete-timekeeping/{id}', function ($id) {
     $record = \App\Models\TimekeepingRecord::find($id);
     if (!$record) return response()->json(['error' => 'Not found'], 404);
     $info = ['id' => $record->id, 'employee_id' => $record->employee_id, 'work_date' => $record->work_date];
@@ -32,8 +32,9 @@ Route::delete('/debug/timekeeping-records/{id}', function ($id) {
     return response()->json(['success' => true, 'deleted' => $info]);
 });
 
-// Auto-dedup: find and remove duplicate timekeeping records for an employee in a date range
-Route::post('/debug/dedup-timekeeping', function (\Illuminate\Http\Request $request) {
+// Auto-dedup: find and remove duplicate timekeeping records (GET for browser)
+// Usage: /api/debug/dedup-timekeeping?employee_id=3&from=2026-02-28&to=2026-03-31
+Route::get('/debug/dedup-timekeeping', function (\Illuminate\Http\Request $request) {
     $employeeId = $request->input('employee_id');
     $from = $request->input('from', '2026-03-01');
     $to = $request->input('to', '2026-03-31');
