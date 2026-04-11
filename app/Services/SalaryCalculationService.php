@@ -397,24 +397,28 @@ class SalaryCalculationService
             'late_penalty' => round($latePenaltyAmount),
             'base_salary_breakdown' => [
                 'daily_rate' => round($dailyRate),
+                'daily_rate_exact' => $dailyRate,  // unrounded for precise calculation
                 'normal' => [
                     'label' => 'Ngày thường',
                     'days' => $normalDayCount,
-                    'rate' => round($dailyRate),
+                    'rate' => $dailyRate,  // unrounded for precision
+                    'display_rate' => round($dailyRate),
                     'multiplier' => 100,
                     'amount' => round($dailyRate * $normalDayCount),
                 ],
                 'rest_day' => [
                     'label' => 'Ngày nghỉ',
                     'days' => $restDayCount,
-                    'rate' => round($dailyRate * $restDayMultiplier),
+                    'rate' => $dailyRate * $restDayMultiplier,  // unrounded
+                    'display_rate' => round($dailyRate * $restDayMultiplier),
                     'multiplier' => round($restDayMultiplier * 100),
                     'amount' => round($dailyRate * $restDayMultiplier * $restDayCount),
                 ],
                 'holiday' => [
                     'label' => 'Ngày lễ tết',
                     'days' => $holidayDayCount,
-                    'rate' => round($dailyRate * $holidayMultiplier),
+                    'rate' => $dailyRate * $holidayMultiplier,  // unrounded
+                    'display_rate' => round($dailyRate * $holidayMultiplier),
                     'multiplier' => round($holidayMultiplier * 100),
                     'amount' => round($dailyRate * $holidayMultiplier * $holidayDayCount),
                 ],
