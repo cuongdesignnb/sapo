@@ -9,19 +9,77 @@ const props = defineProps({
     bankAccounts: Array,
 });
 
-// State for search and products
+// State for search and products (global)
 const query = ref('');
 const products = ref([]);
 const isSearching = ref(false);
 
-// State for the cart (giỏ hàng)
-const cart = ref([]);
+// ── Multi-tab POS system ──
+let tabIdCounter = 1;
+const createNewTab = () => ({
+    id: tabIdCounter++,
+    cart: [],
+    discount: 0,
+    customerPaid: 0,
+    paymentMethod: 'cash',
+    bankAccountInfo: '',
+    selectedCustomer: null,
+    customerQuery: '',
+    saleMode: 'normal',
+});
 
-// Employee & time
+const tabs = ref([createNewTab()]);
+const activeTabIndex = ref(0);
+const activeTab = computed(() => tabs.value[activeTabIndex.value]);
+
+// Per-tab computed proxies — all existing code continues using these
+const cart = computed({
+    get: () => activeTab.value.cart,
+    set: (v) => { activeTab.value.cart = v; }
+});
+const discount = computed({
+    get: () => activeTab.value.discount,
+    set: (v) => { activeTab.value.discount = v; }
+});
+const customerPaid = computed({
+    get: () => activeTab.value.customerPaid,
+    set: (v) => { activeTab.value.customerPaid = v; }
+});
+const paymentMethod = computed({
+    get: () => activeTab.value.paymentMethod,
+    set: (v) => { activeTab.value.paymentMethod = v; }
+});
+const bankAccountInfo = computed({
+    get: () => activeTab.value.bankAccountInfo,
+    set: (v) => { activeTab.value.bankAccountInfo = v; }
+});
+const saleMode = computed({
+    get: () => activeTab.value.saleMode,
+    set: (v) => { activeTab.value.saleMode = v; }
+});
+
+// Tab management
+const addTab = () => {
+    tabs.value.push(createNewTab());
+    activeTabIndex.value = tabs.value.length - 1;
+};
+const switchTab = (idx) => {
+    activeTabIndex.value = idx;
+};
+const closeTab = (idx) => {
+    if (tabs.value.length <= 1) return;
+    tabs.value.splice(idx, 1);
+    if (activeTabIndex.value >= tabs.value.length) {
+        activeTabIndex.value = tabs.value.length - 1;
+    }
+};
+const tabLabel = (tab) => tab.saleMode === 'quick_order' ? 'Đặt hàng' : 'Hóa đơn';
+
+// Employee & time (global)
 const selectedEmployeeId = ref('');
 const currentTime = ref('');
 
-// Ngày bán (cho phép chọn ngày khác hôm nay)
+// Ngày bán
 const pad = (n) => String(n).padStart(2, '0');
 const nowInit = new Date();
 const localNowStr = `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}T${pad(nowInit.getHours())}:${pad(nowInit.getMinutes())}`;
@@ -50,19 +108,16 @@ onUnmounted(() => {
     clearInterval(timeInterval);
 });
 
-// Payment details
-const discount = ref(0);
-const customerPaid = ref(0);
-const paymentMethod = ref('cash');
-const bankAccountInfo = ref('');
-
-// Sale mode: 'normal' | 'quick_order' | 'delivery'
-const saleMode = ref('normal');
-
 // ── Customer Search ──
-const customerQuery = ref('');
+const customerQuery = computed({
+    get: () => activeTab.value.customerQuery,
+    set: (v) => { activeTab.value.customerQuery = v; }
+});
 const customerResults = ref([]);
-const selectedCustomer = ref(null);
+const selectedCustomer = computed({
+    get: () => activeTab.value.selectedCustomer,
+    set: (v) => { activeTab.value.selectedCustomer = v; }
+});
 const showCustomerDropdown = ref(false);
 const customerSearching = ref(false);
 let customerTimeout;
@@ -192,53 +247,50 @@ const hideSerialDropdown = (item) => {
     setTimeout(() => { item.showSerialDropdown = false; }, 200);
 };
 
-// ── LocalStorage Draft ──
-const DRAFT_KEY = 'kiotviet_pos_draft';
+// ── LocalStorage Draft (multi-tab) ──
+const DRAFT_KEY = 'kiotviet_pos_tabs';
 
 const saveDraft = () => {
-    const draft = {
-        cart: cart.value,
-        discount: discount.value,
-        customerPaid: customerPaid.value,
-        paymentMethod: paymentMethod.value,
-        bankAccountInfo: bankAccountInfo.value,
-        selectedCustomer: selectedCustomer.value,
+    const data = {
+        tabs: tabs.value,
+        activeTabIndex: activeTabIndex.value,
         selectedEmployeeId: selectedEmployeeId.value,
-        saleDate: saleDate.value
+        saleDate: saleDate.value,
     };
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
 };
 
 const loadDraft = () => {
     try {
         const raw = localStorage.getItem(DRAFT_KEY);
         if (raw) {
-            const draft = JSON.parse(raw);
-            if (draft.cart) {
-                cart.value = draft.cart.map(i => {
-                    if (i.is_serial_product) {
-                        return { ...i, showSerialDropdown: false, serialLoading: false, availableSerials: i.allAvailableSerials || [] };
-                    }
-                    return i;
-                });
+            const data = JSON.parse(raw);
+            if (data.tabs && data.tabs.length > 0) {
+                tabIdCounter = Math.max(...data.tabs.map(t => t.id || 0)) + 1;
+                tabs.value = data.tabs.map(tab => ({
+                    ...createNewTab(),
+                    ...tab,
+                    cart: (tab.cart || []).map(i => {
+                        if (i.is_serial_product) {
+                            return { ...i, showSerialDropdown: false, serialLoading: false, availableSerials: i.allAvailableSerials || [] };
+                        }
+                        return i;
+                    })
+                }));
+                activeTabIndex.value = Math.min(data.activeTabIndex || 0, tabs.value.length - 1);
             }
-            if (draft.discount !== undefined) discount.value = draft.discount;
-            if (draft.customerPaid !== undefined) customerPaid.value = draft.customerPaid;
-            if (draft.paymentMethod) paymentMethod.value = draft.paymentMethod;
-            if (draft.bankAccountInfo) bankAccountInfo.value = draft.bankAccountInfo;
-            if (draft.selectedCustomer) selectedCustomer.value = draft.selectedCustomer;
-            if (draft.selectedEmployeeId) selectedEmployeeId.value = draft.selectedEmployeeId;
-            if (draft.saleDate) saleDate.value = draft.saleDate;
-            
-            // Reload available serials seamlessly
-            cart.value.forEach(item => {
-                if (item.is_serial_product) {
-                    loadSerialsForProduct(item);
-                }
+            if (data.selectedEmployeeId) selectedEmployeeId.value = data.selectedEmployeeId;
+            if (data.saleDate) saleDate.value = data.saleDate;
+
+            // Reload serials for all tabs
+            tabs.value.forEach(tab => {
+                tab.cart.forEach(item => {
+                    if (item.is_serial_product) loadSerialsForProduct(item);
+                });
             });
         }
     } catch(e) {
-        console.warn('Failed to load POS draft', e);
+        console.warn('Failed to load POS tabs', e);
     }
 };
 
@@ -333,7 +385,7 @@ const updateQuantity = (index, delta) => {
     }
 };
 
-watch([cart, discount, customerPaid, paymentMethod, bankAccountInfo, selectedCustomer, selectedEmployeeId, saleDate], () => {
+watch([tabs, activeTabIndex, selectedEmployeeId, saleDate], () => {
     saveDraft();
 }, { deep: true });
 
@@ -439,14 +491,19 @@ const processCheckout = async () => {
 };
 
 const resetAfterCheckout = () => {
-    clearDraft();
-    cart.value = [];
-    discount.value = 0;
-    customerPaid.value = 0;
-    paymentMethod.value = 'cash';
-    bankAccountInfo.value = '';
-    selectedCustomer.value = null;
-    customerQuery.value = '';
+    if (tabs.value.length > 1) {
+        closeTab(activeTabIndex.value);
+    } else {
+        const t = activeTab.value;
+        t.cart = [];
+        t.discount = 0;
+        t.customerPaid = 0;
+        t.paymentMethod = 'cash';
+        t.bankAccountInfo = '';
+        t.selectedCustomer = null;
+        t.customerQuery = '';
+    }
+    saveDraft();
     searchProducts();
 };
 </script>
@@ -705,10 +762,26 @@ const resetAfterCheckout = () => {
                     </div>
                 </div>
 
-                <!-- Tabs (Invoice, Delivery) -->
-                <div class="flex border-b border-gray-200">
-                    <button class="flex-1 py-3 text-sm font-bold border-b-2 border-blue-600 text-blue-600 bg-blue-50/50">Hóa đơn 1</button>
-                    <button class="flex-1 py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 hover:bg-gray-50">+</button>
+                <!-- Tabs (Multi-tab: Hóa đơn / Đặt hàng) -->
+                <div class="flex border-b border-gray-200 overflow-x-auto">
+                    <button
+                        v-for="(tab, idx) in tabs"
+                        :key="tab.id"
+                        @click="switchTab(idx)"
+                        class="relative flex items-center gap-1 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap transition-colors border-b-2 group min-w-0"
+                        :class="idx === activeTabIndex
+                            ? (tab.saleMode === 'quick_order' ? 'border-orange-500 text-orange-600 bg-orange-50/50' : tab.saleMode === 'delivery' ? 'border-green-500 text-green-600 bg-green-50/50' : 'border-blue-600 text-blue-600 bg-blue-50/50')
+                            : 'border-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-50'"
+                    >
+                        <svg v-if="tab.saleMode === 'quick_order'" class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        <svg v-else class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        {{ tabLabel(tab) }} {{ idx + 1 }}
+                        <span v-if="tab.cart.length > 0" class="text-[9px] bg-red-500 text-white rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 leading-none">{{ tab.cart.length }}</span>
+                        <button v-if="tabs.length > 1" @click.stop="closeTab(idx)" class="ml-0.5 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title="Đóng">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </button>
+                    <button @click="addTab" class="px-3 py-2.5 text-lg font-bold text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors flex-shrink-0" title="Thêm hóa đơn mới">+</button>
                 </div>
 
                 <!-- Invoice Details Calculation -->
