@@ -537,7 +537,7 @@ const resetAfterCheckout = () => {
                                 <div class="font-bold text-[13px] text-gray-800">{{ product.name }}</div>
                                 <div class="text-[11px] text-gray-500 mt-0.5">
                                     {{ product.sku }} | Tồn: {{ product.stock_quantity }}
-                                    <span v-if="product.repairing_count > 0" class="text-yellow-600 font-semibold">(🔧 {{ product.repairing_count }} sửa)</span>
+                                    <span v-if="product.repairing_count > 0" class="text-yellow-600 font-semibold">({{ product.repairing_count }} đang sửa)</span>
                                     <span v-if="product.has_serial && product.sellable_quantity !== undefined" class="text-green-600 font-semibold ml-1">| Sẵn: {{ product.sellable_quantity }}</span>
                                 </div>
                             </div>
@@ -715,7 +715,7 @@ const resetAfterCheckout = () => {
                             :class="product.has_serial && product.sellable_quantity <= 0 ? 'opacity-40 pointer-events-none' : ''"
                         >
                             <div class="flex-1 text-sm font-semibold text-gray-800 line-clamp-3 leading-snug group-hover:text-blue-700">{{ product.name }}</div>
-                            <div v-if="product.repairing_count > 0" class="text-[10px] text-yellow-600 font-bold mt-1">🔧 {{ product.repairing_count }} sửa</div>
+                            <div v-if="product.repairing_count > 0" class="text-[10px] text-yellow-600 font-bold mt-1">{{ product.repairing_count }} đang sửa</div>
                             <div class="text-blue-600 font-bold mt-2 font-mono text-sm tracking-tighter">{{ Number(product.retail_price || 0).toLocaleString() }} ₫</div>
                         </div>
                     </div>
