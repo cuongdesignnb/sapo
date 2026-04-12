@@ -101,25 +101,38 @@ if ($ghostInvoices->isEmpty()) {
 }
 
 // 5) Customer debt consistency check
-echo "\n═══ 5. CÔNG NỢ KHÁCH HÀNG ═══\n";
+echo "\n=== 5. CONG NO KHACH HANG ===\n";
 $debtCustomers = \App\Models\Customer::where('debt_amount', '!=', 0)->get();
-echo "  Khách có nợ: " . $debtCustomers->count() . "\n";
+echo "  Khach co no: " . $debtCustomers->count() . "\n";
 foreach ($debtCustomers as $c) {
-    // Calculate expected debt from invoices
-    $totalInvoiced = \App\Models\Invoice::where('customer_id', $c->id)->sum('total');
-    $totalPaid = \App\Models\Invoice::where('customer_id', $c->id)->sum('customer_paid');
-    $totalReturned = \App\Models\OrderReturn::where('customer_id', $c->id)->sum('refund_amount');
-    
-    // From CashFlows (debt payments)
-    $debtPayments = \App\Models\CashFlow::where('target_id', $c->id)
-        ->where('target_type', 'Khách hàng')
-        ->where('category', 'like', '%Thanh toán%')
-        ->sum('amount');
-    
-    $expectedDebt = $totalInvoiced - $totalPaid - $debtPayments - $totalReturned;
-    
-    if (abs($expectedDebt - $c->debt_amount) > 1) {
-        echo "  ⚠️  {$c->code} | {$c->name} | DB debt: " . number_format($c->debt_amount) . " | Calculated: " . number_format($expectedDebt) . "\n";
+    try {
+        $totalInvoiced = \App\Models\Invoice::where('customer_id', $c->id)->sum('total');
+        $totalPaid = \App\Models\Invoice::where('customer_id', $c->id)->sum('customer_paid');
+        
+        // Try refund_amount, fallback to total_refund or 0
+        $totalReturned = 0;
+        try {
+            $totalReturned = \DB::table('returns')->where('customer_id', $c->id)->sum('refund_amount');
+        } catch (\Exception $e) {
+            try {
+                $totalReturned = \DB::table('returns')->where('customer_id', $c->id)->sum('total_refund');
+            } catch (\Exception $e2) {
+                // No returns table or column, skip
+            }
+        }
+        
+        $debtPayments = \App\Models\CashFlow::where('target_id', $c->id)
+            ->where('target_type', 'Khách hàng')
+            ->where('category', 'like', '%Thanh toán%')
+            ->sum('amount');
+        
+        $expectedDebt = $totalInvoiced - $totalPaid - $debtPayments - $totalReturned;
+        
+        if (abs($expectedDebt - $c->debt_amount) > 1) {
+            echo "  !! {$c->code} | {$c->name} | DB debt: " . number_format($c->debt_amount) . " | Calculated: " . number_format($expectedDebt) . "\n";
+        }
+    } catch (\Exception $e) {
+        echo "  !! Error checking {$c->code}: " . $e->getMessage() . "\n";
     }
 }
 
