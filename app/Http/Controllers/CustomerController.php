@@ -57,9 +57,9 @@ class CustomerController extends Controller
 
         // Summary totals
         $summary = [
-            'total_debt' => Customer::where('debt_amount', '>', 0)->sum('debt_amount'),
-            'total_spent' => Customer::sum('total_spent'),
-            'total_returns' => Customer::sum('total_returns'),
+            'total_debt' => Customer::where('is_customer', true)->where('debt_amount', '>', 0)->sum('debt_amount'),
+            'total_spent' => Customer::where('is_customer', true)->sum('total_spent'),
+            'total_returns' => Customer::where('is_customer', true)->sum('total_returns'),
         ];
 
         return Inertia::render('Customers/Index', [
@@ -283,9 +283,9 @@ class CustomerController extends Controller
             ]);
         }
 
-        // 3) If dual-role (also supplier): include purchase entries (mirrored)
+        // 3) If dual-role (is_customer AND is_supplier): include purchase entries (mirrored)
         // In KiotViet customer view: purchases show as NEGATIVE (we owe them → offsets what they owe us)
-        if ($customer->is_supplier) {
+        if ($customer->is_customer && $customer->is_supplier) {
             $purchases = Purchase::where('supplier_id', $customer->id)
                 ->where('status', 'completed')
                 ->orderBy('created_at', 'desc')
