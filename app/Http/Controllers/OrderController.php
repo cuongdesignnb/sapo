@@ -238,4 +238,113 @@ class OrderController extends Controller
             'don_hang.csv'
         );
     }
+
+    /**
+     * Xử lý đơn hàng — Chuyển Order (Phiếu tạm) → Invoice (Hóa đơn).
+     * Trừ kho, tính công nợ, tạo CashFlow.
+     */
+    public function processOrder(Request $request, Order $order)
+    {
+        if ($order->status === 'completed') {
+            return back()->with('error', 'Đơn hàng đã được xử lý trước đó.');
+        }
+
+        $validated = $request->validate([
+            'amount_paid' => 'required|numeric|min:0',
+            'payment_method' => 'nullable|string',
+        ]);
+
+        try {
+            \Illuminate\Support\Facades\DB::beginTransaction();
+
+            $order->load('items.product', 'customer');
+            $customer = $order->customer;
+            $amountPaid = $validated['amount_paid'];
+            $paymentMethod = $validated['payment_method'] ?? 'cash';
+
+            // 1) Create Invoice from Order
+            $invoice = \App\Models\Invoice::create([
+                'code' => 'HD' . time() . rand(10, 99),
+                'subtotal' => $order->total_price,
+                'discount' => $order->discount,
+                'total' => $order->total_payment,
+                'customer_paid' => $amountPaid,
+                'customer_id' => $customer?->id,
+                'created_by_name' => $order->created_by_name,
+                'seller_name' => $order->assigned_to_name,
+                'sales_channel' => $order->sales_channel ?? 'Bán trực tiếp',
+                'price_book_name' => $order->price_book_name,
+                'payment_method' => $paymentMethod,
+                'note' => 'Từ đơn hàng ' . $order->code,
+                'status' => 'Hoàn thành',
+            ]);
+
+            // 2) Create Invoice Items + Deduct stock
+            foreach ($order->items as $orderItem) {
+                $product = $orderItem->product;
+
+                if ($product) {
+                    $product = Product::lockForUpdate()->find($product->id);
+                    $allowOversell = Setting::get('inventory_allow_oversell', true);
+                    if (!$allowOversell && $product->stock_quantity < $orderItem->qty) {
+                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
+                    }
+                    $product->stock_quantity -= $orderItem->qty;
+                    $product->save();
+                }
+
+                $invoice->items()->create([
+                    'product_id' => $orderItem->product_id,
+                    'quantity' => $orderItem->qty,
+                    'price' => $orderItem->price,
+                    'cost_price' => $product->cost_price ?? 0,
+                ]);
+            }
+
+            // 3) Customer debt tracking
+            $debtAmount = $order->total_payment - $amountPaid;
+            if ($customer) {
+                if ($debtAmount != 0) {
+                    $customer->increment('debt_amount', $debtAmount);
+                }
+                $customer->increment('total_spent', $order->total_payment);
+            }
+
+            // 4) CashFlow
+            if ($amountPaid > 0) {
+                \App\Models\CashFlow::create([
+                    'code' => 'PT' . time() . rand(10, 99),
+                    'type' => 'receipt',
+                    'amount' => $amountPaid,
+                    'time' => now(),
+                    'category' => 'Thu tiền khách trả',
+                    'target_type' => 'Khách hàng',
+                    'target_id' => $customer?->id,
+                    'target_name' => $customer?->name ?? 'Khách lẻ',
+                    'reference_type' => 'Invoice',
+                    'reference_code' => $invoice->code,
+                    'payment_method' => $paymentMethod,
+                    'description' => 'Xử lý đơn ' . $order->code . ' → HD ' . $invoice->code,
+                ]);
+            }
+
+            // 5) Auto debt offset
+            if ($customer) {
+                \App\Services\DebtOffsetService::offsetDebts($customer);
+            }
+
+            // 6) Update Order status
+            $order->update([
+                'status' => 'completed',
+                'amount_paid' => $amountPaid,
+            ]);
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            return back()->with('success', "Xử lý thành công! Hóa đơn {$invoice->code} đã được tạo.");
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+            return back()->with('error', 'Lỗi: ' . $e->getMessage());
+        }
+    }
 }

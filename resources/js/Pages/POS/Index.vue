@@ -56,6 +56,9 @@ const customerPaid = ref(0);
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 
+// Sale mode: 'normal' | 'quick_order' | 'delivery'
+const saleMode = ref('normal');
+
 // ── Customer Search ──
 const customerQuery = ref('');
 const customerResults = ref([]);
@@ -371,6 +374,34 @@ const processCheckout = async () => {
             return;
         }
 
+        // Đặt nhanh: tạo Order (Phiếu tạm) — không cần thanh toán
+        if (saleMode.value === 'quick_order') {
+            const orderPayload = {
+                subtotal: subtotal.value,
+                discount: discount.value,
+                total: totalAmount.value,
+                customer_id: selectedCustomer.value?.id || null,
+                employee_id: selectedEmployeeId.value || null,
+                sale_time: saleDate.value || null,
+                items: cart.value.map(item => ({
+                    product_id: item.product.id,
+                    quantity: item.quantity,
+                    price: item.price,
+                }))
+            };
+
+            const response = await axios.post('/api/pos/quick-order', orderPayload);
+            if (response.data.success) {
+                toastMsg.value = response.data.message;
+                setTimeout(() => toastMsg.value = '', 4000);
+                resetAfterCheckout();
+            } else {
+                alert("Lỗi: " + response.data.message);
+            }
+            return;
+        }
+
+        // Bán thường / Bán giao hàng: tạo Invoice
         const payload = {
             subtotal: subtotal.value,
             discount: discount.value,
@@ -394,17 +425,7 @@ const processCheckout = async () => {
         if (response.data.success) {
             toastMsg.value = `${response.data.message} - Phiếu ${response.data.invoice_code}`;
             setTimeout(() => toastMsg.value = '', 4000);
-
-            clearDraft();
-            cart.value = [];
-            discount.value = 0;
-            customerPaid.value = 0;
-            paymentMethod.value = 'cash';
-            bankAccountInfo.value = '';
-            selectedCustomer.value = null;
-            customerQuery.value = '';
-            
-            searchProducts(); 
+            resetAfterCheckout();
         } else {
             alert("Lỗi: " + response.data.message);
         }
@@ -415,6 +436,18 @@ const processCheckout = async () => {
     } finally {
         isCheckingOut.value = false;
     }
+};
+
+const resetAfterCheckout = () => {
+    clearDraft();
+    cart.value = [];
+    discount.value = 0;
+    customerPaid.value = 0;
+    paymentMethod.value = 'cash';
+    bankAccountInfo.value = '';
+    selectedCustomer.value = null;
+    customerQuery.value = '';
+    searchProducts();
 };
 </script>
 
@@ -739,15 +772,49 @@ const processCheckout = async () => {
                     </div>
                 </div>
 
+                <!-- Sale Mode Bar (giống KiotViet) -->
+                <div class="border-t border-gray-200 flex text-xs font-semibold">
+                    <button 
+                        @click="saleMode = 'quick_order'" 
+                        :class="saleMode === 'quick_order' ? 'bg-orange-50 text-orange-600 border-t-2 border-orange-500' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'"
+                        class="flex-1 py-2.5 flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        Đặt nhanh
+                    </button>
+                    <button 
+                        @click="saleMode = 'normal'" 
+                        :class="saleMode === 'normal' ? 'bg-blue-50 text-blue-600 border-t-2 border-blue-500' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'"
+                        class="flex-1 py-2.5 flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                        Bán thường
+                    </button>
+                    <button 
+                        @click="saleMode = 'delivery'" 
+                        :class="saleMode === 'delivery' ? 'bg-green-50 text-green-600 border-t-2 border-green-500' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'"
+                        class="flex-1 py-2.5 flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12l-2 8H6L4 3H2m6 0v4m8-4v4m-4 8a2 2 0 100 4 2 2 0 000-4zm6 0a2 2 0 100 4 2 2 0 000-4z"></path></svg>
+                        Bán giao hàng
+                    </button>
+                </div>
+
                 <!-- Checkout Button -->
-                <div class="mt-auto border-t border-gray-200 sticky bottom-0 z-20 relative">
+                <div class="mt-auto sticky bottom-0 z-20 relative">
                     <button 
                         @click="processCheckout" 
                         :disabled="isCheckingOut"
-                        class="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-75 disabled:cursor-wait text-white font-bold text-lg py-5 flex items-center justify-center gap-2 transition-colors focus:ring-4 focus:ring-blue-300"
+                        :class="{
+                            'bg-orange-500 hover:bg-orange-600 focus:ring-orange-300': saleMode === 'quick_order',
+                            'bg-blue-600 hover:bg-blue-700 focus:ring-blue-300': saleMode === 'normal',
+                            'bg-green-600 hover:bg-green-700 focus:ring-green-300': saleMode === 'delivery',
+                        }"
+                        class="w-full disabled:opacity-75 disabled:cursor-wait text-white font-bold text-lg py-5 flex items-center justify-center gap-2 transition-colors focus:ring-4"
                     >
-                        <span v-if="!isCheckingOut">Thanh toán</span>
-                        <span v-else>Đang xử lý...</span>
+                        <span v-if="isCheckingOut">Đang xử lý...</span>
+                        <span v-else-if="saleMode === 'quick_order'">Đặt hàng</span>
+                        <span v-else>Thanh toán</span>
                         <svg v-if="!isCheckingOut" class="w-6 h-6 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
                     </button>
                     

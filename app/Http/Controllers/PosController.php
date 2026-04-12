@@ -94,33 +94,9 @@ class PosController extends Controller
             $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
             $employee = !empty($validated['employee_id']) ? \App\Models\Employee::find($validated['employee_id']) : null;
             $saleTime = $validated['sale_time'] ?? now();
-
-            // 1) Create Order (DH) — giống KiotViet: POS bán hàng → tạo đơn đặt hàng
             $debtAmount = $validated['total'] - $validated['customer_paid'];
-            $orderStatus = $debtAmount <= 0 ? 'completed' : 'processing';
 
-            $order = \App\Models\Order::create([
-                'code' => 'DH' . time() . rand(10, 99),
-                'customer_id' => $customer?->id,
-                'branch_id' => null,
-                'created_by_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
-                'assigned_to_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
-                'sales_channel' => 'Bán trực tiếp',
-                'price_book_name' => 'Bảng giá chung',
-                'status' => $orderStatus,
-                'total_price' => $validated['subtotal'],
-                'discount' => $validated['discount'],
-                'other_fees' => 0,
-                'total_payment' => $validated['total'],
-                'amount_paid' => $validated['customer_paid'],
-                'note' => ($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? 'Chuyển khoản: ' . $validated['bank_account_info'] : null,
-            ]);
-
-            if (!empty($validated['sale_time'])) {
-                $order->update(['created_at' => \Carbon\Carbon::parse($saleTime)]);
-            }
-
-            // 2) Create Invoice (HD) linked to Order
+            // Create Invoice (HD) — Bán thường: trừ kho + tính nợ
             $invoice = \App\Models\Invoice::create([
                 'code' => 'HD' . time() . rand(10, 99),
                 'subtotal' => $validated['subtotal'],
@@ -136,7 +112,6 @@ class PosController extends Controller
                 'note' => ($validated['payment_method'] ?? 'cash') === 'transfer' && !empty($validated['bank_account_info']) ? 'Chuyển khoản: ' . $validated['bank_account_info'] : null,
             ]);
 
-            // Cho phép chọn ngày bán (kế toán nhập sau)
             if (!empty($validated['sale_time'])) {
                 $invoice->update(['created_at' => \Carbon\Carbon::parse($saleTime)]);
             }
@@ -144,7 +119,7 @@ class PosController extends Controller
             foreach ($validated['items'] as $item) {
                 $serialIds = $item['serial_ids'] ?? [];
 
-                // Deduct stock & resolve product
+                // Deduct stock
                 $product = Product::lockForUpdate()->find($item['product_id']);
                 if ($product) {
                     $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', true);
@@ -155,22 +130,18 @@ class PosController extends Controller
                     $product->save();
                 }
 
-                // --- Snapshot cost_price at sale time ---
-                // For serial products: use average cost_price of the specific sold serials
-                // (These serials may have been repaired/upgraded, so cost differs from product average)
+                // Snapshot cost_price
                 $snapshotCostPrice = 0;
                 if (!empty($serialIds) && $product && $product->has_serial) {
                     $soldSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
                         ->get(['id', 'serial_number', 'cost_price']);
 
-                    // Average cost_price of selected serials (fallback to product.cost_price if 0)
                     $totalCost = $soldSerials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
                     $snapshotCostPrice = $soldSerials->count() > 0
                         ? round($totalCost / $soldSerials->count(), 2)
                         : ($product->cost_price ?? 0);
 
-                    // Mark serials as sold
                     \App\Models\SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
                         ->update([
@@ -179,16 +150,12 @@ class PosController extends Controller
                             'invoice_id' => $invoice->id,
                         ]);
 
-                    // Store serial numbers in invoice item for reference
-                    $serialNumbers = $soldSerials->pluck('serial_number');
-                    $serialStr = $serialNumbers->implode(', ');
+                    $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
                 } else {
-                    // Regular product: use product.cost_price
                     $snapshotCostPrice = (float) ($product->cost_price ?? 0);
                     $serialStr = null;
                 }
 
-                // Create Invoice Item with cost_price snapshot
                 $invoice->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity'   => $item['quantity'],
@@ -196,37 +163,22 @@ class PosController extends Controller
                     'cost_price' => $snapshotCostPrice,
                     'serial'     => $serialStr,
                 ]);
-
-                // Create Order Item (mirror)
-                $itemDiscount = 0;
-                $itemSubtotal = ($item['quantity'] * $item['price']) - $itemDiscount;
-                $order->items()->create([
-                    'product_id' => $item['product_id'],
-                    'qty'        => $item['quantity'],
-                    'price'      => $item['price'],
-                    'discount'   => $itemDiscount,
-                    'subtotal'   => $itemSubtotal,
-                ]);
             }
 
             // Customer debt tracking
             $customerName = $customer ? $customer->name : 'Khách lẻ';
-            // debtAmount > 0: KH nợ ta. debtAmount < 0: KH trả dư (ta nợ KH). Giống KiotViet.
 
             if ($customer) {
-                // Auto-enable dual-role: selling to a supplier makes them also a customer
                 if ($customer->is_supplier && !$customer->is_customer) {
                     $customer->is_customer = true;
                     $customer->save();
                 }
-
                 if ($debtAmount != 0) {
                     $customer->increment('debt_amount', $debtAmount);
                 }
                 $customer->increment('total_spent', $validated['total']);
             }
 
-            // Record into Cash Flow as a receipt ONLY if customer pays something
             if ($validated['customer_paid'] > 0) {
                 \App\Models\CashFlow::create([
                     'code' => 'PT' . time() . rand(10, 99),
@@ -244,7 +196,6 @@ class PosController extends Controller
                 ]);
             }
 
-            // Tự động đối trừ công nợ NCC↔KH
             if ($customer) {
                 \App\Services\DebtOffsetService::offsetDebts($customer);
             }
@@ -253,7 +204,6 @@ class PosController extends Controller
             return response()->json([
                 'success' => true,
                 'invoice_code' => $invoice->code,
-                'order_code' => $order->code,
                 'message' => 'Thanh toán thành công!',
             ]);
         } catch (\Exception $e) {
@@ -264,6 +214,75 @@ class PosController extends Controller
                 'line' => $e->getLine(),
             ]);
             return response()->json(['success' => false, 'message' => 'Có lỗi xảy ra: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Đặt nhanh — Tạo Order (Phiếu tạm) từ POS.
+     * KHÔNG trừ kho, KHÔNG tính công nợ.
+     */
+    public function quickOrder(Request $request)
+    {
+        $validated = $request->validate([
+            'subtotal' => 'required|numeric',
+            'discount' => 'numeric',
+            'total' => 'required|numeric',
+            'customer_id' => 'nullable|exists:customers,id',
+            'employee_id' => 'nullable|exists:employees,id',
+            'sale_time' => 'nullable',
+            'note' => 'nullable|string',
+            'items' => 'required|array',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|numeric|min:1',
+            'items.*.price' => 'required|numeric',
+        ]);
+
+        try {
+            $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
+            $employee = !empty($validated['employee_id']) ? \App\Models\Employee::find($validated['employee_id']) : null;
+
+            $order = \App\Models\Order::create([
+                'code' => 'DH' . time() . rand(10, 99),
+                'customer_id' => $customer?->id,
+                'branch_id' => null,
+                'created_by_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
+                'assigned_to_name' => $employee?->name ?? auth()->user()?->name ?? 'Admin',
+                'sales_channel' => 'Bán trực tiếp',
+                'price_book_name' => 'Bảng giá chung',
+                'status' => 'draft',
+                'total_price' => $validated['subtotal'],
+                'discount' => $validated['discount'] ?? 0,
+                'other_fees' => 0,
+                'total_payment' => $validated['total'],
+                'amount_paid' => 0,
+                'note' => $validated['note'] ?? null,
+            ]);
+
+            if (!empty($validated['sale_time'])) {
+                $order->update(['created_at' => \Carbon\Carbon::parse($validated['sale_time'])]);
+            }
+
+            foreach ($validated['items'] as $item) {
+                $subtotal = ($item['quantity'] * $item['price']);
+                $order->items()->create([
+                    'product_id' => $item['product_id'],
+                    'qty'        => $item['quantity'],
+                    'price'      => $item['price'],
+                    'discount'   => 0,
+                    'subtotal'   => $subtotal,
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'order_code' => $order->code,
+                'message' => 'Đặt hàng thành công! Mã: ' . $order->code,
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('POS Quick Order Error', [
+                'message' => $e->getMessage(),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Có lỗi: ' . $e->getMessage()], 500);
         }
     }
 

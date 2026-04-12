@@ -647,6 +647,7 @@ Route::middleware('permission:orders.create')->group(function () {
     Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
 });
 Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update')->middleware('permission:orders.edit');
+Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])->name('orders.process')->middleware('permission:orders.edit');
 
 // ===== CASH FLOWS =====
 Route::get('/cash-flows', [App\Http\Controllers\CashFlowController::class, 'index'])->name('cash_flows.index')->middleware('permission:cash_flows.view');
@@ -661,6 +662,7 @@ Route::middleware('permission:pos.use')->group(function () {
     Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
     Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
     Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
+    Route::post('/api/pos/quick-order', [PosController::class, 'quickOrder']);
     Route::get('/api/products/{product}/serials', [PosController::class, 'getProductSerials']);
     Route::get('/api/pos/customers', [PosController::class, 'searchCustomers']);
     Route::post('/api/pos/customers', [PosController::class, 'quickCreateCustomer']);

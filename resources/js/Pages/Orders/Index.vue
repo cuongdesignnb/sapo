@@ -184,6 +184,39 @@ const cancelOrder = (order) => {
     if (!confirm("Bạn có chắc muốn hủy đơn hàng này?")) return;
     updateOrder(order.id, "status", "cancelled");
 };
+
+// Xử lý đơn hàng → Invoice
+const showProcessModal = ref(false);
+const processingOrder = ref(null);
+const processAmountPaid = ref(0);
+const processPaymentMethod = ref('cash');
+const isProcessing = ref(false);
+
+const openProcessModal = (order) => {
+    processingOrder.value = order;
+    processAmountPaid.value = order.total_payment;
+    processPaymentMethod.value = 'cash';
+    showProcessModal.value = true;
+};
+
+const submitProcessOrder = () => {
+    if (!processingOrder.value) return;
+    isProcessing.value = true;
+    router.post(`/orders/${processingOrder.value.id}/process`, {
+        amount_paid: processAmountPaid.value,
+        payment_method: processPaymentMethod.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            showProcessModal.value = false;
+            processingOrder.value = null;
+            isProcessing.value = false;
+        },
+        onError: () => {
+            isProcessing.value = false;
+        },
+    });
+};
 </script>
 
 <template>
@@ -1784,6 +1817,14 @@ const cancelOrder = (order) => {
                                                     Đóng
                                                 </button>
                                                 <button
+                                                    v-if="order.status === 'draft' || order.status === 'confirmed'"
+                                                    @click.stop="openProcessModal(order)"
+                                                    class="bg-green-600 text-white px-4 py-1.5 rounded font-bold hover:bg-green-700 shadow-sm flex items-center gap-1"
+                                                >
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                                                    Xử lý đơn hàng
+                                                </button>
+                                                <button
                                                     v-if="
                                                         order.status !==
                                                             'cancelled' &&
@@ -1855,6 +1896,41 @@ const cancelOrder = (order) => {
                             v-html="link.label"
                         ></span>
                     </template>
+                </div>
+            </div>
+        </div>
+        <!-- Xử lý đơn hàng Modal -->
+        <div v-if="showProcessModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="showProcessModal = false">
+            <div class="bg-white rounded-lg shadow-xl w-[420px] max-w-full">
+                <div class="px-5 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">Xử lý đơn hàng → Hóa đơn</h3>
+                    <p class="text-sm text-gray-500 mt-1">Đơn {{ processingOrder?.code }} — {{ formatCurrency(processingOrder?.total_payment) }}₫</p>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Khách thanh toán</label>
+                        <input type="number" v-model.number="processAmountPaid" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Phương thức</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" v-model="processPaymentMethod" value="cash" class="text-blue-600" /> Tiền mặt
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" v-model="processPaymentMethod" value="transfer" class="text-blue-600" /> Chuyển khoản
+                            </label>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-600 bg-blue-50 p-3 rounded">
+                        <p>Còn nợ: <strong class="text-red-600">{{ formatCurrency((processingOrder?.total_payment || 0) - processAmountPaid) }}₫</strong></p>
+                    </div>
+                </div>
+                <div class="px-5 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+                    <button @click="showProcessModal = false" class="px-4 py-2 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-100">Hủy</button>
+                    <button @click="submitProcessOrder" :disabled="isProcessing" class="px-4 py-2 text-sm bg-green-600 text-white rounded font-medium hover:bg-green-700 disabled:opacity-50">
+                        {{ isProcessing ? 'Đang xử lý...' : 'Tạo hóa đơn' }}
+                    </button>
                 </div>
             </div>
         </div>
