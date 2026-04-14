@@ -107,12 +107,4 @@ class Employee extends Model
         $service = new \App\Services\SalaryCalculationService();
         return $service->calculateForEmployee($this, \Carbon\Carbon::parse($from), \Carbon\Carbon::parse($to));
     }
-
-    /**
-     * Các task assignments giao cho nhân viên này.
-     */
-    public function taskAssignments()
-    {
-        return $this->hasMany(TaskAssignment::class);
-    }
 }
