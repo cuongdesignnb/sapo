@@ -850,6 +850,7 @@ Route::prefix('api/notifications')->group(function () {
 // 👤 MY TASKS (session auth — called from MyTasks.vue via axios)
 Route::prefix('api/my-tasks')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\MyTasksController::class, 'index']);
+    Route::post('/accept-all', [\App\Http\Controllers\Api\MyTasksController::class, 'acceptAll']);
     Route::post('/{assignment}/respond', [\App\Http\Controllers\Api\MyTasksController::class, 'respond']);
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\MyTasksController::class, 'updateProgress']);
 });
