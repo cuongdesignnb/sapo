@@ -255,6 +255,7 @@ const save = async () => {
 
     try {
         await router.put(`/purchases/${props.purchase.id}`, {
+            status: status.value,
             supplier_id: selectedSupplierId.value || null,
             employee_id: selectedEmployeeId.value || null,
             purchase_date: purchaseDate.value || null,
@@ -538,7 +539,7 @@ const goToCreateProduct = () => {
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Trạng thái</label>
-                                <select v-model="status" class="w-[150px] border border-gray-300 rounded px-2 py-1 outline-none text-gray-700 focus:border-green-500 bg-green-50 font-medium" disabled>
+                                <select v-model="status" class="w-[150px] border border-gray-300 rounded px-2 py-1 outline-none text-gray-700 focus:border-green-500 bg-green-50 font-medium" :disabled="purchase.status === 'completed'">
                                     <option value="draft">Phiếu tạm</option>
                                     <option value="completed">Đã nhập hàng</option>
                                 </select>

@@ -421,10 +421,43 @@ class PurchaseController extends Controller
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
             'employee_id' => 'nullable|exists:employees,id',
+            'status' => 'nullable|string|in:draft,completed',
+            'items' => 'nullable|array',
+            'items.*.product_id' => 'required_with:items|exists:products,id',
+            'items.*.quantity' => 'required_with:items|integer|min:0',
+            'items.*.price' => 'required_with:items|numeric|min:0',
         ]);
+
+        $isDraftToComplete = $purchase->status === 'draft' && ($request->status ?? $purchase->status) === 'completed';
 
         try {
             DB::beginTransaction();
+
+            // Nếu draft → completed: cập nhật items trước khi tính tổng
+            if ($isDraftToComplete && $request->has('items')) {
+                $purchase->items()->delete();
+                $totalAmount = 0;
+                foreach ($request->items as $item) {
+                    $product = Product::find($item['product_id']);
+                    $qty = $item['quantity'] ?? 0;
+                    $price = $item['price'] ?? 0;
+                    $itemDiscount = $item['discount'] ?? 0;
+                    $subtotal = $qty * $price - $itemDiscount;
+                    $totalAmount += $subtotal;
+
+                    $purchase->items()->create([
+                        'product_id' => $product->id,
+                        'product_name' => $product->name,
+                        'product_code' => $product->sku,
+                        'quantity' => $qty,
+                        'price' => $price,
+                        'discount' => $itemDiscount,
+                        'subtotal' => $subtotal,
+                        'warranty_months' => $item['warranty_months'] ?? 0,
+                    ]);
+                }
+                $purchase->total_amount = $totalAmount;
+            }
 
             $oldPaidAmount = $purchase->paid_amount;
             $oldDebt = $purchase->debt_amount;
@@ -443,7 +476,69 @@ class PurchaseController extends Controller
                 'payment_method' => $request->payment_method ?? $purchase->payment_method,
                 'bank_account_info' => $request->bank_account_info,
                 'employee_id' => $request->employee_id ?? $purchase->employee_id,
+                'status' => $isDraftToComplete ? 'completed' : $purchase->status,
             ]);
+
+            // ── Draft → Completed: cộng tồn kho + ghi nợ ──
+            if ($isDraftToComplete) {
+                $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
+
+                foreach ($purchase->items as $item) {
+                    $product = Product::find($item->product_id);
+                    if (!$product) continue;
+
+                    $newStock = $product->stock_quantity + $item->quantity;
+                    $product->last_purchase_price = $item->price;
+
+                    if ($costingMethod === 'average') {
+                        $totalCurrentValue = $product->stock_quantity * $product->cost_price;
+                        $totalNewValue = $item->quantity * $item->price;
+                        $product->cost_price = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $item->price;
+                    }
+
+                    $product->stock_quantity = $newStock;
+                    $product->save();
+
+                    // Create Serial/IMEI records if applicable
+                    if ($product->has_serial && !empty($item->serials)) {
+                        foreach ($item->serials as $serialNumber) {
+                            SerialImei::create([
+                                'product_id' => $product->id,
+                                'serial_number' => trim(is_string($serialNumber) ? $serialNumber : $serialNumber['serial_number'] ?? ''),
+                                'status' => 'in_stock',
+                                'purchase_id' => $purchase->id,
+                            ]);
+                        }
+                    }
+                }
+
+                // Supplier debt
+                $supplier = Customer::find($purchase->supplier_id);
+                if ($supplier) {
+                    if ($supplier->is_customer && !$supplier->is_supplier) {
+                        $supplier->is_supplier = true;
+                    }
+                    $supplier->supplier_debt_amount += $debtAmount;
+                    $supplier->total_bought += $purchase->total_amount;
+                    $supplier->save();
+                }
+
+                // CashFlow
+                if ($paidAmount > 0) {
+                    CashFlow::create([
+                        'code' => 'PC' . date('YmdHis'),
+                        'type' => 'payment',
+                        'amount' => $paidAmount,
+                        'time' => now(),
+                        'category' => 'Chi tiền trả NCC',
+                        'target_type' => 'Nhà cung cấp',
+                        'target_name' => $supplier->name ?? 'Nhà cung cấp',
+                        'reference_type' => 'Purchase',
+                        'reference_code' => $purchase->code,
+                        'description' => 'Chi tiền trả NCC cho phiếu ' . $purchase->code,
+                    ]);
+                }
+            }
 
             // Update supplier debt if paid amount changed
             if ($paidAmount != $oldPaidAmount && $purchase->supplier) {
@@ -547,7 +642,7 @@ class PurchaseController extends Controller
                 ->where('reference_code', $purchase->code)
                 ->delete();
 
-            $purchase->items()->delete();
+            // Giữ items cho audit trail (không xóa)
             $purchase->status = 'cancelled';
             $purchase->save();
 
