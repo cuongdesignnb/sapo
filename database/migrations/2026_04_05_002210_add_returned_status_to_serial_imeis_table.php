@@ -12,7 +12,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        DB::statement("ALTER TABLE serial_imeis MODIFY COLUMN status ENUM('in_stock','sold','returning','warranty','defective','returned') NOT NULL DEFAULT 'in_stock'");
+        try {
+            DB::statement("ALTER TABLE serial_imeis MODIFY COLUMN status ENUM('in_stock','sold','returning','warranty','defective','returned') NOT NULL DEFAULT 'in_stock'");
+        } catch (\Exception $e) {
+            // SQLite: ENUM not supported, column is varchar — skip
+        }
     }
 
     /**

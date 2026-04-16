@@ -11,6 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('serial_imeis', 'purchase_return_id')) return;
         Schema::table('serial_imeis', function (Blueprint $table) {
             $table->unsignedBigInteger('purchase_return_id')->nullable()->after('purchase_id');
             $table->index('purchase_return_id');
