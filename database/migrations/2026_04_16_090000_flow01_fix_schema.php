@@ -55,9 +55,15 @@ return new class extends Migration
                 $pdo->exec('CREATE UNIQUE INDEX "customers_code_unique" ON "customers" ("code")');
                 $pdo->exec('PRAGMA foreign_keys = ON');
             } else {
-                // MySQL: đơn giản drop column
+                // MySQL: drop FK (nếu có) rồi drop column
+                try {
+                    Schema::table('customers', function (Blueprint $table) {
+                        $table->dropForeign(['linked_supplier_id']);
+                    });
+                } catch (\Exception $e) {
+                    // FK không tồn tại — bỏ qua
+                }
                 Schema::table('customers', function (Blueprint $table) {
-                    $table->dropForeign(['linked_supplier_id']);
                     $table->dropColumn('linked_supplier_id');
                 });
             }
