@@ -468,6 +468,15 @@ Route::get('/customers/{customer}/debt-offset-history', [CustomerController::cla
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index')->middleware('permission:suppliers.view');
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store')->middleware('permission:suppliers.create');
 
+// Supplier API (debt, history, payment)
+Route::get('/api/suppliers/{id}/debt-transactions', [SupplierController::class, 'debtTransactions']);
+Route::get('/api/suppliers/{id}/purchase-history', [SupplierController::class, 'purchaseHistory']);
+Route::post('/api/suppliers/{id}/payment', [SupplierController::class, 'recordPayment']);
+Route::post('/api/suppliers/{id}/adjust-debt', [SupplierController::class, 'adjustDebt']);
+Route::get('/api/suppliers/{id}/outstanding-purchases', [SupplierController::class, 'outstandingPurchases']);
+Route::get('/api/suppliers/{id}/export-debt-history', [SupplierController::class, 'exportDebtHistory']);
+Route::get('/api/suppliers/{id}/export-purchase-history', [SupplierController::class, 'exportPurchaseHistory']);
+
 // ===== PURCHASES =====
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create')->middleware('permission:purchases.create');
 Route::middleware('permission:purchases.view')->group(function () {

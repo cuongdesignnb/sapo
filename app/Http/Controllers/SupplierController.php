@@ -365,35 +365,111 @@ class SupplierController extends Controller
     }
 
     /**
-     * Thanh toán công nợ NCC
+     * Thanh toan cong no NCC — auto-allocate hoac manual allocation.
+     * CHI thay doi: them phan bo vao phieu nhap. KHONG dung debtTransactions/offset.
      */
     public function recordPayment(Request $request, $id)
     {
         $data = $request->validate([
             'amount' => 'required|numeric|min:0.01',
             'note' => 'nullable|string',
+            'mode' => 'nullable|string|in:auto,manual',
+            'allocations' => 'nullable|array',
+            'allocations.*.purchase_id' => 'required_with:allocations|exists:purchases,id',
+            'allocations.*.amount' => 'required_with:allocations|numeric|min:0',
         ]);
 
         $supplier = Customer::findOrFail($id);
         $currentDebt = $this->calculateDebt($id);
+        $totalPay = abs($data['amount']);
+        $mode = $data['mode'] ?? 'auto';
 
-        $code = 'PCPN' . date('ymd') . rand(100, 999);
-        SupplierDebtTransaction::create([
-            'supplier_id' => $id,
-            'code' => $code,
-            'type' => 'payment',
-            'amount' => -abs($data['amount']),
-            'debt_remain' => $currentDebt - abs($data['amount']),
-            'note' => $data['note'] ?? 'Thanh toán công nợ',
-            'user_id' => auth()->id(),
-        ]);
+        DB::transaction(function () use ($id, $supplier, $currentDebt, $totalPay, $mode, $data) {
+            $code = 'PCPN' . date('ymd') . rand(100, 999);
 
-        // Update cached debt
-        $supplier->update(['supplier_debt_amount' => $currentDebt - abs($data['amount'])]);
+            // Create SupplierDebtTransaction
+            SupplierDebtTransaction::create([
+                'supplier_id' => $id,
+                'code' => $code,
+                'type' => 'payment',
+                'amount' => -$totalPay,
+                'debt_remain' => $currentDebt - $totalPay,
+                'note' => $data['note'] ?? 'Thanh toan cong no',
+                'user_id' => auth()->id(),
+            ]);
 
+            // Create CashFlow phieu chi
+            CashFlow::create([
+                'code' => $code,
+                'type' => 'payment',
+                'amount' => $totalPay,
+                'time' => now(),
+                'category' => 'Chi thanh toan NCC',
+                'target_type' => 'Nha cung cap',
+                'target_id' => $id,
+                'target_name' => $supplier->name,
+                'reference_type' => 'SupplierPayment',
+                'reference_code' => $code,
+                'payment_method' => 'cash',
+                'description' => "Chi thanh toan cong no NCC {$supplier->name}: " . number_format($totalPay) . "d",
+            ]);
 
+            // Allocate into purchases
+            if ($mode === 'manual' && !empty($data['allocations'])) {
+                foreach ($data['allocations'] as $alloc) {
+                    if ($alloc['amount'] <= 0) continue;
+                    $purchase = Purchase::find($alloc['purchase_id']);
+                    if ($purchase && $purchase->supplier_id == $id) {
+                        $purchase->increment('paid_amount', $alloc['amount']);
+                        $purchase->decrement('debt_amount', $alloc['amount']);
+                    }
+                }
+            } else {
+                // Auto-allocate: oldest first
+                $remaining = $totalPay;
+                $purchases = Purchase::where('supplier_id', $id)
+                    ->where('status', 'completed')
+                    ->where('debt_amount', '>', 0)
+                    ->orderBy('purchase_date')
+                    ->orderBy('created_at')
+                    ->get();
 
-        return response()->json(['success' => true, 'message' => 'Đã ghi thanh toán.']);
+                foreach ($purchases as $purchase) {
+                    if ($remaining <= 0) break;
+                    $payThis = min($remaining, $purchase->debt_amount);
+                    $purchase->increment('paid_amount', $payThis);
+                    $purchase->decrement('debt_amount', $payThis);
+                    $remaining -= $payThis;
+                }
+            }
+
+            // Update cached debt
+            $supplier->update(['supplier_debt_amount' => $currentDebt - $totalPay]);
+        });
+
+        return response()->json(['success' => true, 'message' => 'Da ghi thanh toan.']);
+    }
+
+    /**
+     * Danh sach phieu nhap con no cua NCC (cho manual allocation UI).
+     */
+    public function outstandingPurchases($id)
+    {
+        $purchases = Purchase::where('supplier_id', $id)
+            ->where('status', 'completed')
+            ->where('debt_amount', '>', 0)
+            ->orderBy('purchase_date')
+            ->orderBy('created_at')
+            ->get(['id', 'code', 'total_amount', 'paid_amount', 'debt_amount', 'purchase_date', 'created_at']);
+
+        return response()->json($purchases->map(fn($p) => [
+            'id' => $p->id,
+            'code' => $p->code,
+            'total' => $p->total_amount,
+            'paid' => $p->paid_amount,
+            'remaining' => $p->debt_amount,
+            'date' => $p->purchase_date ? $p->purchase_date->format('d/m/Y') : ($p->created_at ? $p->created_at->format('d/m/Y') : ''),
+        ]));
     }
 
     /**
@@ -435,11 +511,19 @@ class SupplierController extends Controller
 
     private function calculateDebt($supplierId)
     {
+        // Primary: use cached supplier_debt_amount (always kept in sync)
+        $supplier = Customer::find($supplierId);
+        if ($supplier && $supplier->supplier_debt_amount != 0) {
+            return $supplier->supplier_debt_amount;
+        }
+
+        // Fallback: last transaction
         $lastTx = SupplierDebtTransaction::where('supplier_id', $supplierId)
-            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->first();
         if ($lastTx) return $lastTx->debt_remain;
 
+        // Final fallback: sum from purchases
         return Purchase::where('supplier_id', $supplierId)
             ->where('status', 'completed')
             ->sum('debt_amount');
