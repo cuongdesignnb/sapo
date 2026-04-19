@@ -8,6 +8,7 @@ use App\Models\ActivityLog;
 use App\Models\StockTake;
 use App\Models\StockTakeItem;
 use App\Models\Product;
+use App\Services\LockPeriodService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use App\Models\Branch;
@@ -87,6 +88,10 @@ class StockTakeController extends Controller
 
         try {
             DB::beginTransaction();
+
+            // Lock period check
+            $txDate = $request->action_date ? Carbon::parse($request->action_date) : Carbon::now();
+            app(LockPeriodService::class)->assertNotLocked($txDate, 'stocktake_create');
 
             $stockTake = StockTake::create([
                 'code' => $request->code ?? 'KK' . time(),

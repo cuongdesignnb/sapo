@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\Customer;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Services\LockPeriodService;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use App\Services\DebtOffsetService;
@@ -205,6 +206,10 @@ class PurchaseController extends Controller
 
         try {
             DB::beginTransaction();
+
+            // Lock period check
+            $txDate = $request->purchase_date ? \Carbon\Carbon::parse($request->purchase_date) : now();
+            app(LockPeriodService::class)->assertNotLocked($txDate, 'purchase_create');
 
             $total_amount = collect($request->items)->sum(function ($item) {
                 return $item['quantity'] * $item['price'] - ($item['discount'] ?? 0);
@@ -576,6 +581,9 @@ class PurchaseController extends Controller
 
     public function destroy(Purchase $purchase)
     {
+        // Lock period check
+        app(LockPeriodService::class)->assertNotLocked($purchase->purchase_date ?? $purchase->created_at, 'purchase_cancel');
+
         if ($purchase->status === 'cancelled') {
             return back()->with('error', 'Phiếu này đã bị hủy trước đó.');
         }

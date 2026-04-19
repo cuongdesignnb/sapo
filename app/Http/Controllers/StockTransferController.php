@@ -9,6 +9,7 @@ use App\Models\StockTransfer;
 use App\Models\StockTransferItem;
 use App\Models\Branch;
 use App\Models\Product;
+use App\Services\LockPeriodService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -89,6 +90,10 @@ class StockTransferController extends Controller
 
         try {
             DB::beginTransaction();
+
+            // Lock period check
+            $txDate = $request->action_date ? Carbon::parse($request->action_date) : Carbon::now();
+            app(LockPeriodService::class)->assertNotLocked($txDate, 'transfer_create');
 
             $transfer = StockTransfer::create([
                 'code' => $request->code ?? 'CH' . time(),

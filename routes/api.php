@@ -410,3 +410,21 @@ Route::prefix('activity-logs')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\ActivityLogController::class, 'index']);
     Route::get('/action-types', [\App\Http\Controllers\Api\ActivityLogController::class, 'actionTypes']);
 });
+
+// 🔒 LOCK PERIOD
+Route::get('/lock-period', function () {
+    $svc = app(\App\Services\LockPeriodService::class);
+    return response()->json([
+        'lock_date' => $svc->getLockDate()?->format('Y-m-d'),
+        'enabled' => $svc->getLockDate() !== null,
+    ]);
+});
+Route::post('/lock-period', function (\Illuminate\Http\Request $request) {
+    $request->validate(['lock_date' => 'nullable|date']);
+    $svc = app(\App\Services\LockPeriodService::class);
+    $svc->setLockDate($request->lock_date);
+    return response()->json([
+        'success' => true,
+        'lock_date' => $svc->getLockDate()?->format('Y-m-d'),
+    ]);
+});

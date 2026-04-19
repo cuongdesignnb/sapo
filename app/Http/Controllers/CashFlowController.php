@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ActivityLog;
 use App\Models\CashFlow;
 use App\Models\BankAccount;
+use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -88,6 +89,10 @@ class CashFlowController extends Controller
 
         $prefix = $request->type === 'receipt' ? 'PT' : 'PC';
 
+        // Lock period check
+        $txDate = $request->time ? \Carbon\Carbon::parse($request->time) : now();
+        app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_create');
+
         $cashFlow = CashFlow::create([
             'code' => $prefix . date('ymdHis') . rand(10, 99),
             'type' => $request->type,
@@ -161,6 +166,9 @@ class CashFlowController extends Controller
 
     public function destroy(CashFlow $cashFlow)
     {
+        // Lock period check
+        app(LockPeriodService::class)->assertNotLocked($cashFlow->time, 'cashflow_cancel');
+
         ActivityLog::log('cashflow_cancel', "Hủy phiếu {$cashFlow->code}, số tiền: " . number_format($cashFlow->amount), $cashFlow);
         $cashFlow->update(['status' => 'cancelled']);
         $cashFlow->delete(); // soft-delete

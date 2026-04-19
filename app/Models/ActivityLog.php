@@ -75,6 +75,9 @@ class ActivityLog extends Model
     const ACTION_CUSTOMER_UPDATE = 'customer_update';
     const ACTION_SUPPLIER_UPDATE = 'supplier_update';
 
+    // Khóa sổ
+    const ACTION_LOCK_PERIOD_CHANGE = 'lock_period_change';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create'   => 'Tạo phiếu nhập hàng',
@@ -108,6 +111,7 @@ class ActivityLog extends Model
         'product_update'    => 'Cập nhật hàng hóa',
         'customer_update'   => 'Cập nhật khách hàng',
         'supplier_update'   => 'Cập nhật nhà cung cấp',
+        'lock_period_change'=> 'Thay đổi khóa sổ',
     ];
 
     // ── Icon map (emoji) ──
@@ -143,6 +147,7 @@ class ActivityLog extends Model
         'product_update'    => '📦',
         'customer_update'   => '👤',
         'supplier_update'   => '🏭',
+        'lock_period_change'=> '🔒',
     ];
 
     // ── Relationships ──
