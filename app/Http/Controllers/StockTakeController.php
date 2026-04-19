@@ -154,4 +154,121 @@ class StockTakeController extends Controller
         $stockTake->load(['items.product']);
         return view('prints.stock_take', compact('stockTake'));
     }
+
+    /**
+     * Chi tiet phieu kiem kho.
+     */
+    public function show(StockTake $stockTake)
+    {
+        $stockTake->load(['items.product']);
+        return Inertia::render('StockTakes/Show', [
+            'stockTake' => $stockTake,
+        ]);
+    }
+
+    /**
+     * Sua draft kiem kho — chi cho phep khi status = draft.
+     */
+    public function update(Request $request, $id)
+    {
+        $stockTake = StockTake::findOrFail($id);
+
+        if ($stockTake->status !== 'draft') {
+            return response()->json(['success' => false, 'message' => 'Chi co the sua phieu nhap (draft).'], 422);
+        }
+
+        $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.actual_stock' => 'required|numeric|min:0',
+            'note' => 'nullable|string',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            // Delete old items
+            StockTakeItem::where('stock_take_id', $stockTake->id)->forceDelete();
+
+            $totalActual = 0;
+            $totalDiff = 0;
+            $totalIncrease = 0;
+            $totalDecrease = 0;
+            $totalDiffValue = 0;
+
+            foreach ($request->items as $item) {
+                $systemStock = $item['system_stock'] ?? Product::find($item['product_id'])->stock_quantity ?? 0;
+                $diffQty = $item['actual_stock'] - $systemStock;
+                $diffValue = $item['diff_value'] ?? 0;
+
+                StockTakeItem::create([
+                    'stock_take_id' => $stockTake->id,
+                    'product_id' => $item['product_id'],
+                    'system_stock' => $systemStock,
+                    'actual_stock' => $item['actual_stock'],
+                    'diff_qty' => $diffQty,
+                    'diff_value' => $diffValue,
+                ]);
+
+                $totalActual += $item['actual_stock'];
+                $totalDiff += $diffQty;
+                if ($diffQty > 0) $totalIncrease += $diffQty;
+                if ($diffQty < 0) $totalDecrease += $diffQty;
+                $totalDiffValue += $diffValue;
+            }
+
+            $stockTake->update([
+                'note' => $request->note ?? $stockTake->note,
+                'total_actual_qty' => $totalActual,
+                'total_diff_qty' => $totalDiff,
+                'total_diff_increase' => $totalIncrease,
+                'total_diff_decrease' => $totalDecrease,
+                'total_diff_value' => $totalDiffValue,
+            ]);
+
+            DB::commit();
+            return response()->json(['success' => true, 'message' => 'Da cap nhat phieu kiem kho.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Huy phieu kiem kho — rollback stock ve system_stock.
+     */
+    public function cancel($id)
+    {
+        $stockTake = StockTake::with('items')->findOrFail($id);
+
+        if ($stockTake->status === 'cancelled') {
+            return response()->json(['success' => false, 'message' => 'Phieu da bi huy truoc do.'], 422);
+        }
+
+        if ($stockTake->status === 'draft') {
+            $stockTake->update(['status' => 'cancelled']);
+            return response()->json(['success' => true, 'message' => 'Da huy phieu nhap.']);
+        }
+
+        // status = balanced -> rollback stock
+        try {
+            DB::beginTransaction();
+
+            foreach ($stockTake->items as $item) {
+                $product = Product::find($item->product_id);
+                if ($product) {
+                    // Restore to system_stock (what it was before stocktake)
+                    $product->update(['stock_quantity' => $item->system_stock]);
+                }
+            }
+
+            $stockTake->update(['status' => 'cancelled']);
+
+            DB::commit();
+            return response()->json(['success' => true, 'message' => 'Da huy phieu kiem kho va hoan ton kho.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 }
