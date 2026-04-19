@@ -11,6 +11,12 @@ class Order extends Model
 
     protected $guarded = ['id'];
 
+    const STATUS_DRAFT = 'draft';
+    const STATUS_CONFIRMED = 'confirmed';
+    const STATUS_COMPLETED = 'completed';
+    const STATUS_CANCELLED = 'cancelled';
+    const STATUS_ENDED = 'ended';
+
     public function items()
     {
         return $this->hasMany(OrderItem::class);
@@ -29,5 +35,10 @@ class Order extends Model
     public function creator()
     {
         return $this->belongsTo(Employee::class, 'created_by');
+    }
+
+    public function invoice()
+    {
+        return $this->hasOne(Invoice::class);
     }
 }

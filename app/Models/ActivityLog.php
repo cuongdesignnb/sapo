@@ -78,6 +78,14 @@ class ActivityLog extends Model
     // Khóa sổ
     const ACTION_LOCK_PERIOD_CHANGE = 'lock_period_change';
 
+    // Đặt hàng
+    const ACTION_ORDER_CREATE = 'order_create';
+    const ACTION_ORDER_UPDATE = 'order_update';
+    const ACTION_ORDER_CANCEL = 'order_cancel';
+    const ACTION_ORDER_END = 'order_end';
+    const ACTION_ORDER_CONVERT = 'order_convert';
+    const ACTION_ORDER_MERGE = 'order_merge';
+
     // ── Label map (Vietnamese) ──
     const ACTION_LABELS = [
         'purchase_create'   => 'Tạo phiếu nhập hàng',
@@ -112,6 +120,12 @@ class ActivityLog extends Model
         'customer_update'   => 'Cập nhật khách hàng',
         'supplier_update'   => 'Cập nhật nhà cung cấp',
         'lock_period_change'=> 'Thay đổi khóa sổ',
+        'order_create'      => 'Tạo đơn hàng',
+        'order_update'      => 'Cập nhật đơn hàng',
+        'order_cancel'      => 'Hủy đơn hàng',
+        'order_end'         => 'Kết thúc đơn hàng',
+        'order_convert'     => 'Chuyển đơn → hóa đơn',
+        'order_merge'       => 'Gộp đơn hàng',
     ];
 
     // ── Icon map (emoji) ──
@@ -148,6 +162,12 @@ class ActivityLog extends Model
         'customer_update'   => '👤',
         'supplier_update'   => '🏭',
         'lock_period_change'=> '🔒',
+        'order_create'      => '📝',
+        'order_update'      => '✏️',
+        'order_cancel'      => '❌',
+        'order_end'         => '🏁',
+        'order_convert'     => '➡️',
+        'order_merge'       => '🔀',
     ];
 
     // ── Relationships ──

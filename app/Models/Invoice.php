@@ -32,4 +32,9 @@ class Invoice extends Model
     {
         return $this->belongsTo(Employee::class);
     }
+
+    public function order()
+    {
+        return $this->belongsTo(Order::class);
+    }
 }

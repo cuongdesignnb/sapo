@@ -665,6 +665,9 @@ Route::middleware('permission:orders.create')->group(function () {
 });
 Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update')->middleware('permission:orders.edit');
 Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])->name('orders.process')->middleware('permission:orders.edit');
+Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel')->middleware('permission:orders.edit');
+Route::post('/orders/{order}/end', [OrderController::class, 'endOrder'])->name('orders.end')->middleware('permission:orders.edit');
+Route::post('/orders/merge', [OrderController::class, 'merge'])->name('orders.merge')->middleware('permission:orders.edit');
 
 // ===== CASH FLOWS =====
 Route::get('/cash-flows', [App\Http\Controllers\CashFlowController::class, 'index'])->name('cash_flows.index')->middleware('permission:cash_flows.view');

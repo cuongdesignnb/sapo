@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Models\ActivityLog;
 use App\Models\Order;
 use App\Models\Branch;
 use App\Models\Product;
@@ -11,6 +12,7 @@ use App\Models\Customer;
 use App\Models\Employee;
 use App\Models\PriceBook;
 use App\Models\Setting;
+use App\Services\LockPeriodService;
 use Carbon\Carbon;
 
 class OrderController extends Controller
@@ -127,6 +129,10 @@ class OrderController extends Controller
             'cod_amount' => 'numeric|nullable',
         ]);
 
+        // Lock period check
+        $txDate = $request->order_date ? Carbon::parse($request->order_date) : now();
+        app(LockPeriodService::class)->assertNotLocked($txDate, 'order_create');
+
         $priceBookName = 'Bảng giá chung';
         if (!empty($validated['price_book_id'])) {
             $priceBook = PriceBook::find($validated['price_book_id']);
@@ -196,6 +202,8 @@ class OrderController extends Controller
             ]);
         }
 
+        ActivityLog::log('order_create', "Tạo đơn hàng {$order->code}, tổng: " . number_format($order->total_payment), $order);
+
         if ($request->boolean('_print') || $request->wantsJson()) {
             return response()->json(['id' => $order->id, 'code' => $order->code]);
         }
@@ -209,13 +217,45 @@ class OrderController extends Controller
             return back()->with('error', 'Không được phép thay đổi thời gian giao dịch.');
         }
 
+        if (in_array($order->status, ['completed', 'cancelled'])) {
+            return back()->with('error', 'Không thể sửa đơn hàng đã hoàn thành hoặc đã hủy.');
+        }
+
         $validated = $request->validate([
             'assigned_to_name' => 'nullable|string',
             'sales_channel' => 'nullable|string',
             'status' => 'nullable|string',
+            'items' => 'nullable|array',
+            'items.*.product_id' => 'required_with:items|exists:products,id',
+            'items.*.qty' => 'required_with:items|numeric|min:1',
+            'items.*.price' => 'required_with:items|numeric',
+            'items.*.discount' => 'numeric',
+            'total_price' => 'nullable|numeric',
+            'discount' => 'nullable|numeric',
+            'other_fees' => 'nullable|numeric',
+            'total_payment' => 'nullable|numeric',
+            'amount_paid' => 'nullable|numeric',
+            'note' => 'nullable|string',
         ]);
 
-        $order->update($validated);
+        // Update items if provided
+        if ($request->has('items')) {
+            $order->items()->delete();
+            foreach ($validated['items'] as $item) {
+                $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
+                $order->items()->create([
+                    'product_id' => $item['product_id'],
+                    'qty' => $item['qty'],
+                    'price' => $item['price'],
+                    'discount' => $item['discount'] ?? 0,
+                    'subtotal' => $subtotal,
+                ]);
+            }
+        }
+
+        $order->update(array_filter($validated, fn($v) => $v !== null));
+
+        ActivityLog::log('order_update', "Cập nhật đơn hàng {$order->code}", $order);
 
         return back()->with('success', 'Cập nhật đơn hàng thành công');
     }
@@ -242,11 +282,16 @@ class OrderController extends Controller
     /**
      * Xử lý đơn hàng — Chuyển Order (Phiếu tạm) → Invoice (Hóa đơn).
      * Trừ kho, tính công nợ, tạo CashFlow.
+     * Prior deposit (order.amount_paid) is factored in.
      */
     public function processOrder(Request $request, Order $order)
     {
         if ($order->status === 'completed') {
             return back()->with('error', 'Đơn hàng đã được xử lý trước đó.');
+        }
+
+        if ($order->status === 'cancelled' || $order->status === 'ended') {
+            return back()->with('error', 'Đơn hàng đã bị hủy hoặc kết thúc.');
         }
 
         $validated = $request->validate([
@@ -259,16 +304,19 @@ class OrderController extends Controller
 
             $order->load('items.product', 'customer');
             $customer = $order->customer;
-            $amountPaid = $validated['amount_paid'];
+            $newPayment = $validated['amount_paid']; // Additional payment at conversion
+            $priorDeposit = $order->amount_paid ?? 0;
+            $totalPaid = $priorDeposit + $newPayment;
             $paymentMethod = $validated['payment_method'] ?? 'cash';
 
-            // 1) Create Invoice from Order
+            // 1) Create Invoice from Order — link via order_id
             $invoice = \App\Models\Invoice::create([
                 'code' => 'HD' . time() . rand(10, 99),
+                'order_id' => $order->id,
                 'subtotal' => $order->total_price,
                 'discount' => $order->discount,
                 'total' => $order->total_payment,
-                'customer_paid' => $amountPaid,
+                'customer_paid' => $totalPaid,
                 'customer_id' => $customer?->id,
                 'created_by_name' => $order->created_by_name,
                 'seller_name' => $order->assigned_to_name,
@@ -310,8 +358,8 @@ class OrderController extends Controller
                 ]);
             }
 
-            // 3) Customer debt tracking
-            $debtAmount = $order->total_payment - $amountPaid;
+            // 3) Customer debt tracking — debt = total - totalPaid
+            $debtAmount = $order->total_payment - $totalPaid;
             if ($customer) {
                 if ($debtAmount != 0) {
                     $customer->increment('debt_amount', $debtAmount);
@@ -319,12 +367,12 @@ class OrderController extends Controller
                 $customer->increment('total_spent', $order->total_payment);
             }
 
-            // 4) CashFlow
-            if ($amountPaid > 0) {
+            // 4) CashFlow for the NEW payment at conversion time (deposit was already recorded)
+            if ($newPayment > 0) {
                 \App\Models\CashFlow::create([
                     'code' => 'PT' . time() . rand(10, 99),
                     'type' => 'receipt',
-                    'amount' => $amountPaid,
+                    'amount' => $newPayment,
                     'time' => now(),
                     'category' => 'Thu tiền khách trả',
                     'target_type' => 'Khách hàng',
@@ -337,18 +385,143 @@ class OrderController extends Controller
                 ]);
             }
 
-
             // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
 
             // 6) Update Order status
             $order->update([
                 'status' => 'completed',
-                'amount_paid' => $amountPaid,
+                'amount_paid' => $totalPaid,
             ]);
+
+            ActivityLog::log('order_convert', "Chuyển đơn {$order->code} → hóa đơn {$invoice->code}", $order);
 
             \Illuminate\Support\Facades\DB::commit();
 
             return back()->with('success', "Xử lý thành công! Hóa đơn {$invoice->code} đã được tạo.");
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+            return back()->with('error', 'Lỗi: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Hủy đơn hàng.
+     */
+    public function cancel(Request $request, Order $order)
+    {
+        if ($order->status === 'completed') {
+            return back()->with('error', 'Không thể hủy đơn hàng đã hoàn thành.');
+        }
+        if ($order->status === 'cancelled') {
+            return back()->with('error', 'Đơn hàng đã bị hủy trước đó.');
+        }
+
+        $order->update([
+            'status' => 'cancelled',
+            'note' => ($order->note ? $order->note . ' | ' : '') . 'Hủy: ' . ($request->reason ?? ''),
+        ]);
+
+        ActivityLog::log('order_cancel', "Hủy đơn hàng {$order->code}", $order);
+
+        return back()->with('success', 'Đã hủy đơn hàng.');
+    }
+
+    /**
+     * Kết thúc đơn hàng (đóng mà không chuyển hóa đơn).
+     */
+    public function endOrder(Request $request, Order $order)
+    {
+        if (in_array($order->status, ['completed', 'cancelled', 'ended'])) {
+            return back()->with('error', 'Đơn hàng không ở trạng thái có thể kết thúc.');
+        }
+
+        $order->update([
+            'status' => 'ended',
+            'note' => ($order->note ? $order->note . ' | ' : '') . 'Kết thúc: ' . ($request->reason ?? ''),
+        ]);
+
+        ActivityLog::log('order_end', "Kết thúc đơn hàng {$order->code}", $order);
+
+        return back()->with('success', 'Đã kết thúc đơn hàng.');
+    }
+
+    /**
+     * Merge compatible orders — same customer, same branch, draft/confirmed states.
+     */
+    public function merge(Request $request)
+    {
+        $request->validate([
+            'order_ids' => 'required|array|min:2',
+            'order_ids.*' => 'required|exists:orders,id',
+        ]);
+
+        $orders = Order::with('items')->whereIn('id', $request->order_ids)->get();
+
+        // Validate compatibility
+        $customers = $orders->pluck('customer_id')->unique();
+        if ($customers->count() > 1) {
+            return back()->with('error', 'Không thể gộp: các đơn hàng phải cùng khách hàng.');
+        }
+
+        $branches = $orders->pluck('branch_id')->unique();
+        if ($branches->count() > 1) {
+            return back()->with('error', 'Không thể gộp: các đơn hàng phải cùng chi nhánh.');
+        }
+
+        $invalidStates = $orders->filter(fn($o) => !in_array($o->status, ['draft', 'confirmed']));
+        if ($invalidStates->isNotEmpty()) {
+            return back()->with('error', 'Không thể gộp: tất cả đơn hàng phải ở trạng thái nháp hoặc đã xác nhận.');
+        }
+
+        try {
+            \Illuminate\Support\Facades\DB::beginTransaction();
+
+            // Create merged order
+            $totalPrice = $orders->sum('total_price');
+            $totalDiscount = $orders->sum('discount');
+            $totalOther = $orders->sum('other_fees');
+            $totalPayment = $totalPrice - $totalDiscount + $totalOther;
+            $totalDeposit = $orders->sum('amount_paid');
+
+            $merged = Order::create([
+                'code' => 'DH' . time() . 'M',
+                'customer_id' => $customers->first(),
+                'branch_id' => $branches->first(),
+                'status' => 'draft',
+                'total_price' => $totalPrice,
+                'discount' => $totalDiscount,
+                'other_fees' => $totalOther,
+                'total_payment' => $totalPayment,
+                'amount_paid' => $totalDeposit,
+                'note' => 'Gộp từ: ' . $orders->pluck('code')->join(', '),
+                'created_by_name' => auth()->user()?->name,
+                'assigned_to_name' => $orders->first()->assigned_to_name,
+                'price_book_name' => $orders->first()->price_book_name,
+            ]);
+
+            // Copy all items
+            foreach ($orders as $order) {
+                foreach ($order->items as $item) {
+                    $merged->items()->create([
+                        'product_id' => $item->product_id,
+                        'qty' => $item->qty,
+                        'price' => $item->price,
+                        'discount' => $item->discount,
+                        'subtotal' => $item->subtotal,
+                    ]);
+                }
+                // Cancel source orders
+                $order->update([
+                    'status' => 'cancelled',
+                    'note' => ($order->note ? $order->note . ' | ' : '') . 'Đã gộp vào ' . $merged->code,
+                ]);
+            }
+
+            ActivityLog::log('order_merge', "Gộp đơn hàng: " . $orders->pluck('code')->join(', ') . " → {$merged->code}", $merged);
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            return back()->with('success', "Đã gộp thành đơn hàng {$merged->code}");
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\DB::rollBack();
             return back()->with('error', 'Lỗi: ' . $e->getMessage());
