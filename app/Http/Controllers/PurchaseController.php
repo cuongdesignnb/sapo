@@ -216,7 +216,12 @@ class PurchaseController extends Controller
             });
 
             $discount = $request->discount ?? 0;
-            $pay_amount = $total_amount - $discount; // Total to pay
+
+            // Chi phí nhập khác
+            $otherCosts = $request->other_costs ?? [];
+            $otherCostsTotal = collect($otherCosts)->sum(fn($c) => (float)($c['amount'] ?? 0));
+
+            $pay_amount = $total_amount - $discount + $otherCostsTotal; // Total to pay
             $paid_amount = $request->paid_amount ?? 0;
             $debt_amount = $pay_amount - $paid_amount; // Current debt for this order
 
@@ -227,6 +232,8 @@ class PurchaseController extends Controller
                 'employee_id' => $request->employee_id,
                 'total_amount' => $total_amount,
                 'discount' => $discount,
+                'other_costs' => !empty($otherCosts) ? $otherCosts : null,
+                'other_costs_total' => $otherCostsTotal,
                 'paid_amount' => $paid_amount,
                 'debt_amount' => $debt_amount,
                 'note' => $request->note,
@@ -469,13 +476,20 @@ class PurchaseController extends Controller
 
             $discount = $request->discount ?? $purchase->discount;
             $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
-            $payAmount = $purchase->total_amount - $discount;
+
+            // Chi phí nhập khác
+            $otherCosts = $request->other_costs ?? $purchase->other_costs ?? [];
+            $otherCostsTotal = collect($otherCosts)->sum(fn($c) => (float)($c['amount'] ?? 0));
+
+            $payAmount = $purchase->total_amount - $discount + $otherCostsTotal;
             $debtAmount = $payAmount - $paidAmount;
 
             $purchase->update([
                 'note' => $request->note ?? $purchase->note,
                 'purchase_date' => $request->purchase_date ?? $purchase->purchase_date,
                 'discount' => $discount,
+                'other_costs' => !empty($otherCosts) ? $otherCosts : null,
+                'other_costs_total' => $otherCostsTotal,
                 'paid_amount' => $paidAmount,
                 'debt_amount' => $debtAmount,
                 'payment_method' => $request->payment_method ?? $purchase->payment_method,

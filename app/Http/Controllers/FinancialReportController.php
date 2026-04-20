@@ -59,6 +59,13 @@ class FinancialReportController extends Controller
             ->whereIn('invoice_items.invoice_id', $invoiceIds)
             ->sum(DB::raw($costExpr));
 
+        // Purchase other costs (shipping, handling, etc.) — part of COGS
+        $purchaseOtherCosts = (float) Purchase::whereBetween('purchase_date', [$startDate, $endDate])
+            ->where('status', 'completed')
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->sum('other_costs_total');
+        $cogs += $purchaseOtherCosts;
+
         // (3) Sales Returns
         $returnsQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');

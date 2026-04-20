@@ -18,7 +18,8 @@ const totalQty = props.purchase.items?.reduce((s, i) => s + (Number(i.quantity) 
 const totalProducts = props.purchase.items?.length || 0;
 const calcTotal = props.purchase.items?.reduce((s, i) => s + (Number(i.subtotal) || 0), 0) || 0;
 const totalAmount = calcTotal || Number(props.purchase.total_amount) || 0;
-const needToPay = totalAmount - (Number(props.purchase.discount) || 0);
+const otherCostsTotal = Number(props.purchase.other_costs_total) || 0;
+const needToPay = totalAmount - (Number(props.purchase.discount) || 0) + otherCostsTotal;
 
 const printPurchase = () => {
     window.open(`/purchases/${props.purchase.id}/print`, '_blank', 'width=400,height=600');
@@ -54,7 +55,7 @@ const editForm = ref({
     employee_id: props.purchase.employee_id || '',
 });
 
-const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0));
+const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0) + otherCostsTotal);
 const editDebt = computed(() => Math.max(0, editPayAmount.value - (Number(editForm.value.paid_amount) || 0)));
 const isSubmitting = ref(false);
 
@@ -289,6 +290,19 @@ const paymentMethodLabel = (method) => {
                                     Giảm giá :
                                 </span>
                                 <span class="font-medium">{{ formatCurrency(purchase.discount) }}</span>
+                            </div>
+                            <!-- Chi phí nhập khác -->
+                            <div v-if="purchase.other_costs && purchase.other_costs.length > 0">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-500">Chi phí nhập khác:</span>
+                                    <span class="font-medium text-orange-600">{{ formatCurrency(otherCostsTotal) }}</span>
+                                </div>
+                                <div class="ml-4 mt-1 space-y-0.5">
+                                    <div v-for="(cost, ci) in (typeof purchase.other_costs === 'string' ? JSON.parse(purchase.other_costs) : purchase.other_costs)" :key="ci" class="flex justify-between text-[12px] text-gray-400">
+                                        <span>• {{ cost.name }}</span>
+                                        <span>{{ formatCurrency(cost.amount) }}</span>
+                                    </div>
+                                </div>
                             </div>
                             <div class="flex justify-between border-t border-gray-200 pt-2">
                                 <span class="text-gray-700 font-medium">Cần trả NCC:</span>
