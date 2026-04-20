@@ -154,24 +154,24 @@ class ProductController extends Controller
         // Append serial counts for serial products
         $products->getCollection()->transform(function ($product) {
             if ($product->has_serial) {
+                $inStockSerials = $product->serialImeis()->where('status', 'in_stock');
                 // Tồn kho = tất cả serial có status 'in_stock' (kể cả đang sửa chữa)
-                $product->in_stock_count = $product->serialImeis()
-                    ->where('status', 'in_stock')->count();
+                $product->in_stock_count = (clone $inStockSerials)->count();
                 // Sẵn bán = in_stock VÀ không đang sửa chữa
-                $product->ready_count = $product->serialImeis()
-                    ->where('status', 'in_stock')
+                $product->ready_count = (clone $inStockSerials)
                     ->where(function ($q) {
                         $q->whereNull('repair_status')
                           ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
                     })
                     ->count();
                 // Đang sửa chữa = in_stock VÀ đang trong luồng repair
-                $product->repairing_count = $product->serialImeis()
-                    ->where('status', 'in_stock')
+                $product->repairing_count = (clone $inStockSerials)
                     ->whereIn('repair_status', ['not_started', 'repairing'])
                     ->count();
                 // Tổng serial (bao gồm đã bán, để tham khảo)
                 $product->total_serial_count = $product->serialImeis()->count();
+                // Giá vốn BQ cuối = trung bình cost_price của serial in_stock
+                $product->avg_final_cost = (clone $inStockSerials)->avg('cost_price') ?? 0;
             }
             return $product;
         });

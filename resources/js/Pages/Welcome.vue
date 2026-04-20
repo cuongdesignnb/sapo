@@ -554,6 +554,7 @@ const formatDate = (val) => {
                             <th class="p-3">Nhóm hàng</th>
                             <SortableHeader label="Giá bán" field="retail_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                             <SortableHeader v-if="canViewCostPrice" label="Giá vốn (BQ)" field="cost_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <th v-if="canViewCostPrice" class="p-3 text-right text-xs">Giá vốn BQ cuối</th>
                             <SortableHeader label="Tồn kho" field="stock_quantity" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
@@ -618,6 +619,14 @@ const formatDate = (val) => {
                                         ).toLocaleString()
                                     }}
                                 </td>
+                                <td v-if="canViewCostPrice" class="p-3 text-right">
+                                    <template v-if="product.has_serial && product.avg_final_cost">
+                                        <span class="font-semibold text-indigo-600">{{ Number(product.avg_final_cost || 0).toLocaleString() }}</span>
+                                    </template>
+                                    <template v-else>
+                                        <span class="text-gray-400">---</span>
+                                    </template>
+                                </td>
                                 <td class="p-3 text-right">
                                     <!-- Sản phẩm có Serial -->
                                     <template v-if="product.has_serial">
@@ -645,7 +654,7 @@ const formatDate = (val) => {
                                 v-if="product.expanded"
                                 class="group transition-colors bg-gray-50/30"
                             >
-                                <td :colspan="canViewCostPrice ? 8 : 7" class="p-0">
+                                <td :colspan="canViewCostPrice ? 9 : 7" class="p-0">
                                     <div
                                         class="px-6 py-4 bg-[#f8fbff] shadow-inner border-y border-blue-100"
                                     >
