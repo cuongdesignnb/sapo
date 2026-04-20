@@ -478,31 +478,54 @@ class SupplierController extends Controller
     public function adjustDebt(Request $request, $id)
     {
         $data = $request->validate([
-            'amount' => 'required|numeric',
+            'amount' => 'required|numeric', // Giá trị nợ cuối mong muốn
             'note' => 'nullable|string',
             'type' => 'nullable|string', // 'adjustment' or 'discount'
         ]);
 
         $supplier = Customer::findOrFail($id);
-        $currentDebt = $this->calculateDebt($id);
+        $currentDebt = (float) $supplier->supplier_debt_amount;
         $type = $data['type'] ?? 'adjustment';
 
-        $code = ($type === 'discount' ? 'CKNCC' : 'DCNCC') . date('ymd') . rand(100, 999);
-        $amount = $type === 'discount' ? -abs($data['amount']) : $data['amount'];
+        if ($type === 'discount') {
+            // Chiết khấu: giữ logic cũ — amount là số tiền chiết khấu
+            $amount = -abs($data['amount']);
+            $code = 'CKNCC' . date('ymd') . rand(100, 999);
 
-        SupplierDebtTransaction::create([
-            'supplier_id' => $id,
-            'code' => $code,
-            'type' => $type,
-            'amount' => $amount,
-            'debt_remain' => $currentDebt + $amount,
-            'note' => $data['note'] ?? ($type === 'discount' ? 'Chiết khấu thanh toán' : 'Điều chỉnh công nợ'),
-            'user_id' => auth()->id(),
-        ]);
+            SupplierDebtTransaction::create([
+                'supplier_id' => $id,
+                'code' => $code,
+                'type' => $type,
+                'amount' => $amount,
+                'debt_remain' => $currentDebt + $amount,
+                'note' => $data['note'] ?? 'Chiết khấu thanh toán',
+                'user_id' => auth()->id(),
+            ]);
 
-        $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
+            $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
+        } else {
+            // Điều chỉnh: amount = nợ cuối mong muốn
+            $targetDebt = $data['amount'];
+            $diff = $targetDebt - $currentDebt;
 
+            if ($diff == 0) {
+                return response()->json(['success' => true, 'message' => 'Công nợ không thay đổi.']);
+            }
 
+            $code = 'DCNCC' . date('ymd') . rand(100, 999);
+
+            SupplierDebtTransaction::create([
+                'supplier_id' => $id,
+                'code' => $code,
+                'type' => 'adjustment',
+                'amount' => $diff,
+                'debt_remain' => $targetDebt,
+                'note' => ($data['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
+                'user_id' => auth()->id(),
+            ]);
+
+            $supplier->update(['supplier_debt_amount' => $targetDebt]);
+        }
 
         return response()->json(['success' => true, 'message' => 'Đã cập nhật công nợ.']);
     }

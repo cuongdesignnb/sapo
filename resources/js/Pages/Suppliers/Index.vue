@@ -218,13 +218,15 @@ const debtActionLabels = {
 const openDebtAction = (supplier, type) => {
     debtActionSupplier.value = supplier;
     debtActionType.value = type;
-    debtAmount.value = 0;
+    debtAmount.value = type === 'adjustment' ? (supplier.supplier_debt_amount || 0) : 0;
     debtNote.value = '';
     showDebtModal.value = true;
 };
 
 const submitDebtAction = async () => {
-    if (!debtAmount.value) return;
+    // Payment/discount: amount must be > 0. Adjustment: any value allowed
+    if (debtActionType.value !== 'adjustment' && !debtAmount.value) return;
+    if (debtActionType.value === 'adjustment' && (debtAmount.value === null || debtAmount.value === '')) return;
     debtSubmitting.value = true;
     const id = debtActionSupplier.value.id;
     try {
@@ -1654,14 +1656,14 @@ const showCbToast = () => {
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">
-                            {{ debtActionType === 'payment' ? 'Số tiền thanh toán' : debtActionType === 'discount' ? 'Số tiền chiết khấu' : 'Số tiền điều chỉnh' }}
+                            {{ debtActionType === 'payment' ? 'Số tiền thanh toán' : debtActionType === 'discount' ? 'Số tiền chiết khấu' : 'Nợ cuối mong muốn' }}
                             <span class="text-red-500">*</span>
                         </label>
                         <div class="relative">
-                            <input v-model.number="debtAmount" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold focus:border-blue-500 outline-none" placeholder="0" />
+                            <input v-model.number="debtAmount" type="number" :min="debtActionType === 'adjustment' ? undefined : 0" class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold focus:border-blue-500 outline-none" :placeholder="debtActionType === 'adjustment' ? 'Nhập giá trị nợ cuối (VD: 0)' : '0'" />
                             <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
                         </div>
-                        <p v-if="debtActionType === 'adjustment'" class="text-xs text-gray-400 mt-1">Nhập số dương để tăng nợ, số âm để giảm nợ.</p>
+                        <p v-if="debtActionType === 'adjustment'" class="text-xs text-gray-400 mt-1">Nhập giá trị nợ cuối mong muốn. VD: nhập 0 để xóa nợ.</p>
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
@@ -1670,7 +1672,7 @@ const showCbToast = () => {
                 </div>
                 <div class="flex justify-end gap-3 px-6 py-4 border-t">
                     <button @click="showDebtModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50">Hủy</button>
-                    <button @click="submitDebtAction" :disabled="!debtAmount || debtSubmitting"
+                    <button @click="submitDebtAction" :disabled="(debtActionType !== 'adjustment' && !debtAmount) || (debtActionType === 'adjustment' && (debtAmount === null || debtAmount === '')) || debtSubmitting"
                         class="px-6 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50 flex items-center gap-2"
                         :class="debtActionType === 'payment' ? 'bg-green-600 hover:bg-green-700' : debtActionType === 'discount' ? 'bg-orange-600 hover:bg-orange-700' : 'bg-blue-600 hover:bg-blue-700'">
                         <svg v-if="debtSubmitting" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
