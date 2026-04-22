@@ -204,9 +204,12 @@ class PurchaseReturnController extends Controller
                 }
             }
 
-            // Reduce supplier debt (NCC owes us now)
+            // Giảm công nợ NCC theo chuẩn KiotViet:
+            //   Tính vào công nợ = NCC cần trả (totalAmount) - Tiền NCC trả thực tế (refundAmount)
+            // Phần "ghi nợ" này làm giảm khoản mình đang nợ NCC (supplier_debt_amount).
             if ($purchase->supplier) {
-                $purchase->supplier->supplier_debt_amount -= $refundAmount;
+                $debtReduction = $totalAmount - $refundAmount;
+                $purchase->supplier->supplier_debt_amount -= $debtReduction;
                 $purchase->supplier->total_bought -= $totalAmount;
                 $purchase->supplier->save();
             }
@@ -307,31 +310,41 @@ class PurchaseReturnController extends Controller
                 $product->decrement('stock_quantity', $item['quantity']);
             }
 
-            // Reduce supplier debt
-            $supplier->decrement('supplier_debt_amount', $refundAmount);
+            // Giảm công nợ NCC: ghi nợ phần chưa refund.
+            $debtReduction = $totalAmount - $refundAmount;
+            $supplier->decrement('supplier_debt_amount', $debtReduction);
             $supplier->decrement('total_bought', $totalAmount);
 
-            // CashFlow if refund > 0
+            // CashFlow if refund > 0 (đồng bộ category có dấu để báo cáo gom nhóm đúng)
             if ($refundAmount > 0) {
                 CashFlow::create([
                     'code' => 'PT' . date('YmdHis'),
                     'type' => 'receipt',
                     'amount' => $refundAmount,
                     'time' => now(),
-                    'category' => 'Thu tien NCC tra hang',
-                    'target_type' => 'Nha cung cap',
+                    'category' => 'Thu tiền NCC trả hàng',
+                    'target_type' => 'Nhà cung cấp',
                     'target_name' => $supplier->name,
                     'reference_type' => 'PurchaseReturn',
                     'reference_code' => $return->code,
-                    'description' => 'NCC hoan tien tra hang nhap ' . $return->code,
+                    'description' => 'NCC hoàn tiền trả hàng nhập ' . $return->code,
                 ]);
             }
 
             DB::commit();
-            return response()->json(['success' => true, 'return' => $return]);
+
+            // Inertia-friendly redirect; fallback JSON cho API caller.
+            if ($request->wantsJson() && !$request->header('X-Inertia')) {
+                return response()->json(['success' => true, 'return' => $return]);
+            }
+            return redirect()->route('purchase-returns.index')
+                ->with('success', 'Tạo phiếu trả hàng nhập (trả nhanh) thành công!');
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            if ($request->wantsJson() && !$request->header('X-Inertia')) {
+                return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            }
+            return back()->with('error', 'Có lỗi: ' . $e->getMessage());
         }
     }
 
@@ -383,9 +396,10 @@ class PurchaseReturnController extends Controller
                 }
             }
 
-            // Restore supplier debt
+            // Đảo công nợ NCC: khôi phục phần đã ghi nợ = total_amount - refund_amount.
             if ($purchaseReturn->supplier) {
-                $purchaseReturn->supplier->supplier_debt_amount += $purchaseReturn->refund_amount;
+                $debtReduction = $purchaseReturn->total_amount - $purchaseReturn->refund_amount;
+                $purchaseReturn->supplier->supplier_debt_amount += $debtReduction;
                 $purchaseReturn->supplier->total_bought += $purchaseReturn->total_amount;
                 $purchaseReturn->supplier->save();
             }
