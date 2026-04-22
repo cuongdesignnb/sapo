@@ -318,12 +318,30 @@ class EmployeeReportController extends Controller
 
     // ═══════════════════════════════════════
     // Helper: Returns by employee
+    // `returns` table không có cột `created_by` trên production — join qua invoices
     // ═══════════════════════════════════════
     private function getReturnsByEmployee($query): array
     {
-        return (clone $query)->whereNotNull('created_by')
-            ->select('created_by as emp_id', DB::raw('SUM(total) as total'))
-            ->groupBy('created_by')
+        $hasCreatedBy = \Illuminate\Support\Facades\Schema::hasColumn('returns', 'created_by');
+
+        if ($hasCreatedBy) {
+            return (clone $query)->whereNotNull('created_by')
+                ->select('created_by as emp_id', DB::raw('SUM(total) as total'))
+                ->groupBy('created_by')
+                ->pluck('total', 'emp_id')
+                ->toArray();
+        }
+
+        // Fallback: lấy created_by từ invoice gốc của phiếu trả
+        $returnIds = (clone $query)->pluck('id');
+        if ($returnIds->isEmpty()) return [];
+
+        return DB::table('returns')
+            ->join('invoices', 'returns.invoice_id', '=', 'invoices.id')
+            ->whereIn('returns.id', $returnIds)
+            ->whereNotNull('invoices.created_by')
+            ->select('invoices.created_by as emp_id', DB::raw('SUM(returns.total) as total'))
+            ->groupBy('invoices.created_by')
             ->pluck('total', 'emp_id')
             ->toArray();
     }
