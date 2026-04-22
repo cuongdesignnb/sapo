@@ -64,8 +64,8 @@ class DashboardController extends Controller
             })
             ->sum('amount') ?? 0;
 
-        // Lợi nhuận thuần = Doanh thu thuần - Giá vốn thuần - Chi phí
-        $thisMonthProfit = $metricsMonth['net_revenue'] - $metricsMonth['cogs_net'] - $thisMonthExpenses;
+        // Lợi nhuận gộp = Doanh thu thuần - Giá vốn thuần (không trừ chi phí — chi phí thuộc LN thuần)
+        $thisMonthProfit = $metricsMonth['gross_profit'];
 
         // Nhập hàng tháng này
         $thisMonthPurchase = Purchase::where('created_at', '>=', $startOfMonth)->sum('total_amount');

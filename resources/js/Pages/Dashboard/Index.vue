@@ -63,10 +63,12 @@ const inventoryFilter = ref('all'); // 'all' | 'low' | 'out'
 const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
 const fmtShort = (v) => {
     const n = Number(v || 0);
-    if (n >= 1e9) return (n / 1e9).toFixed(1) + ' tỷ';
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + ' tr';
-    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'k';
-    return n.toString();
+    const abs = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (abs >= 1e9) return sign + (abs / 1e9).toFixed(1) + ' tỷ';
+    if (abs >= 1e6) return sign + (abs / 1e6).toFixed(1) + ' tr';
+    if (abs >= 1e3) return sign + (abs / 1e3).toFixed(0) + 'k';
+    return sign + abs.toString();
 };
 
 const pctChange = (current, prev) => {
