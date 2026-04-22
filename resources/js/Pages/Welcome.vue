@@ -601,6 +601,31 @@ const formatDate = (val) => {
                                 </td>
                                 <td class="p-3 font-medium text-gray-800">
                                     {{ product.name }}
+                                    <!-- Khi user search theo serial/IMEI → hiển thị nhãn trạng thái serial khớp -->
+                                    <div v-if="product.matched_serials && product.matched_serials.length > 0" class="flex flex-wrap gap-1 mt-1">
+                                        <span v-for="s in product.matched_serials" :key="s.id"
+                                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border"
+                                            :class="{
+                                                'bg-green-50 text-green-700 border-green-200': s.status === 'in_stock' && !['not_started','repairing'].includes(s.repair_status),
+                                                'bg-orange-50 text-orange-700 border-orange-200': s.status === 'in_stock' && ['not_started','repairing'].includes(s.repair_status),
+                                                'bg-gray-100 text-gray-500 border-gray-200': s.status === 'sold',
+                                                'bg-yellow-50 text-yellow-700 border-yellow-200': s.status === 'returning' || s.status === 'returned',
+                                                'bg-blue-50 text-blue-700 border-blue-200': s.status === 'warranty',
+                                                'bg-red-50 text-red-700 border-red-200': s.status === 'defective',
+                                            }">
+                                            <span class="font-mono">{{ s.serial_number }}</span>
+                                            <span>·</span>
+                                            <span>{{
+                                                s.status === 'in_stock' && ['not_started','repairing'].includes(s.repair_status) ? 'Đang sửa chữa' :
+                                                s.status === 'in_stock' ? 'Sẵn hàng' :
+                                                s.status === 'sold' ? 'Đã bán' :
+                                                s.status === 'returning' ? 'Đang trả' :
+                                                s.status === 'returned' ? 'Đã trả' :
+                                                s.status === 'warranty' ? 'Bảo hành' :
+                                                s.status === 'defective' ? 'Lỗi' : s.status
+                                            }}</span>
+                                        </span>
+                                    </div>
                                 </td>
                                 <td class="p-3 text-gray-600 text-sm">
                                     {{ product.category?.name || '---' }}

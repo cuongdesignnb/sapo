@@ -80,7 +80,10 @@ class ProductController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%");
+                    ->orWhere('barcode', 'like', "%{$search}%")
+                    ->orWhereHas('serialImeis', function ($sq) use ($search) {
+                        $sq->where('serial_number', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -151,8 +154,10 @@ class ProductController extends Controller
 
         $products = $query->paginate(50)->withQueryString();
 
+        $searchTerm = $request->input('search');
+
         // Append serial counts for serial products
-        $products->getCollection()->transform(function ($product) {
+        $products->getCollection()->transform(function ($product) use ($searchTerm) {
             if ($product->has_serial) {
                 $inStockSerials = $product->serialImeis()->where('status', 'in_stock');
                 // Tồn kho = tất cả serial có status 'in_stock' (kể cả đang sửa chữa)
@@ -172,6 +177,15 @@ class ProductController extends Controller
                 $product->total_serial_count = $product->serialImeis()->count();
                 // Giá vốn BQ cuối = trung bình cost_price của serial in_stock
                 $product->avg_final_cost = (clone $inStockSerials)->avg('cost_price') ?? 0;
+
+                // Nếu user search theo serial → attach các serial khớp + status/repair_status
+                // để UI có thể hiển thị nhãn (Sẵn hàng / Đang sửa / Đã bán...)
+                if ($searchTerm) {
+                    $product->matched_serials = $product->serialImeis()
+                        ->where('serial_number', 'like', "%{$searchTerm}%")
+                        ->limit(10)
+                        ->get(['id', 'serial_number', 'status', 'repair_status']);
+                }
             }
             return $product;
         });
