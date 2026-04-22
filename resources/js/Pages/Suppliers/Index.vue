@@ -211,6 +211,7 @@ const debtActionType = ref('payment'); // 'payment', 'adjustment', 'discount'
 const debtActionSupplier = ref(null);
 const debtAmount = ref(0);
 const debtNote = ref('');
+const debtDate = ref('');
 const debtSubmitting = ref(false);
 
 const debtActionLabels = {
@@ -224,6 +225,10 @@ const openDebtAction = (supplier, type) => {
     debtActionType.value = type;
     debtAmount.value = type === 'adjustment' ? (supplier.supplier_debt_amount || 0) : 0;
     debtNote.value = '';
+    // Mặc định ngày điều chỉnh = hiện tại
+    const _now = new Date();
+    _now.setMinutes(_now.getMinutes() - _now.getTimezoneOffset());
+    debtDate.value = _now.toISOString().slice(0, 16);
     showDebtModal.value = true;
 };
 
@@ -244,6 +249,7 @@ const submitDebtAction = async () => {
                 amount: debtAmount.value,
                 note: debtNote.value,
                 type: debtActionType.value,
+                date: debtDate.value,
             });
         }
         // Reload debt data
@@ -1456,6 +1462,12 @@ const showCbToast = () => {
                             <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
                         </div>
                         <p v-if="debtActionType === 'adjustment'" class="text-xs text-gray-400 mt-1">Nhập giá trị nợ cuối mong muốn. VD: nhập 0 để xóa nợ.</p>
+                    </div>
+                    <div v-if="debtActionType !== 'payment'">
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">
+                            {{ debtActionType === 'discount' ? 'Ngày chiết khấu' : 'Ngày điều chỉnh' }}
+                        </label>
+                        <input v-model="debtDate" type="datetime-local" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>

@@ -175,7 +175,7 @@ const debtModal = ref({
     customerName: "",
     currentDebt: 0,
 });
-const debtForm = reactive({ amount: 0, note: "", mode: "auto" });
+const debtForm = reactive({ amount: 0, note: "", mode: "auto", date: "" });
 const outstandingInvoices = ref([]);
 const loadingInvoices = ref(false);
 
@@ -190,6 +190,10 @@ const openDebtModal = async (customer, type) => {
     debtForm.amount = type === 'adjust' ? (customer.debt_amount || 0) : 0;
     debtForm.note = "";
     debtForm.mode = "auto";
+    // Mặc định ngày điều chỉnh = hiện tại (YYYY-MM-DDTHH:mm cho datetime-local)
+    const _now = new Date();
+    _now.setMinutes(_now.getMinutes() - _now.getTimezoneOffset());
+    debtForm.date = _now.toISOString().slice(0, 16);
     outstandingInvoices.value = [];
 
     // Load outstanding invoices if payment mode
@@ -259,7 +263,7 @@ const submitDebtModal = async () => {
         return;
     }
     try {
-        await axios.post(`/customers/${customerId}/debt-adjust`, { amount: debtForm.amount, note: debtForm.note });
+        await axios.post(`/customers/${customerId}/debt-adjust`, { amount: debtForm.amount, note: debtForm.note, date: debtForm.date });
         debtModal.value.show = false;
         await loadDebtHistory(customerId);
         router.reload({ only: ["customers"], preserveScroll: true });
@@ -2830,6 +2834,14 @@ const submit = () => {
                             <span class="font-semibold ml-1" :class="debtModal.currentDebt < 0 ? 'text-red-500' : ''">
                                 {{ Number(debtModal.currentDebt).toLocaleString() }}
                             </span>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Ngày điều chỉnh</label>
+                            <input
+                                v-model="debtForm.date"
+                                type="datetime-local"
+                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                            />
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Nợ cuối mong muốn</label>

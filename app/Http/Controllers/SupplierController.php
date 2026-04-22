@@ -513,18 +513,20 @@ class SupplierController extends Controller
             'amount' => 'required|numeric', // Giá trị nợ cuối mong muốn
             'note' => 'nullable|string',
             'type' => 'nullable|string', // 'adjustment' or 'discount'
+            'date' => 'nullable|date',
         ]);
 
         $supplier = Customer::findOrFail($id);
         $currentDebt = (float) $supplier->supplier_debt_amount;
         $type = $data['type'] ?? 'adjustment';
+        $adjustedAt = !empty($data['date']) ? \Carbon\Carbon::parse($data['date']) : now();
 
         if ($type === 'discount') {
             // Chiết khấu: giữ logic cũ — amount là số tiền chiết khấu
             $amount = -abs($data['amount']);
             $code = 'CKNCC' . date('ymd') . rand(100, 999);
 
-            SupplierDebtTransaction::create([
+            $tx = SupplierDebtTransaction::create([
                 'supplier_id' => $id,
                 'code' => $code,
                 'type' => $type,
@@ -533,6 +535,10 @@ class SupplierController extends Controller
                 'note' => $data['note'] ?? 'Chiết khấu thanh toán',
                 'user_id' => auth()->id(),
             ]);
+            if (!empty($data['date'])) {
+                $tx->created_at = $adjustedAt;
+                $tx->save();
+            }
 
             $supplier->update(['supplier_debt_amount' => $currentDebt + $amount]);
         } else {
@@ -546,7 +552,7 @@ class SupplierController extends Controller
 
             $code = 'DCNCC' . date('ymd') . rand(100, 999);
 
-            SupplierDebtTransaction::create([
+            $tx = SupplierDebtTransaction::create([
                 'supplier_id' => $id,
                 'code' => $code,
                 'type' => 'adjustment',
@@ -555,6 +561,10 @@ class SupplierController extends Controller
                 'note' => ($data['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
                 'user_id' => auth()->id(),
             ]);
+            if (!empty($data['date'])) {
+                $tx->created_at = $adjustedAt;
+                $tx->save();
+            }
 
             $supplier->update(['supplier_debt_amount' => $targetDebt]);
         }

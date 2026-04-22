@@ -542,6 +542,7 @@ class CustomerController extends Controller
         $validated = $request->validate([
             'amount' => 'required|numeric', // Giá trị nợ cuối mong muốn
             'note' => 'nullable|string|max:500',
+            'date' => 'nullable|date',
         ]);
 
         $targetDebt = $validated['amount']; // Nợ cuối user muốn set
@@ -554,12 +555,13 @@ class CustomerController extends Controller
 
         $type = $diff > 0 ? 'receipt' : 'payment';
         $prefix = $diff > 0 ? 'PT' : 'PC';
+        $adjustedAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
 
-        CashFlow::create([
+        $cashFlow = CashFlow::create([
             'code' => $prefix . date('ymdHis') . rand(10, 99),
             'type' => $type,
             'amount' => abs($diff),
-            'time' => now(),
+            'time' => $adjustedAt,
             'category' => 'Điều chỉnh công nợ',
             'target_type' => 'Khách hàng',
             'target_id' => $customer->id,
@@ -568,6 +570,11 @@ class CustomerController extends Controller
             'reference_code' => null,
             'description' => ($validated['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
         ]);
+        // Override created_at để hiển thị trong lịch sử theo ngày người dùng chọn
+        if (!empty($validated['date'])) {
+            $cashFlow->created_at = $adjustedAt;
+            $cashFlow->save();
+        }
 
         $customer->update(['debt_amount' => $targetDebt]);
 
