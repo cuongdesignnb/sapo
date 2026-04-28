@@ -6,34 +6,35 @@ use App\Models\InvoiceItem;
 use App\Models\InvoiceItemSerial;
 use App\Models\Product;
 use App\Models\SerialImei;
-use App\Models\StockMovement;
 use App\Models\Task;
 use App\Models\TaskPart;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 /**
- * Rebuild giá vốn bình quân di động (moving weighted average) cho toàn bộ
- * lịch sử của 1 hoặc nhiều sản phẩm theo chuẩn KiotViet.
+ * Rebuild giá vốn bình quân gia quyền (weighted moving average) cho toàn bộ
+ * lịch sử của 1 hoặc nhiều sản phẩm.
  *
- * Replay timeline gồm:
- *  - stock_movements: in_purchase, out_invoice, in_invoice_return, out_purchase_return
- *  - task_parts: direction=in (lắp linh kiện) / direction=out (tháo linh kiện)
+ * NGUỒN DỮ LIỆU DUY NHẤT (source of truth):
+ *  1. purchase_items       — Nhập mua hàng        (+S, +T)
+ *  2. invoice_items        — Bán hàng              (-S, -T)
+ *  3. return_items         — Khách trả hàng        (+S, +T)
+ *  4. purchase_return_items — Trả hàng NCC         (-S, -T)
+ *  5. stock_take_items     — Kiểm kho              (±S, ±T)
+ *  6. damage_items         — Xuất hủy              (-S, -T)
+ *  7. task_parts           — Linh kiện sửa chữa    (±S, ±T cho LINH KIỆN)
+ *  8. task_parts via task  — Sửa máy               (S giữ, ±T cho MÁY)
+ *
+ * KHÔNG ĐỌC stock_movements (trừ debug) — tránh đếm đôi.
+ * KHÔNG dùng initial_balance — tất cả SP đều có phiếu nhập đầy đủ.
  *
  * Cập nhật:
  *  - products.stock_quantity, cost_price (BQ), inventory_total_cost
- *  - stock_movements.unit_cost, total_cost, balance_qty, balance_cost
- *  - invoice_items.cost_price (per-unit COGS = BQ tại lúc bán)
- *  - invoice_item_serials.cost_price
+ *  - invoice_items.cost_price (COGS = BQ tại lúc bán)
  *  - serial_imeis.sold_cost_price
  *
- * Chạy DRY-RUN trước:
+ * Chạy:
  *   php artisan costing:rebuild-moving-avg --product=ID --dry-run
- *   php artisan costing:rebuild-moving-avg --all --dry-run
- *
- * Chạy thật:
- *   php artisan costing:rebuild-moving-avg --product=ID
  *   php artisan costing:rebuild-moving-avg --all
  */
 class RebuildMovingAvgCosting extends Command
@@ -43,7 +44,7 @@ class RebuildMovingAvgCosting extends Command
         {--all : Rebuild toàn bộ sản phẩm}
         {--dry-run : Chỉ tính toán, không ghi DB}';
 
-    protected $description = 'Rebuild giá vốn bình quân di động (moving avg) từ lịch sử ledger + task_parts';
+    protected $description = 'Rebuild giá vốn bình quân gia quyền từ source tables';
 
     public function handle(): int
     {
@@ -70,12 +71,11 @@ class RebuildMovingAvgCosting extends Command
 
         $this->info(($dry ? '[DRY-RUN] ' : '') . 'Rebuild ' . $products->count() . ' sản phẩm');
 
-        $totals = ['products' => 0, 'movements_updated' => 0, 'invoice_items_updated' => 0, 'serials_updated' => 0];
+        $totals = ['products' => 0, 'invoice_items_updated' => 0, 'serials_updated' => 0];
 
         foreach ($products as $product) {
             $stats = $this->rebuildOne($product, $dry);
             $totals['products']++;
-            $totals['movements_updated'] += $stats['movements_updated'];
             $totals['invoice_items_updated'] += $stats['invoice_items_updated'];
             $totals['serials_updated'] += $stats['serials_updated'];
         }
@@ -83,7 +83,6 @@ class RebuildMovingAvgCosting extends Command
         $this->newLine();
         $this->info('───────── TỔNG KẾT ─────────');
         $this->line('Sản phẩm: ' . $totals['products']);
-        $this->line('Stock movements cập nhật: ' . $totals['movements_updated']);
         $this->line('Invoice items cập nhật: ' . $totals['invoice_items_updated']);
         $this->line('Serials cập nhật: ' . $totals['serials_updated']);
         if ($dry) {
@@ -92,12 +91,10 @@ class RebuildMovingAvgCosting extends Command
         return self::SUCCESS;
     }
 
-    /** @return array{movements_updated:int,invoice_items_updated:int,serials_updated:int} */
     private function rebuildOne(Product $product, bool $dry): array
     {
-        $stats = ['movements_updated' => 0, 'invoice_items_updated' => 0, 'serials_updated' => 0];
+        $stats = ['invoice_items_updated' => 0, 'serials_updated' => 0];
 
-        // Build event timeline
         $events = $this->buildTimeline($product);
         if (empty($events)) {
             $this->line(sprintf('  • #%d %s: không có lịch sử, bỏ qua.', $product->id, $product->sku));
@@ -105,105 +102,137 @@ class RebuildMovingAvgCosting extends Command
         }
 
         $cb = function () use ($product, $events, $dry, &$stats) {
-            $qty = 0;
-            $total = 0.0;
-            // map[invoice_id] = ['cogs_per_unit' => float, 'qty' => int] để hoàn lại đúng số khi return
+            $qty = 0;    // S — số lượng tồn
+            $total = 0.0; // T — tổng giá trị tồn kho
+
+            // Lưu COGS tại thời điểm bán để hoàn lại đúng khi khách trả
             $invoiceCogsMap = [];
-            // Set serial_id đã sold trong timeline — dùng để bỏ qua repair trên serial đã bán
+            // Theo dõi serial đã bán → skip repair trên serial đã bán
             $soldSerials = [];
             $skippedRepairs = 0;
-            $skippedRepairTotal = 0.0;
+            $skippedRepairCost = 0.0;
 
             foreach ($events as $e) {
                 switch ($e['kind']) {
+                    // ═══ 1. NHẬP MUA ═══
                     case 'purchase':
                         $qty += $e['qty'];
                         $total += $e['qty'] * $e['unit_cost'];
-                        $this->writeMovement($e['movement_id'], $e['unit_cost'], $qty, $total, $dry, $stats);
                         break;
 
-                    case 'repair_in':
-                        // Bỏ qua nếu task gắn với serial đã bán
-                        if (!empty($e['serial_imei_id']) && isset($soldSerials[$e['serial_imei_id']])) {
-                            $skippedRepairs++;
-                            $skippedRepairTotal += $e['delta'];
-                            break;
-                        }
-                        // Nhập bóc máy → tăng tồn kho + giá trị
-                        $repairQty = (int) ($e['qty'] ?? 1);
-                        $qty += $repairQty;
-                        $total += $e['delta'];
-                        break;
-
-                    case 'repair_out':
-                        if (!empty($e['serial_imei_id']) && isset($soldSerials[$e['serial_imei_id']])) {
-                            $skippedRepairs++;
-                            $skippedRepairTotal += $e['delta'];
-                            break;
-                        }
-                        // Xuất sửa chữa → giảm tồn kho + giá trị
-                        $repairQty = (int) ($e['qty'] ?? 1);
-                        $qty = max(0, $qty - $repairQty);
-                        $total -= $e['delta'];
-                        if ($total < 0) $total = 0;
-                        break;
-
+                    // ═══ 2. BÁN HÀNG ═══
                     case 'sale':
                         $bq = $qty > 0 ? ($total / $qty) : 0;
                         $cogsTotal = $bq * $e['qty'];
                         $total = max(0, $total - $cogsTotal);
                         $qty = max(0, $qty - $e['qty']);
-                        $this->writeMovement($e['movement_id'], $bq, $qty, $total, $dry, $stats);
-                        $this->writeInvoiceItemCost($e['invoice_item_id'], $bq, $dry, $stats);
+
+                        // Ghi COGS vào invoice_items
+                        if ($e['invoice_item_id']) {
+                            $this->writeInvoiceItemCost($e['invoice_item_id'], $bq, $dry, $stats);
+                        }
+                        // Ghi sold_cost_price vào serial
                         if (!empty($e['serial_imei_ids'])) {
                             foreach ($e['serial_imei_ids'] as $sid) {
                                 $soldSerials[$sid] = true;
                                 $this->writeSerialSoldCost($sid, $bq, $dry, $stats);
-                                $this->writeInvoiceItemSerialCost($e['invoice_item_id'], $sid, $bq, $dry, $stats);
+                                if ($e['invoice_item_id']) {
+                                    $this->writeInvoiceItemSerialCost($e['invoice_item_id'], $sid, $bq, $dry, $stats);
+                                }
                             }
                         }
-                        $invoiceCogsMap[$e['invoice_id']] = ['cogs_per_unit' => $bq];
+                        $invoiceCogsMap[$e['invoice_id']] = $bq;
                         break;
 
+                    // ═══ 3. KHÁCH TRẢ HÀNG ═══
                     case 'sale_return':
-                        $cogs = $invoiceCogsMap[$e['invoice_id']]['cogs_per_unit'] ?? ($e['unit_cost'] ?: 0);
+                        $cogs = $invoiceCogsMap[$e['invoice_id']] ?? ($e['unit_cost'] ?: 0);
                         $total += $e['qty'] * $cogs;
                         $qty += $e['qty'];
                         if (!empty($e['serial_imei_ids'])) {
                             foreach ($e['serial_imei_ids'] as $sid) {
-                                unset($soldSerials[$sid]); // trả về in_stock
+                                unset($soldSerials[$sid]);
                             }
                         }
-                        $this->writeMovement($e['movement_id'], $cogs, $qty, $total, $dry, $stats);
                         break;
 
+                    // ═══ 4. TRẢ HÀNG NCC ═══
                     case 'purchase_return':
-                        $unitCost = $e['unit_cost'];
-                        $total = max(0, $total - $e['qty'] * $unitCost);
+                        $total = max(0, $total - $e['qty'] * $e['unit_cost']);
                         $qty = max(0, $qty - $e['qty']);
-                        $this->writeMovement($e['movement_id'], $unitCost, $qty, $total, $dry, $stats);
+                        break;
+
+                    // ═══ 5. KIỂM KHO ═══
+                    case 'stock_take':
+                        $bq = $qty > 0 ? ($total / $qty) : 0;
+                        $diff = $e['diff']; // actual - system, có thể âm hoặc dương
+                        $qty += $diff;
+                        $total += $diff * $bq;
+                        if ($qty < 0) $qty = 0;
+                        if ($total < 0) $total = 0;
+                        break;
+
+                    // ═══ 6. XUẤT HỦY ═══
+                    case 'damage':
+                        $bq = $qty > 0 ? ($total / $qty) : 0;
+                        $total = max(0, $total - $bq * $e['qty']);
+                        $qty = max(0, $qty - $e['qty']);
+                        break;
+
+                    // ═══ 7. LINH KIỆN XUẤT SỬA CHỮA ═══
+                    // (SP này là LINH KIỆN, xuất khỏi kho → S giảm, T giảm)
+                    case 'part_export':
+                        $qty = max(0, $qty - $e['qty']);
+                        $total = max(0, $total - $e['cost']);
+                        break;
+
+                    // ═══ 8. LINH KIỆN NHẬP BÓC MÁY ═══
+                    // (SP này là LINH KIỆN, nhập vào kho từ bóc máy → S tăng, T tăng)
+                    case 'part_import':
+                        $qty += $e['qty'];
+                        $total += $e['cost'];
+                        break;
+
+                    // ═══ 9. SỬA MÁY (LẮP LINH KIỆN VÀO MÁY) ═══
+                    // (SP này là MÁY, S giữ nguyên, T tăng)
+                    case 'repair_on_machine_in':
+                        if (!empty($e['serial_imei_id']) && isset($soldSerials[$e['serial_imei_id']])) {
+                            $skippedRepairs++;
+                            $skippedRepairCost += $e['cost'];
+                            break;
+                        }
+                        $total += $e['cost'];
+                        // S KHÔNG ĐỔI
+                        break;
+
+                    // ═══ 10. SỬA MÁY (THÁO LINH KIỆN KHỎI MÁY) ═══
+                    // (SP này là MÁY, S giữ nguyên, T giảm)
+                    case 'repair_on_machine_out':
+                        if (!empty($e['serial_imei_id']) && isset($soldSerials[$e['serial_imei_id']])) {
+                            $skippedRepairs++;
+                            $skippedRepairCost += $e['cost'];
+                            break;
+                        }
+                        $total = max(0, $total - $e['cost']);
+                        // S KHÔNG ĐỔI
                         break;
                 }
             }
 
-            // Cập nhật product cuối cùng
+            // Kết quả cuối
             $bq = $qty > 0 ? round($total / $qty, 2) : 0;
             $this->line(sprintf(
                 '  • #%d %s: qty=%d total=%s BQ=%s (cũ: qty=%d BQ=%s total=%s)',
-                $product->id,
-                $product->sku,
-                $qty,
-                number_format($total, 2),
-                number_format($bq, 2),
+                $product->id, $product->sku,
+                $qty, number_format($total, 2), number_format($bq, 2),
                 $product->stock_quantity,
                 number_format((float) $product->cost_price, 2),
                 number_format((float) $product->inventory_total_cost, 2)
             ));
             if ($skippedRepairs > 0) {
                 $this->warn(sprintf(
-                    '    ⓘ Bỏ qua %d repair part trên serial đã bán (tổng %s) — không cộng vào BQ.',
-                    $skippedRepairs,
-                    number_format($skippedRepairTotal, 0)
+                    '    ⓘ Bỏ qua %d phụ tùng trên serial đã bán (tổng %s) — không cộng vào giá vốn.',
+                    $skippedRepairs, number_format($skippedRepairCost, 0)
                 ));
             }
 
@@ -225,95 +254,40 @@ class RebuildMovingAvgCosting extends Command
     }
 
     /**
-     * Build sự kiện timeline cho 1 product, sắp xếp theo thời gian rồi id.
-     * @return array<int, array<string, mixed>>
+     * Tạo timeline sự kiện cho 1 sản phẩm, sắp xếp theo thời gian.
+     *
+     * Source of truth duy nhất: các bảng giao dịch gốc.
+     * KHÔNG đọc stock_movements để tránh đếm đôi.
      */
     private function buildTimeline(Product $product): array
     {
         $events = [];
 
-        // ═══════════════════════════════════════════════════════════════
-        // STRATEGY: Rebuild LUÔN synthesize từ source tables (purchase_items,
-        // invoice_items, return_items, etc.) — đây là source of truth duy nhất.
-        // Chỉ đọc initial_balance movements từ DB (tạo bởi reconcile).
-        // KHÔNG đọc in_purchase/out_invoice movements vì chúng có thể là
-        // synthesized từ lần rebuild trước → gây đếm đôi.
-        // ═══════════════════════════════════════════════════════════════
-
-        $hasInitialBalance = false;
-
-        // 1) Đọc initial_balance movements (từ reconcile)
-        $initialMoves = StockMovement::where('product_id', $product->id)
-            ->where('type', 'initial_balance')
-            ->orderBy('moved_at')->orderBy('id')
-            ->get();
-
-        foreach ($initialMoves as $m) {
-            $hasInitialBalance = true;
-            $ts = $m->moved_at ?: $m->created_at;
-            $events[] = [
-                'kind' => 'purchase',
-                'ts' => $ts,
-                'sort_key' => $ts ? strtotime($ts) - 2 : 0, // -2 để xếp trước mọi thứ
-                'movement_id' => $m->id,
-                'qty' => (int) $m->qty,
-                'unit_cost' => (float) $m->unit_cost,
-            ];
-        }
-
-        // 2) task_parts (repair adjustments) — không phản ánh trong stock_movements
-        // Chỉ lấy parts của task có product_id hoặc serial_imei_id thuộc về product này.
-        $taskQuery = Task::query()
-            ->where(function ($q) use ($product) {
-                $q->where('product_id', $product->id);
-                // Nếu có serial: task gắn với serial của product này
-                $q->orWhereHas('serialImei', fn($s) => $s->where('product_id', $product->id));
-            });
-        $taskIds = $taskQuery->pluck('id')->toArray();
-        if (!empty($taskIds)) {
-            $tasksById = Task::whereIn('id', $taskIds)->get(['id', 'serial_imei_id'])->keyBy('id');
-            $parts = TaskPart::whereIn('task_id', $taskIds)->orderBy('created_at')->orderBy('id')->get();
-            foreach ($parts as $p) {
-                $ts = $p->created_at;
-                $kind = ($p->direction ?? 'export') === 'import' ? 'repair_in' : 'repair_out';
-                $task = $tasksById->get($p->task_id);
-                $events[] = [
-                    'kind' => $kind,
-                    'ts' => $ts,
-                    'sort_key' => $ts ? strtotime($ts) : 0,
-                    'qty' => (int) ($p->quantity ?? 1),
-                    'delta' => (float) $p->total_cost,
-                    'serial_imei_id' => $task?->serial_imei_id,
-                    'task_id' => $p->task_id,
-                ];
-            }
-        }
-
-        // 3) LUÔN synthesize từ source tables — đây là source of truth duy nhất.
-        //    (Không đọc in_purchase/out_invoice movements để tránh đếm đôi)
-
-        // 3a) Purchase items → purchase events
+        // ═══════════════════════════════════════════════════════
+        // 1. NHẬP MUA — purchase_items (phiếu nhập hoàn thành)
+        // ═══════════════════════════════════════════════════════
         $purchaseItems = DB::table('purchase_items')
             ->join('purchases', 'purchases.id', '=', 'purchase_items.purchase_id')
             ->where('purchase_items.product_id', $product->id)
             ->where('purchases.status', 'completed')
             ->orderBy('purchases.created_at')
-            ->get(['purchase_items.*', 'purchases.created_at as p_created_at']);
+            ->get(['purchase_items.*', 'purchases.created_at as ts']);
+
         foreach ($purchaseItems as $pi) {
             $unitCost = (float) ($pi->unit_cost_allocated ?? $pi->price ?? 0);
-            if ($unitCost <= 0 || $pi->quantity <= 0) continue;
-            $ts = $pi->p_created_at;
+            if ($pi->quantity <= 0) continue;
             $events[] = [
                 'kind' => 'purchase',
-                'ts' => $ts,
-                'sort_key' => $ts ? strtotime($ts) - 1 : 0,
-                'movement_id' => null,
+                'ts' => $pi->ts,
+                'sort_key' => strtotime($pi->ts) * 10 + 0, // ×10 để tạo sub-order
                 'qty' => (int) $pi->quantity,
                 'unit_cost' => $unitCost,
             ];
         }
 
-        // 3b) Invoice items → sale events
+        // ═══════════════════════════════════════════════════════
+        // 2. BÁN HÀNG — invoice_items (hóa đơn chưa hủy)
+        // ═══════════════════════════════════════════════════════
         $invItems = DB::table('invoice_items')
             ->join('invoices', 'invoices.id', '=', 'invoice_items.invoice_id')
             ->where('invoice_items.product_id', $product->id)
@@ -322,24 +296,41 @@ class RebuildMovingAvgCosting extends Command
                   ->orWhere('invoices.status', '!=', 'cancelled');
             })
             ->orderBy('invoices.created_at')
-            ->get(['invoice_items.*', 'invoices.created_at as i_created_at']);
+            ->get(['invoice_items.*', 'invoices.created_at as ts']);
+
         foreach ($invItems as $ii) {
             if ($ii->quantity <= 0) continue;
-            $ts = $ii->i_created_at;
+
+            // Tìm serial_imei_ids nếu hàng serial
+            $serialIds = [];
+            if ($product->has_serial) {
+                $serialIds = DB::table('invoice_item_serials')
+                    ->where('invoice_item_id', $ii->id)
+                    ->pluck('serial_imei_id')
+                    ->toArray();
+                // Fallback: serial gắn trực tiếp qua invoice_id
+                if (empty($serialIds)) {
+                    $serialIds = SerialImei::where('product_id', $product->id)
+                        ->where('invoice_id', $ii->invoice_id)
+                        ->pluck('id')
+                        ->toArray();
+                }
+            }
+
             $events[] = [
                 'kind' => 'sale',
-                'ts' => $ts,
-                'sort_key' => $ts ? strtotime($ts) : 0,
-                'movement_id' => null,
+                'ts' => $ii->ts,
+                'sort_key' => strtotime($ii->ts) * 10 + 4,
                 'qty' => (int) $ii->quantity,
-                'unit_cost' => (float) ($ii->cost_price ?? 0),
                 'invoice_id' => (int) $ii->invoice_id,
                 'invoice_item_id' => (int) $ii->id,
-                'serial_imei_ids' => [],
+                'serial_imei_ids' => $serialIds,
             ];
         }
 
-        // 3c) Return items → sale_return events
+        // ═══════════════════════════════════════════════════════
+        // 3. KHÁCH TRẢ HÀNG — return_items (chưa hủy)
+        // ═══════════════════════════════════════════════════════
         $returnItems = DB::table('return_items')
             ->join('returns', 'returns.id', '=', 'return_items.return_id')
             ->where('return_items.product_id', $product->id)
@@ -348,123 +339,155 @@ class RebuildMovingAvgCosting extends Command
                   ->orWhereNull('returns.status');
             })
             ->orderBy('returns.created_at')
-            ->get(['return_items.*', 'returns.created_at as r_created_at', 'returns.invoice_id']);
+            ->get(['return_items.*', 'returns.created_at as ts', 'returns.invoice_id']);
+
         foreach ($returnItems as $ri) {
             if ($ri->quantity <= 0) continue;
-            $ts = $ri->r_created_at;
             $events[] = [
                 'kind' => 'sale_return',
-                'ts' => $ts,
-                'sort_key' => $ts ? strtotime($ts) : 0,
-                'movement_id' => null,
+                'ts' => $ri->ts,
+                'sort_key' => strtotime($ri->ts) * 10 + 6,
                 'qty' => (int) $ri->quantity,
                 'unit_cost' => (float) ($ri->cost_price ?? 0),
                 'invoice_id' => $ri->invoice_id,
+                'serial_imei_ids' => [],
             ];
         }
 
-        // 3d) Purchase return items → purchase_return events
+        // ═══════════════════════════════════════════════════════
+        // 4. TRẢ HÀNG NCC — purchase_return_items (hoàn thành)
+        // ═══════════════════════════════════════════════════════
         $prItems = DB::table('purchase_return_items')
             ->join('purchase_returns', 'purchase_returns.id', '=', 'purchase_return_items.purchase_return_id')
             ->where('purchase_return_items.product_id', $product->id)
             ->where('purchase_returns.status', 'completed')
             ->orderBy('purchase_returns.created_at')
-            ->get(['purchase_return_items.*', 'purchase_returns.created_at as pr_created_at']);
+            ->get(['purchase_return_items.*', 'purchase_returns.created_at as ts']);
+
         foreach ($prItems as $pri) {
             if ($pri->quantity <= 0) continue;
-            $ts = $pri->pr_created_at;
             $events[] = [
                 'kind' => 'purchase_return',
-                'ts' => $ts,
-                'sort_key' => $ts ? strtotime($ts) : 0,
-                'movement_id' => null,
+                'ts' => $pri->ts,
+                'sort_key' => strtotime($pri->ts) * 10 + 7,
                 'qty' => (int) $pri->quantity,
                 'unit_cost' => (float) ($pri->cost_price ?? $pri->price ?? 0),
             ];
         }
 
-        // 3e) Serial: bán hàng serial (nếu chưa có trong invoice_items)
-        if ($product->has_serial) {
-            $serials = SerialImei::where('product_id', $product->id)->get();
-            foreach ($serials as $s) {
-                if ($s->status === 'sold' && $s->invoice_id) {
-                    $invoiceId = (int) $s->invoice_id;
-                    // Check if invoice_item already covered this
-                    $alreadyCovered = collect($invItems)->contains(fn($ii) => (int) $ii->invoice_id === $invoiceId);
-                    if (!$alreadyCovered) {
-                        [$invoiceItemId, $_] = $this->resolveInvoiceContext($product->id, $invoiceId, $s->id);
-                        $ts = $s->sold_at ?: $s->updated_at;
-                        $events[] = [
-                            'kind' => 'sale',
-                            'ts' => $ts,
-                            'sort_key' => $ts ? strtotime($ts) : 0,
-                            'movement_id' => null,
-                            'qty' => 1,
-                            'unit_cost' => (float) ($s->sold_cost_price ?? $s->cost_price ?? 0),
-                            'invoice_id' => $invoiceId,
-                            'invoice_item_id' => $invoiceItemId,
-                            'serial_imei_ids' => [$s->id],
-                        ];
-                    }
+        // ═══════════════════════════════════════════════════════
+        // 5. KIỂM KHO — stock_take_items (phiếu đã cân bằng)
+        // ═══════════════════════════════════════════════════════
+        if (DB::getSchemaBuilder()->hasTable('stock_take_items')) {
+            $stItems = DB::table('stock_take_items')
+                ->join('stock_takes', 'stock_takes.id', '=', 'stock_take_items.stock_take_id')
+                ->where('stock_take_items.product_id', $product->id)
+                ->where('stock_takes.status', 'balanced')
+                ->orderBy('stock_takes.balanced_date')
+                ->get(['stock_take_items.*', 'stock_takes.balanced_date as ts']);
+
+            foreach ($stItems as $sti) {
+                $diff = (int) $sti->actual_stock - (int) $sti->system_stock;
+                if ($diff === 0) continue;
+                $events[] = [
+                    'kind' => 'stock_take',
+                    'ts' => $sti->ts,
+                    'sort_key' => strtotime($sti->ts) * 10 + 5,
+                    'diff' => $diff,
+                ];
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 6. XUẤT HỦY — damage_items (phiếu hoàn thành)
+        // ═══════════════════════════════════════════════════════
+        if (DB::getSchemaBuilder()->hasTable('damage_items')) {
+            $dmgItems = DB::table('damage_items')
+                ->join('damages', 'damages.id', '=', 'damage_items.damage_id')
+                ->where('damage_items.product_id', $product->id)
+                ->where('damages.status', 'completed')
+                ->orderBy('damages.created_at')
+                ->get(['damage_items.*', 'damages.created_at as ts']);
+
+            foreach ($dmgItems as $di) {
+                if ($di->qty <= 0) continue;
+                $events[] = [
+                    'kind' => 'damage',
+                    'ts' => $di->ts,
+                    'sort_key' => strtotime($di->ts) * 10 + 5,
+                    'qty' => (int) $di->qty,
+                ];
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // 7 & 8. TASK_PARTS — 2 ngữ cảnh khác nhau:
+        //   - LINH KIỆN (task_parts.product_id = SP này): S thay đổi
+        //   - MÁY (task.product_id hoặc task.serial_imei_id → SP này): chỉ T thay đổi
+        // ═══════════════════════════════════════════════════════
+        if (DB::getSchemaBuilder()->hasTable('task_parts')) {
+            // 7a. SP này LÀ LINH KIỆN bị xuất/nhập
+            $componentParts = TaskPart::where('product_id', $product->id)
+                ->orderBy('created_at')->orderBy('id')
+                ->get();
+
+            foreach ($componentParts as $p) {
+                $isImport = ($p->direction ?? 'export') === 'import';
+                $events[] = [
+                    'kind' => $isImport ? 'part_import' : 'part_export',
+                    'ts' => $p->created_at,
+                    'sort_key' => strtotime($p->created_at) * 10 + 2,
+                    'qty' => (int) ($p->quantity ?? 1),
+                    'cost' => (float) $p->total_cost,
+                ];
+            }
+
+            // 7b. SP này LÀ MÁY được sửa (task gắn với product hoặc serial của product)
+            $taskIds = Task::where(function ($q) use ($product) {
+                    $q->where('product_id', $product->id);
+                    $q->orWhereHas('serialImei', fn($s) => $s->where('product_id', $product->id));
+                })
+                ->pluck('id')
+                ->toArray();
+
+            if (!empty($taskIds)) {
+                $tasksById = Task::whereIn('id', $taskIds)->get(['id', 'serial_imei_id'])->keyBy('id');
+
+                // Lấy task_parts MÀ product_id ≠ SP này (linh kiện khác được lắp VÀO máy này)
+                $machineParts = TaskPart::whereIn('task_id', $taskIds)
+                    ->where('product_id', '!=', $product->id)
+                    ->orderBy('created_at')->orderBy('id')
+                    ->get();
+
+                foreach ($machineParts as $p) {
+                    $isImport = ($p->direction ?? 'export') === 'import';
+                    $task = $tasksById->get($p->task_id);
+
+                    // export linh kiện = lắp vào máy → T máy TĂNG
+                    // import linh kiện (bóc máy) = tháo khỏi máy → T máy GIẢM
+                    $events[] = [
+                        'kind' => $isImport ? 'repair_on_machine_out' : 'repair_on_machine_in',
+                        'ts' => $p->created_at,
+                        'sort_key' => strtotime($p->created_at) * 10 + 2,
+                        'cost' => (float) $p->total_cost,
+                        'serial_imei_id' => $task?->serial_imei_id,
+                    ];
                 }
             }
         }
 
-        // Sort: theo timestamp, sau đó theo loại (repair trước sale cùng giây để parts vô tồn rồi mới bán)
-        $orderRank = ['purchase' => 0, 'repair_in' => 1, 'repair_out' => 1, 'sale' => 2, 'sale_return' => 3, 'purchase_return' => 4];
-        usort($events, function ($a, $b) use ($orderRank) {
-            if ($a['sort_key'] !== $b['sort_key']) return $a['sort_key'] <=> $b['sort_key'];
-            $ra = $orderRank[$a['kind']] ?? 99;
-            $rb = $orderRank[$b['kind']] ?? 99;
-            return $ra <=> $rb;
-        });
+        // ═══════════════════════════════════════════════════════
+        // SẮP XẾP: theo thời gian, sau đó theo loại
+        // Thứ tự: nhập → sửa chữa → bán → trả hàng
+        // ═══════════════════════════════════════════════════════
+        usort($events, fn($a, $b) => $a['sort_key'] <=> $b['sort_key']);
 
         return $events;
     }
 
-    /** @return array{0:?int, 1:array<int,int>} [invoice_item_id, [serial_imei_ids]] */
-    private function resolveInvoiceContext(int $productId, ?int $invoiceId, ?int $serialId): array
-    {
-        if (!$invoiceId) return [null, []];
-        $item = InvoiceItem::where('invoice_id', $invoiceId)->where('product_id', $productId)->first();
-        if (!$item) return [null, []];
-
-        $serialIds = [];
-        if ($serialId) {
-            $serialIds[] = $serialId;
-        } else {
-            // hàng không serial: bỏ trống
-        }
-        return [$item->id, $serialIds];
-    }
-
-    private function resolveReturnInvoiceId(StockMovement $m): ?int
-    {
-        // ref_type có thể là OrderReturn hoặc Invoice. Nếu OrderReturn → lookup invoice_id.
-        if (!$m->ref_id || !$m->ref_type) return null;
-        if (str_contains((string) $m->ref_type, 'OrderReturn') || str_contains((string) $m->ref_type, 'Return')) {
-            $row = DB::table('returns')->where('id', $m->ref_id)->first();
-            return $row?->invoice_id;
-        }
-        if (str_contains((string) $m->ref_type, 'Invoice')) {
-            return (int) $m->ref_id;
-        }
-        return null;
-    }
-
-    private function writeMovement(?int $movementId, float $unitCost, int $balanceQty, float $balanceCost, bool $dry, array &$stats): void
-    {
-        if (!$movementId) return; // synthesized event — no movement row to update
-        if ($dry) { $stats['movements_updated']++; return; }
-        $totalCost = $unitCost * (StockMovement::find($movementId)?->qty ?? 0);
-        StockMovement::where('id', $movementId)->update([
-            'unit_cost' => round($unitCost, 0),
-            'total_cost' => round($totalCost, 0),
-            'balance_qty' => $balanceQty,
-            'balance_cost' => round($balanceQty > 0 ? $balanceCost / $balanceQty : 0, 0),
-        ]);
-        $stats['movements_updated']++;
-    }
+    // ═══════════════════════════════════════════════════════
+    // HELPER METHODS — Ghi kết quả vào DB
+    // ═══════════════════════════════════════════════════════
 
     private function writeInvoiceItemCost(?int $invoiceItemId, float $bq, bool $dry, array &$stats): void
     {

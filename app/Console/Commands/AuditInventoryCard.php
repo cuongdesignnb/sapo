@@ -87,8 +87,7 @@ class AuditInventoryCard extends Command
 
                 // Chi tiết breakdown
                 $this->line(sprintf(
-                    '       TĐK: +%d | Nhập: +%d | Bán: -%d | KH trả: +%d | Trả NCC: -%d | Kiểm: %s | Hủy: -%d | Chuyển: -%d | SC xuất: -%d | SC nhập: +%d',
-                    $result['breakdown']['initial_balance'],
+                    '       Nhập: +%d | Bán: -%d | KH trả: +%d | Trả NCC: -%d | Kiểm: %s | Hủy: -%d | Chuyển: -%d | SC xuất: -%d | SC nhập: +%d',
                     $result['breakdown']['purchase_in'],
                     $result['breakdown']['sale_out'],
                     $result['breakdown']['return_in'],
@@ -141,7 +140,6 @@ class AuditInventoryCard extends Command
     private function auditOne(Product $product, bool $verbose): array
     {
         $breakdown = [
-            'initial_balance' => 0,
             'purchase_in' => 0,
             'sale_out' => 0,
             'return_in' => 0,
@@ -224,10 +222,7 @@ class AuditInventoryCard extends Command
         $stItems = DB::table('stock_take_items')
             ->join('stock_takes', 'stock_takes.id', '=', 'stock_take_items.stock_take_id')
             ->where('stock_take_items.product_id', $product->id)
-            ->where(function ($q) {
-                $q->where('stock_takes.status', 'completed')
-                  ->orWhereNull('stock_takes.status');
-            })
+            ->where('stock_takes.status', 'balanced')
             ->get(['stock_take_items.actual_stock', 'stock_take_items.system_stock', 'stock_takes.code', 'stock_takes.created_at']);
 
         foreach ($stItems as $sti) {
@@ -243,6 +238,7 @@ class AuditInventoryCard extends Command
         $dmgItems = DB::table('damage_items')
             ->join('damages', 'damages.id', '=', 'damage_items.damage_id')
             ->where('damage_items.product_id', $product->id)
+            ->where('damages.status', 'completed')
             ->get(['damage_items.qty', 'damages.code', 'damages.created_at']);
 
         foreach ($dmgItems as $di) {
@@ -289,24 +285,8 @@ class AuditInventoryCard extends Command
             }
         }
 
-        // 9. Tồn đầu kỳ (Initial Balance from reconcile)
-        $initialBalances = DB::table('stock_movements')
-            ->where('product_id', $product->id)
-            ->where('type', 'initial_balance')
-            ->whereNull('serial_imei_id')
-            ->get(['qty', 'direction', 'ref_code', 'moved_at']);
-
-        foreach ($initialBalances as $ib) {
-            $qty = (int) $ib->qty;
-            $breakdown['initial_balance'] += $qty;
-            if ($verbose) {
-                $transactions[] = ['type' => 'TĐK', 'code' => $ib->ref_code ?? 'TDK', 'qty' => "+{$qty}", 'date' => $ib->moved_at];
-            }
-        }
-
-        // Tính tổng
-        $calculatedQty = $breakdown['initial_balance']
-            + $breakdown['purchase_in']
+        // Tính tổng (không cần tồn đầu kỳ — tất cả SP đều có phiếu nhập)
+        $calculatedQty = $breakdown['purchase_in']
             - $breakdown['sale_out']
             + $breakdown['return_in']
             - $breakdown['purchase_return_out']
