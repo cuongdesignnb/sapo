@@ -280,7 +280,8 @@ const loadDraft = () => {
                 activeTabIndex.value = Math.min(data.activeTabIndex || 0, tabs.value.length - 1);
             }
             if (data.selectedEmployeeId) selectedEmployeeId.value = data.selectedEmployeeId;
-            if (data.saleDate) saleDate.value = data.saleDate;
+            // KHÔNG restore saleDate từ draft — luôn dùng thời gian hiện tại
+            // để tránh hoá đơn mới bị ghi ngày cũ
 
             // Reload serials for all tabs
             tabs.value.forEach(tab => {
