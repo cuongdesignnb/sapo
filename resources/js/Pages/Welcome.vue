@@ -1905,9 +1905,12 @@ const formatDate = (val) => {
                                 <span class="text-gray-400"
                                     >Ngày
                                     {{
-                                        docDetail.type === "purchase"
-                                            ? "nhập"
-                                            : "bán"
+                                        docDetail.type === "purchase" ? "nhập"
+                                        : docDetail.type === "repair_part" || docDetail.type === "disassemble_part" ? "tạo"
+                                        : docDetail.type === "purchase_return" ? "trả"
+                                        : docDetail.type === "stock_take" ? "kiểm"
+                                        : docDetail.type === "damage" ? "hủy"
+                                        : "bán"
                                     }}:</span
                                 >
                                 <span class="ml-2 font-medium text-gray-700">{{
@@ -1942,9 +1945,10 @@ const formatDate = (val) => {
                                         <th class="p-3">Mã hàng</th>
                                         <th class="p-3">Tên hàng</th>
                                         <th class="p-3 text-right">Số lượng</th>
-                                        <th class="p-3 text-right">Đơn giá</th>
-                                        <th class="p-3 text-right">Giảm giá</th>
-                                        <th class="p-3 text-right">Giá bán</th>
+                                        <th class="p-3 text-right">{{ (docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part') ? 'Giá vốn' : 'Đơn giá' }}</th>
+                                        <th v-if="docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part' && docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">Giảm giá</th>
+                                        <th v-if="docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'" class="p-3 text-center">Hướng</th>
+                                        <th v-else-if="docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">Giá bán</th>
                                         <th class="p-3 text-right font-bold">
                                             Thành tiền
                                         </th>
@@ -1976,14 +1980,19 @@ const formatDate = (val) => {
                                             <td class="p-3 text-right">
                                                 {{ formatCurrency(item.price) }}
                                             </td>
-                                            <td class="p-3 text-right">
+                                            <td v-if="docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part' && docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">
                                                 {{
                                                     formatCurrency(
                                                         item.discount,
                                                     )
                                                 }}
                                             </td>
-                                            <td class="p-3 text-right">
+                                            <td v-if="docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'" class="p-3 text-center">
+                                                <span :class="item.direction === 'import' ? 'text-green-600 bg-green-50' : 'text-orange-600 bg-orange-50'" class="px-2 py-0.5 rounded text-xs font-bold">
+                                                    {{ item.direction_label || (item.direction === 'import' ? '↩ Nhập' : '↗ Xuất') }}
+                                                </span>
+                                            </td>
+                                            <td v-else-if="docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">
                                                 {{
                                                     formatCurrency(
                                                         item.sell_price,
@@ -2009,17 +2018,17 @@ const formatDate = (val) => {
                         <div class="flex justify-end">
                             <div class="w-80 space-y-2 text-sm">
                                 <div class="flex justify-between">
-                                    <span class="text-gray-500"
-                                        >Tổng tiền hàng ({{
-                                            docDetail.items?.length || 0
-                                        }})</span
-                                    >
+                                    <span class="text-gray-500">{{
+                                        (docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part')
+                                            ? `Tổng linh kiện (${docDetail.items?.length || 0})`
+                                            : `Tổng tiền hàng (${docDetail.items?.length || 0})`
+                                    }}</span>
                                     <span class="font-bold">{{
                                         formatCurrency(docDetail.subtotal)
                                     }}</span>
                                 </div>
                                 <div
-                                    v-if="docDetail.discount"
+                                    v-if="docDetail.discount && docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part'"
                                     class="flex justify-between"
                                 >
                                     <span class="text-gray-500"
@@ -2031,15 +2040,19 @@ const formatDate = (val) => {
                                 </div>
                                 <div class="flex justify-between border-t pt-2">
                                     <span class="text-gray-700 font-semibold">{{
-                                        docDetail.type === "purchase"
-                                            ? "Cần trả NCC"
-                                            : "Khách cần trả"
+                                        docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'
+                                            ? 'Tổng chi phí sửa chữa'
+                                            : docDetail.type === 'purchase' ? 'Cần trả NCC'
+                                            : docDetail.type === 'purchase_return' ? 'Tổng trả NCC'
+                                            : docDetail.type === 'stock_take' ? 'Giá trị chênh lệch'
+                                            : docDetail.type === 'damage' ? 'Tổng giá trị hủy'
+                                            : 'Khách cần trả'
                                     }}</span>
                                     <span class="font-bold text-lg">{{
                                         formatCurrency(docDetail.total)
                                     }}</span>
                                 </div>
-                                <div class="flex justify-between">
+                                <div v-if="docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part' && docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="flex justify-between">
                                     <span class="text-gray-500">{{
                                         docDetail.type === "purchase"
                                             ? "Đã trả NCC"
@@ -2048,6 +2061,9 @@ const formatDate = (val) => {
                                     <span class="font-bold">{{
                                         formatCurrency(docDetail.customer_paid)
                                     }}</span>
+                                </div>
+                                <div v-if="docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'" class="mt-2 px-3 py-2 bg-blue-50 rounded text-xs text-blue-700">
+                                    ⓘ Phiếu sửa chữa chỉ ảnh hưởng tồn kho & giá vốn. Không ảnh hưởng sổ quỹ hay công nợ.
                                 </div>
                             </div>
                         </div>
