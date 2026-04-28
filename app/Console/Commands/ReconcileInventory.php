@@ -315,11 +315,7 @@ class ReconcileInventory extends Command
             'note' => 'Tồn đầu kỳ - Reconcile tự động',
             'moved_at' => $initialDate,
         ]);
-
-        // Nếu hàng serial và direction = in → tạo serial purchase entries cũng ghi vào purchase
-        if ($product->has_serial && $direction === 'in') {
-            $this->createSerialInitialMovements($product, $unitCost, $initialDate);
-        }
+        // NOTE: Chỉ tạo 1 record aggregate. Rebuild command sẽ đánh dấu tất cả serial covered.
     }
 
     /**

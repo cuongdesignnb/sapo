@@ -226,65 +226,34 @@ class RebuildMovingAvgCosting extends Command
     private function buildTimeline(Product $product): array
     {
         $events = [];
-        // Track serial_ids đã được cover bởi stock_movements để tránh trùng
-        $coveredPurchaseSerials = [];
-        $coveredSaleSerials = [];
-        $coveredSaleInvoiceItems = []; // for non-serial products
-        // Đếm số purchase/sale movements đã tồn tại (dùng để quyết định có synthesize cho hàng non-serial không)
-        $hasInPurchaseMov = false;
-        $hasOutInvoiceMov = false;
 
-        // 1) stock_movements
-        $movs = StockMovement::where('product_id', $product->id)
+        // ═══════════════════════════════════════════════════════════════
+        // STRATEGY: Rebuild LUÔN synthesize từ source tables (purchase_items,
+        // invoice_items, return_items, etc.) — đây là source of truth duy nhất.
+        // Chỉ đọc initial_balance movements từ DB (tạo bởi reconcile).
+        // KHÔNG đọc in_purchase/out_invoice movements vì chúng có thể là
+        // synthesized từ lần rebuild trước → gây đếm đôi.
+        // ═══════════════════════════════════════════════════════════════
+
+        $hasInitialBalance = false;
+
+        // 1) Đọc initial_balance movements (từ reconcile)
+        $initialMoves = StockMovement::where('product_id', $product->id)
+            ->where('type', 'initial_balance')
             ->orderBy('moved_at')->orderBy('id')
             ->get();
-        foreach ($movs as $m) {
+
+        foreach ($initialMoves as $m) {
+            $hasInitialBalance = true;
             $ts = $m->moved_at ?: $m->created_at;
-            $base = [
+            $events[] = [
+                'kind' => 'purchase',
                 'ts' => $ts,
-                'sort_key' => $ts ? strtotime($ts) : 0,
+                'sort_key' => $ts ? strtotime($ts) - 2 : 0, // -2 để xếp trước mọi thứ
                 'movement_id' => $m->id,
                 'qty' => (int) $m->qty,
                 'unit_cost' => (float) $m->unit_cost,
             ];
-            switch ($m->type) {
-                case 'in_purchase':
-                    $hasInPurchaseMov = true;
-                    if ($m->serial_imei_id) $coveredPurchaseSerials[$m->serial_imei_id] = true;
-                    $events[] = $base + ['kind' => 'purchase'];
-                    break;
-                case 'out_invoice':
-                    $hasOutInvoiceMov = true;
-                    // tìm invoice_item & serials để cập nhật COGS
-                    $invoiceId = $m->ref_id;
-                    [$invoiceItemId, $serialIds] = $this->resolveInvoiceContext($product->id, $invoiceId, $m->serial_imei_id);
-                    if ($m->serial_imei_id) $coveredSaleSerials[$m->serial_imei_id] = true;
-                    if ($invoiceItemId) $coveredSaleInvoiceItems[$invoiceItemId] = true;
-                    $events[] = $base + [
-                        'kind' => 'sale',
-                        'invoice_id' => $invoiceId,
-                        'invoice_item_id' => $invoiceItemId,
-                        'serial_imei_ids' => $serialIds,
-                    ];
-                    break;
-                case 'in_invoice_return':
-                    // ref là OrderReturn / Invoice tùy controller. Cần map về invoice_id để lookup COGS.
-                    $events[] = $base + [
-                        'kind' => 'sale_return',
-                        'invoice_id' => $this->resolveReturnInvoiceId($m),
-                    ];
-                    break;
-                case 'out_purchase_return':
-                    $events[] = $base + ['kind' => 'purchase_return'];
-                    break;
-                case 'initial_balance':
-                    // Tồn đầu kỳ từ reconcile → treat like purchase
-                    $hasInPurchaseMov = true;
-                    if ($m->serial_imei_id) $coveredPurchaseSerials[$m->serial_imei_id] = true;
-                    $events[] = $base + ['kind' => 'purchase'];
-                    break;
-                // adjust/transfer/repair_* hiện không được record bởi service hiện tại; bỏ qua an toàn
-            }
         }
 
         // 2) task_parts (repair adjustments) — không phản ánh trong stock_movements
@@ -314,93 +283,123 @@ class RebuildMovingAvgCosting extends Command
             }
         }
 
-        // 3) [LEGACY FALLBACK] Synthesize sự kiện cho data trước Phase 4 (chưa có stock_movements).
+        // 3) LUÔN synthesize từ source tables — đây là source of truth duy nhất.
+        //    (Không đọc in_purchase/out_invoice movements để tránh đếm đôi)
+
+        // 3a) Purchase items → purchase events
+        $purchaseItems = DB::table('purchase_items')
+            ->join('purchases', 'purchases.id', '=', 'purchase_items.purchase_id')
+            ->where('purchase_items.product_id', $product->id)
+            ->where('purchases.status', 'completed')
+            ->orderBy('purchases.created_at')
+            ->get(['purchase_items.*', 'purchases.created_at as p_created_at']);
+        foreach ($purchaseItems as $pi) {
+            $unitCost = (float) ($pi->unit_cost_allocated ?? $pi->price ?? 0);
+            if ($unitCost <= 0 || $pi->quantity <= 0) continue;
+            $ts = $pi->p_created_at;
+            $events[] = [
+                'kind' => 'purchase',
+                'ts' => $ts,
+                'sort_key' => $ts ? strtotime($ts) - 1 : 0,
+                'movement_id' => null,
+                'qty' => (int) $pi->quantity,
+                'unit_cost' => $unitCost,
+            ];
+        }
+
+        // 3b) Invoice items → sale events
+        $invItems = DB::table('invoice_items')
+            ->join('invoices', 'invoices.id', '=', 'invoice_items.invoice_id')
+            ->where('invoice_items.product_id', $product->id)
+            ->where(function ($q) {
+                $q->whereNull('invoices.status')
+                  ->orWhere('invoices.status', '!=', 'cancelled');
+            })
+            ->orderBy('invoices.created_at')
+            ->get(['invoice_items.*', 'invoices.created_at as i_created_at']);
+        foreach ($invItems as $ii) {
+            if ($ii->quantity <= 0) continue;
+            $ts = $ii->i_created_at;
+            $events[] = [
+                'kind' => 'sale',
+                'ts' => $ts,
+                'sort_key' => $ts ? strtotime($ts) : 0,
+                'movement_id' => null,
+                'qty' => (int) $ii->quantity,
+                'unit_cost' => (float) ($ii->cost_price ?? 0),
+                'invoice_id' => (int) $ii->invoice_id,
+                'invoice_item_id' => (int) $ii->id,
+                'serial_imei_ids' => [],
+            ];
+        }
+
+        // 3c) Return items → sale_return events
+        $returnItems = DB::table('return_items')
+            ->join('returns', 'returns.id', '=', 'return_items.return_id')
+            ->where('return_items.product_id', $product->id)
+            ->where(function ($q) {
+                $q->where('returns.status', '!=', 'Đã hủy')
+                  ->orWhereNull('returns.status');
+            })
+            ->orderBy('returns.created_at')
+            ->get(['return_items.*', 'returns.created_at as r_created_at', 'returns.invoice_id']);
+        foreach ($returnItems as $ri) {
+            if ($ri->quantity <= 0) continue;
+            $ts = $ri->r_created_at;
+            $events[] = [
+                'kind' => 'sale_return',
+                'ts' => $ts,
+                'sort_key' => $ts ? strtotime($ts) : 0,
+                'movement_id' => null,
+                'qty' => (int) $ri->quantity,
+                'unit_cost' => (float) ($ri->cost_price ?? 0),
+                'invoice_id' => $ri->invoice_id,
+            ];
+        }
+
+        // 3d) Purchase return items → purchase_return events
+        $prItems = DB::table('purchase_return_items')
+            ->join('purchase_returns', 'purchase_returns.id', '=', 'purchase_return_items.purchase_return_id')
+            ->where('purchase_return_items.product_id', $product->id)
+            ->where('purchase_returns.status', 'completed')
+            ->orderBy('purchase_returns.created_at')
+            ->get(['purchase_return_items.*', 'purchase_returns.created_at as pr_created_at']);
+        foreach ($prItems as $pri) {
+            if ($pri->quantity <= 0) continue;
+            $ts = $pri->pr_created_at;
+            $events[] = [
+                'kind' => 'purchase_return',
+                'ts' => $ts,
+                'sort_key' => $ts ? strtotime($ts) : 0,
+                'movement_id' => null,
+                'qty' => (int) $pri->quantity,
+                'unit_cost' => (float) ($pri->cost_price ?? $pri->price ?? 0),
+            ];
+        }
+
+        // 3e) Serial: bán hàng serial (nếu chưa có trong invoice_items)
         if ($product->has_serial) {
-            // Mỗi serial có dữ liệu nhập = 1 purchase event (nếu chưa có movement gắn với serial đó)
             $serials = SerialImei::where('product_id', $product->id)->get();
             foreach ($serials as $s) {
-                if (!isset($coveredPurchaseSerials[$s->id])) {
-                    $unitCost = (float) ($s->original_cost ?? $s->cost_price ?? 0);
-                    if ($unitCost > 0) {
-                        $ts = $s->created_at;
+                if ($s->status === 'sold' && $s->invoice_id) {
+                    $invoiceId = (int) $s->invoice_id;
+                    // Check if invoice_item already covered this
+                    $alreadyCovered = collect($invItems)->contains(fn($ii) => (int) $ii->invoice_id === $invoiceId);
+                    if (!$alreadyCovered) {
+                        [$invoiceItemId, $_] = $this->resolveInvoiceContext($product->id, $invoiceId, $s->id);
+                        $ts = $s->sold_at ?: $s->updated_at;
                         $events[] = [
-                            'kind' => 'purchase',
+                            'kind' => 'sale',
                             'ts' => $ts,
-                            'sort_key' => $ts ? strtotime($ts) - 1 : 0, // -1 để xếp trước repair cùng giờ
+                            'sort_key' => $ts ? strtotime($ts) : 0,
                             'movement_id' => null,
                             'qty' => 1,
-                            'unit_cost' => $unitCost,
-                            'synth' => true,
-                            'serial_id' => $s->id,
+                            'unit_cost' => (float) ($s->sold_cost_price ?? $s->cost_price ?? 0),
+                            'invoice_id' => $invoiceId,
+                            'invoice_item_id' => $invoiceItemId,
+                            'serial_imei_ids' => [$s->id],
                         ];
                     }
-                }
-                // Sale: serial đã sold mà chưa có out_invoice movement gắn với serial
-                if ($s->status === 'sold' && $s->invoice_id && !isset($coveredSaleSerials[$s->id])) {
-                    $invoiceId = (int) $s->invoice_id;
-                    [$invoiceItemId, $_] = $this->resolveInvoiceContext($product->id, $invoiceId, $s->id);
-                    $ts = $s->sold_at ?: $s->updated_at;
-                    $events[] = [
-                        'kind' => 'sale',
-                        'ts' => $ts,
-                        'sort_key' => $ts ? strtotime($ts) : 0,
-                        'movement_id' => null,
-                        'qty' => 1,
-                        'unit_cost' => (float) ($s->sold_cost_price ?? $s->cost_price ?? 0),
-                        'invoice_id' => $invoiceId,
-                        'invoice_item_id' => $invoiceItemId,
-                        'serial_imei_ids' => [$s->id],
-                        'synth' => true,
-                    ];
-                }
-            }
-        } else {
-            // Hàng non-serial: nếu hoàn toàn KHÔNG có stock_movements thì synthesize từ purchase_items + invoice_items
-            if (!$hasInPurchaseMov) {
-                $purchaseItems = DB::table('purchase_items')
-                    ->join('purchases', 'purchases.id', '=', 'purchase_items.purchase_id')
-                    ->where('purchase_items.product_id', $product->id)
-                    ->where('purchases.status', 'completed')
-                    ->orderBy('purchases.created_at')
-                    ->get(['purchase_items.*', 'purchases.created_at as p_created_at']);
-                foreach ($purchaseItems as $pi) {
-                    $unitCost = (float) ($pi->unit_cost_allocated ?? $pi->price ?? 0);
-                    if ($unitCost <= 0 || $pi->quantity <= 0) continue;
-                    $ts = $pi->p_created_at;
-                    $events[] = [
-                        'kind' => 'purchase',
-                        'ts' => $ts,
-                        'sort_key' => $ts ? strtotime($ts) - 1 : 0,
-                        'movement_id' => null,
-                        'qty' => (int) $pi->quantity,
-                        'unit_cost' => $unitCost,
-                        'synth' => true,
-                    ];
-                }
-            }
-            if (!$hasOutInvoiceMov) {
-                $invItems = DB::table('invoice_items')
-                    ->join('invoices', 'invoices.id', '=', 'invoice_items.invoice_id')
-                    ->where('invoice_items.product_id', $product->id)
-                    ->where('invoices.status', 'completed')
-                    ->orderBy('invoices.created_at')
-                    ->get(['invoice_items.*', 'invoices.created_at as i_created_at']);
-                foreach ($invItems as $ii) {
-                    if (isset($coveredSaleInvoiceItems[$ii->id])) continue;
-                    if ($ii->quantity <= 0) continue;
-                    $ts = $ii->i_created_at;
-                    $events[] = [
-                        'kind' => 'sale',
-                        'ts' => $ts,
-                        'sort_key' => $ts ? strtotime($ts) : 0,
-                        'movement_id' => null,
-                        'qty' => (int) $ii->quantity,
-                        'unit_cost' => (float) ($ii->cost_price ?? 0),
-                        'invoice_id' => (int) $ii->invoice_id,
-                        'invoice_item_id' => (int) $ii->id,
-                        'serial_imei_ids' => [],
-                        'synth' => true,
-                    ];
                 }
             }
         }
