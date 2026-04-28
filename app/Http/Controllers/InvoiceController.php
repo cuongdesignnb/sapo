@@ -378,11 +378,22 @@ class InvoiceController extends Controller
             $oldDebt = $oldTotal - $oldPaid;
             $oldCustomerId = $invoice->customer_id;
 
-            // Restore stock from old items
+            // BQ DI ĐỘNG: Reverse old items — phục hồi tồn kho ở cost lúc bán (snapshot)
             foreach ($invoice->items as $oldItem) {
                 $product = \App\Models\Product::find($oldItem->product_id);
                 if ($product) {
-                    $product->increment('stock_quantity', $oldItem->quantity);
+                    $costAtSale = (float) ($oldItem->cost_price ?? $product->cost_price ?? 0);
+                    \App\Services\MovingAvgCostingService::applySaleReturn(
+                        $product,
+                        (int) $oldItem->quantity,
+                        $costAtSale
+                    );
+                    $product->refresh();
+
+                    // Sync serial stock count
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
+                    }
                 }
             }
 
@@ -420,28 +431,25 @@ class InvoiceController extends Controller
                 $product = \App\Models\Product::lockForUpdate()->find($item['product_id']);
                 $serialIds = $item['serial_ids'] ?? [];
 
-                // Snapshot cost_price
+                // BQ DI ĐỘNG: COGS = product.cost_price hiện tại (BQ moving avg)
                 $snapshotCostPrice = (float) ($product->cost_price ?? 0);
                 $serialStr = null;
+                $soldSerials = collect();
 
                 if ($product && $product->has_serial && !empty($serialIds)) {
                     $serialIds = is_array($serialIds) ? $serialIds : [$serialIds];
                     $soldSerials = SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
                         ->get();
-                    if ($soldSerials->count() > 0) {
-                        $totalCost = $soldSerials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
-                        $snapshotCostPrice = round($totalCost / $soldSerials->count(), 2);
-                    }
 
-                    // Mark new serials as sold
-                    SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->update([
-                            'status' => 'sold',
-                            'sold_at' => now(),
-                            'invoice_id' => $invoice->id,
-                        ]);
+                    // Mark new serials as sold + snapshot sold_cost_price
+                    foreach ($soldSerials as $serial) {
+                        $serial->status = 'sold';
+                        $serial->sold_at = now();
+                        $serial->invoice_id = $invoice->id;
+                        $serial->sold_cost_price = $snapshotCostPrice;
+                        $serial->save();
+                    }
 
                     $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
                 }
@@ -457,12 +465,22 @@ class InvoiceController extends Controller
                     'serial' => $serialStr,
                 ]);
 
-                // Deduct stock for new items
+                // BQ DI ĐỘNG: trừ tồn kho qua service
                 if ($product) {
                     if (!$allowOversell && $product->stock_quantity < $item['quantity']) {
                         throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                     }
-                    $product->decrement('stock_quantity', $item['quantity']);
+
+                    \App\Services\MovingAvgCostingService::applySale(
+                        $product,
+                        (int) $item['quantity']
+                    );
+                    $product->refresh();
+
+                    // Sync serial stock count
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
+                    }
                 }
             }
 

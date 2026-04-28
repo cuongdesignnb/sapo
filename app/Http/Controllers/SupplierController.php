@@ -266,16 +266,20 @@ class SupplierController extends Controller
                 'supplier_effect' => $p->total_amount, // NCC: +
                 'created_at' => $p->created_at,
             ]);
-            // TT khi nhập hàng: -paid (giảm phải trả NCC)
-            if ($p->paid_amount > 0) {
+            // TT khi nhập hàng: lấy từ CashFlow thật (code PC...) thay vì TTNH ảo
+            $purchaseCashFlows = CashFlow::where('reference_type', 'Purchase')
+                ->where('reference_code', $p->code)
+                ->where('type', 'payment')
+                ->get();
+            foreach ($purchaseCashFlows as $cf) {
                 $entries->push([
-                    'id' => 'purpay-' . $p->id,
-                    'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
+                    'id' => 'purpay-' . $cf->id,
+                    'code' => $cf->code,
                     'type' => 'payment',
                     'type_label' => 'Thanh toán',
-                    'amount' => $p->paid_amount,
-                    'supplier_effect' => -$p->paid_amount, // NCC: -
-                    'created_at' => $p->created_at,
+                    'amount' => $cf->amount,
+                    'supplier_effect' => -$cf->amount, // NCC: -
+                    'created_at' => $cf->created_at,
                 ]);
             }
         }
@@ -630,20 +634,25 @@ class SupplierController extends Controller
                 'updated_at' => $p->purchase_date ?? $p->created_at,
             ]);
 
-            // Payment entry (if paid)
-            $paid = $p->paid_amount ?? ($p->total_amount - ($p->debt_amount ?? 0));
-            if ($paid > 0) {
-                $runningDebt -= $paid;
+            // Payment entries: lấy từ CashFlow thật thay vì Purchase.paid_amount
+            $purchaseCashFlows = CashFlow::where('reference_type', 'Purchase')
+                ->where('reference_code', $p->code)
+                ->where('type', 'payment')
+                ->orderBy('created_at')
+                ->get();
+
+            foreach ($purchaseCashFlows as $cf) {
+                $runningDebt -= $cf->amount;
                 SupplierDebtTransaction::create([
                     'supplier_id' => $supplierId,
-                    'code' => 'PCPN' . substr($p->code, 2),
+                    'code' => $cf->code,
                     'type' => 'payment',
-                    'amount' => -$paid,
+                    'amount' => -$cf->amount,
                     'debt_remain' => $runningDebt,
                     'purchase_id' => $p->id,
                     'user_id' => $p->user_id,
-                    'created_at' => $p->purchase_date ?? $p->created_at,
-                    'updated_at' => $p->purchase_date ?? $p->created_at,
+                    'created_at' => $cf->created_at ?? $p->purchase_date ?? $p->created_at,
+                    'updated_at' => $cf->created_at ?? $p->purchase_date ?? $p->created_at,
                 ]);
             }
         }

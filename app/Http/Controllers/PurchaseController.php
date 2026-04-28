@@ -592,8 +592,8 @@ class PurchaseController extends Controller
                 }
             }
 
-            // Update supplier debt if paid amount changed
-            if ($paidAmount != $oldPaidAmount && $purchase->supplier) {
+            // Update supplier debt if paid amount changed (ONLY for non-draft→completed updates)
+            if (!$isDraftToComplete && $paidAmount != $oldPaidAmount && $purchase->supplier) {
                 $debtDiff = $debtAmount - $oldDebt;
                 $purchase->supplier->supplier_debt_amount += $debtDiff;
                 $purchase->supplier->save();

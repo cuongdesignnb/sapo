@@ -512,13 +512,13 @@ class ProductController extends Controller
     public function inventoryCard(Product $product)
     {
         $transactions = collect();
-        $costPrice = (float) ($product->cost_price ?? 0);
 
         // 1. Nhập hàng (Purchases)
         $purchases = \App\Models\PurchaseItem::with(['purchase', 'purchase.supplier'])
             ->where('product_id', $product->id)
             ->get()
             ->map(function ($item) {
+                $unitCost = (float) ($item->unit_cost_allocated ?? $item->price ?? 0);
                 return [
                     'date' => $item->purchase->created_at,
                     'code' => $item->purchase->code,
@@ -527,18 +527,18 @@ class ProductController extends Controller
                     'type' => 'Nhập hàng',
                     'partner' => $item->purchase->supplier->name ?? 'NCC',
                     'sell_price' => (float) ($item->price ?? 0),
-                    'cost_price' => (float) ($item->price ?? 0),
+                    'cost_price' => $unitCost,
                     'change' => $item->quantity,
                     'method' => 'Cộng kho',
                 ];
             });
         $transactions = $transactions->concat($purchases);
 
-        // 2. Bán hàng (Invoices)
+        // 2. Bán hàng (Invoices) — dùng invoice_item.cost_price (snapshot BQ lúc bán)
         $sales = \App\Models\InvoiceItem::with(['invoice', 'invoice.customer'])
             ->where('product_id', $product->id)
             ->get()
-            ->map(function ($item) use ($costPrice) {
+            ->map(function ($item) {
                 return [
                     'date' => $item->invoice->created_at,
                     'code' => $item->invoice->code,
@@ -547,18 +547,18 @@ class ProductController extends Controller
                     'type' => 'Bán hàng',
                     'partner' => $item->invoice->customer->name ?? 'Khách lẻ',
                     'sell_price' => (float) ($item->price ?? 0),
-                    'cost_price' => $costPrice,
+                    'cost_price' => (float) ($item->cost_price ?? 0),
                     'change' => -$item->quantity,
                     'method' => 'Trừ kho',
                 ];
             });
         $transactions = $transactions->concat($sales);
 
-        // 3. Trả hàng (Returns)
+        // 3. Trả hàng (Returns) — dùng return_item.cost_price (snapshot)
         $returns = \App\Models\ReturnItem::with(['orderReturn', 'orderReturn.customer'])
             ->where('product_id', $product->id)
             ->get()
-            ->map(function ($item) use ($costPrice) {
+            ->map(function ($item) {
                 return [
                     'date' => $item->orderReturn->created_at,
                     'code' => $item->orderReturn->code,
@@ -567,7 +567,7 @@ class ProductController extends Controller
                     'type' => 'Khách trả hàng',
                     'partner' => $item->orderReturn->customer->name ?? 'Khách lẻ',
                     'sell_price' => 0,
-                    'cost_price' => $costPrice,
+                    'cost_price' => (float) ($item->cost_price ?? $item->import_price ?? 0),
                     'change' => $item->quantity,
                     'method' => 'Cộng kho',
                 ];
@@ -575,10 +575,11 @@ class ProductController extends Controller
         $transactions = $transactions->concat($returns);
 
         // 4. Kiểm kho (Stock Takes)
+        $defaultCostPrice = (float) ($product->cost_price ?? 0);
         $stockTakes = \App\Models\StockTakeItem::with('stockTake')
             ->where('product_id', $product->id)
             ->get()
-            ->map(function ($item) use ($costPrice) {
+            ->map(function ($item) use ($defaultCostPrice) {
                 $diff = $item->actual_quantity - $item->current_quantity;
                 return [
                     'date' => $item->stockTake->created_at,
@@ -588,7 +589,7 @@ class ProductController extends Controller
                     'type' => 'Kiểm hàng',
                     'partner' => 'Hệ thống',
                     'sell_price' => 0,
-                    'cost_price' => $costPrice,
+                    'cost_price' => $defaultCostPrice,
                     'change' => $diff,
                     'method' => $diff >= 0 ? 'Cộng kho' : 'Trừ kho',
                 ];
@@ -599,7 +600,7 @@ class ProductController extends Controller
         $damages = \App\Models\DamageItem::with('damage')
             ->where('product_id', $product->id)
             ->get()
-            ->map(function ($item) use ($costPrice) {
+            ->map(function ($item) use ($defaultCostPrice) {
                 return [
                     'date' => $item->damage->created_at,
                     'code' => $item->damage->code,
@@ -608,7 +609,7 @@ class ProductController extends Controller
                     'type' => 'Xuất hủy',
                     'partner' => 'Hệ thống',
                     'sell_price' => 0,
-                    'cost_price' => $costPrice,
+                    'cost_price' => $defaultCostPrice,
                     'change' => -$item->quantity,
                     'method' => 'Trừ kho',
                 ];
@@ -619,7 +620,7 @@ class ProductController extends Controller
         $transfers = \App\Models\StockTransferItem::with(['stockTransfer', 'stockTransfer.toBranch'])
             ->where('product_id', $product->id)
             ->get()
-            ->map(function ($item) use ($costPrice) {
+            ->map(function ($item) use ($defaultCostPrice) {
                 return [
                     'date' => $item->stockTransfer->created_at,
                     'code' => $item->stockTransfer->code,
@@ -628,7 +629,7 @@ class ProductController extends Controller
                     'type' => 'Chuyển kho',
                     'partner' => $item->stockTransfer->toBranch->name ?? 'Kho khác',
                     'sell_price' => 0,
-                    'cost_price' => $costPrice,
+                    'cost_price' => $defaultCostPrice,
                     'change' => -$item->quantity,
                     'method' => 'Trừ kho',
                 ];
@@ -657,6 +658,27 @@ class ProductController extends Controller
                 ];
             });
         $transactions = $transactions->concat($repairParts);
+
+        // 8. Trả hàng nhập NCC (Purchase Returns)
+        $purchaseReturns = \App\Models\PurchaseReturnItem::with(['purchaseReturn', 'purchaseReturn.supplier'])
+            ->where('product_id', $product->id)
+            ->whereHas('purchaseReturn', fn($q) => $q->where('status', 'completed'))
+            ->get()
+            ->map(function ($item) {
+                return [
+                    'date' => $item->purchaseReturn->return_date ?? $item->purchaseReturn->created_at,
+                    'code' => $item->purchaseReturn->code,
+                    'doc_type' => 'purchase_return',
+                    'doc_id' => $item->purchaseReturn->id,
+                    'type' => 'Trả hàng NCC',
+                    'partner' => $item->purchaseReturn->supplier->name ?? 'NCC',
+                    'sell_price' => (float) ($item->price ?? 0),
+                    'cost_price' => (float) ($item->cost_price ?? $item->price ?? 0),
+                    'change' => -$item->quantity,
+                    'method' => 'Trừ kho',
+                ];
+            });
+        $transactions = $transactions->concat($purchaseReturns);
 
         // Sort by date ASC and compute running balance
         $sorted = $transactions->sortBy('date')->values();

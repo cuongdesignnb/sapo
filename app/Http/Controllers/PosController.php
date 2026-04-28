@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Models\Product;
+use App\Services\MovingAvgCostingService;
+use App\Services\StockMovementService;
 
 class PosController extends Controller
 {
@@ -120,55 +122,54 @@ class PosController extends Controller
             foreach ($validated['items'] as $item) {
                 $serialIds = $item['serial_ids'] ?? [];
 
-                // Deduct stock
                 $product = Product::lockForUpdate()->find($item['product_id']);
-                if ($product) {
-                    $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', true);
+                if (!$product) continue;
 
-                    // Sản phẩm serial: kiểm tra serial in_stock thay vì stock_quantity
-                    if ($product->has_serial && !empty($serialIds)) {
-                        $availableSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
-                            ->where('product_id', $product->id)
-                            ->where('status', 'in_stock')
-                            ->count();
-                        if ($availableSerials < count($serialIds)) {
-                            throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} - một số Serial/IMEI đã bán hoặc không tồn tại.");
-                        }
-                    } elseif (!$allowOversell && $product->stock_quantity < $item['quantity']) {
-                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
+                $allowOversell = \App\Models\Setting::get('inventory_allow_oversell', true);
+
+                // Sản phẩm serial: kiểm tra serial in_stock
+                if ($product->has_serial && !empty($serialIds)) {
+                    $availableSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
+                        ->where('product_id', $product->id)
+                        ->where('status', 'in_stock')
+                        ->count();
+                    if ($availableSerials < count($serialIds)) {
+                        throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} - một số Serial/IMEI đã bán hoặc không tồn tại.");
                     }
-                    $product->stock_quantity -= $item['quantity'];
-                    $product->save();
+                } elseif (!$allowOversell && $product->stock_quantity < $item['quantity']) {
+                    throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                 }
 
-                // Snapshot cost_price
-                $snapshotCostPrice = 0;
-                if (!empty($serialIds) && $product && $product->has_serial) {
+                // BQ DI ĐỘNG: COGS = product.cost_price hiện tại (BQ moving avg)
+                $snapshotCostPrice = (float) ($product->cost_price ?? 0);
+                $serialStr = null;
+                $soldSerials = collect();
+
+                if ($product->has_serial && !empty($serialIds)) {
                     $soldSerials = \App\Models\SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
-                        ->get(['id', 'serial_number', 'cost_price']);
+                        ->get();
+                    $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
 
-                    $totalCost = $soldSerials->sum(fn($s) => (float) ($s->cost_price ?: $product->cost_price ?? 0));
-                    $snapshotCostPrice = $soldSerials->count() > 0
-                        ? round($totalCost / $soldSerials->count(), 2)
-                        : ($product->cost_price ?? 0);
-
-                    \App\Models\SerialImei::whereIn('id', $serialIds)
-                        ->where('product_id', $product->id)
-                        ->update([
-                            'status' => 'sold',
-                            'sold_at' => now(),
-                            'invoice_id' => $invoice->id,
+                    // Đánh dấu serial đã bán + snapshot sold_cost_price = BQ tại lúc bán
+                    foreach ($soldSerials as $serial) {
+                        \App\Models\InvoiceItemSerial::create([
+                            'invoice_item_id' => 0, // sẽ update sau
+                            'serial_imei_id' => $serial->id,
+                            'serial_number' => $serial->serial_number,
+                            'cost_price' => $snapshotCostPrice,
                         ]);
 
-                    $serialStr = $soldSerials->pluck('serial_number')->implode(', ');
-                } else {
-                    $snapshotCostPrice = (float) ($product->cost_price ?? 0);
-                    $serialStr = null;
+                        $serial->status = 'sold';
+                        $serial->sold_at = now();
+                        $serial->invoice_id = $invoice->id;
+                        $serial->sold_cost_price = $snapshotCostPrice;
+                        $serial->save();
+                    }
                 }
 
                 $itemDiscount = $item['discount'] ?? 0;
-                $invoice->items()->create([
+                $invoiceItem = $invoice->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity'   => $item['quantity'],
                     'price'      => $item['price'],
@@ -177,6 +178,37 @@ class PosController extends Controller
                     'subtotal'   => ($item['price'] * $item['quantity']) - $itemDiscount,
                     'serial'     => $serialStr,
                 ]);
+
+                // Update invoice_item_id cho các serial đã tạo ở trên
+                if ($soldSerials->isNotEmpty()) {
+                    \App\Models\InvoiceItemSerial::where('invoice_item_id', 0)
+                        ->whereIn('serial_imei_id', $soldSerials->pluck('id'))
+                        ->update(['invoice_item_id' => $invoiceItem->id]);
+                }
+
+                // BQ DI ĐỘNG: trừ tồn kho qua service (cập nhật stock_quantity + inventory_total_cost + cost_price)
+                MovingAvgCostingService::applySale($product, (int) $item['quantity']);
+                $product->refresh();
+
+                // Sync stock_quantity audit cho hàng serial
+                if ($product->has_serial) {
+                    $product->recomputeFromSerials();
+                }
+
+                // Phase 4 — Ghi sổ cái: xuất bán POS
+                StockMovementService::record(
+                    $product,
+                    StockMovementService::TYPE_OUT_INVOICE,
+                    (int) $item['quantity'],
+                    (float) $snapshotCostPrice,
+                    $invoice,
+                    [
+                        'branch_id' => null,
+                        'ref_code' => $invoice->code,
+                        'moved_at' => $invoice->created_at ?? now(),
+                        'note' => 'Xuất bán POS hóa đơn ' . $invoice->code,
+                    ]
+                );
             }
 
             // Customer debt tracking
