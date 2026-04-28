@@ -402,26 +402,26 @@ const cancelStockTake = async (stockTake) => {
                                     </td>
                                     <td class="p-3 text-right">{{ stockTake.items?.length || 0 }}</td>
                                     <td class="p-3 text-right">
-                                        {{ stockTake.total_actual_qty }}
+                                        {{ stockTake.items?.reduce((s, i) => s + (parseInt(i.actual_stock) || 0), 0) || 0 }}
                                     </td>
                                     <td
                                         class="p-3 text-right font-medium"
                                         :class="{
                                             'text-red-500':
-                                                stockTake.total_diff_qty < 0,
+                                                stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) < 0,
                                             'text-green-500':
-                                                stockTake.total_diff_qty > 0,
+                                                stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) > 0,
                                         }"
                                     >
-                                        {{ stockTake.total_diff_qty }}
+                                        {{ stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) || 0 }}
                                     </td>
                                     <td class="p-3 text-right text-green-500">
-                                        {{ stockTake.total_diff_increase }}
+                                        {{ stockTake.items?.filter(i => computedDiff(i) > 0).reduce((s, i) => s + computedDiff(i), 0) || 0 }}
                                     </td>
                                     <td
                                         class="p-3 text-right text-red-500 w-[120px]"
                                     >
-                                        {{ stockTake.total_diff_decrease }}
+                                        {{ stockTake.items?.filter(i => computedDiff(i) < 0).reduce((s, i) => s + computedDiff(i), 0) || 0 }}
                                     </td>
                                     <td class="p-3 truncate max-w-[150px]">
                                         {{
