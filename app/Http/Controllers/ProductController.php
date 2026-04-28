@@ -513,9 +513,10 @@ class ProductController extends Controller
     {
         $transactions = collect();
 
-        // 1. Nhập hàng (Purchases)
+        // 1. Nhập hàng (Purchases) — chỉ phiếu hoàn thành
         $purchases = \App\Models\PurchaseItem::with(['purchase', 'purchase.supplier'])
             ->where('product_id', $product->id)
+            ->whereHas('purchase', fn($q) => $q->where('status', 'completed'))
             ->get()
             ->map(function ($item) {
                 $unitCost = (float) ($item->unit_cost_allocated ?? $item->price ?? 0);
@@ -534,9 +535,12 @@ class ProductController extends Controller
             });
         $transactions = $transactions->concat($purchases);
 
-        // 2. Bán hàng (Invoices) — dùng invoice_item.cost_price (snapshot BQ lúc bán)
+        // 2. Bán hàng (Invoices) — loại bỏ hoá đơn đã huỷ
         $sales = \App\Models\InvoiceItem::with(['invoice', 'invoice.customer'])
             ->where('product_id', $product->id)
+            ->whereHas('invoice', fn($q) => $q->where(function($sq) {
+                $sq->whereNull('status')->orWhere('status', '!=', 'cancelled');
+            }))
             ->get()
             ->map(function ($item) {
                 return [
@@ -557,6 +561,9 @@ class ProductController extends Controller
         // 3. Trả hàng (Returns) — dùng return_item.cost_price (snapshot)
         $returns = \App\Models\ReturnItem::with(['orderReturn', 'orderReturn.customer'])
             ->where('product_id', $product->id)
+            ->whereHas('orderReturn', fn($q) => $q->where(function($sq) {
+                $sq->where('status', '!=', 'Đã hủy')->orWhereNull('status');
+            }))
             ->get()
             ->map(function ($item) {
                 return [
@@ -578,6 +585,7 @@ class ProductController extends Controller
         $defaultCostPrice = (float) ($product->cost_price ?? 0);
         $stockTakes = \App\Models\StockTakeItem::with('stockTake')
             ->where('product_id', $product->id)
+            ->whereHas('stockTake', fn($q) => $q->where('status', 'balanced'))
             ->get()
             ->map(function ($item) use ($defaultCostPrice) {
                 $diff = $item->actual_quantity - $item->current_quantity;
@@ -599,6 +607,7 @@ class ProductController extends Controller
         // 5. Xuất hủy (Damage)
         $damages = \App\Models\DamageItem::with('damage')
             ->where('product_id', $product->id)
+            ->whereHas('damage', fn($q) => $q->where('status', 'completed'))
             ->get()
             ->map(function ($item) use ($defaultCostPrice) {
                 return [
