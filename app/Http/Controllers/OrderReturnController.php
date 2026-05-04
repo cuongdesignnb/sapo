@@ -224,6 +224,54 @@ class OrderReturnController extends Controller
         }
         // ── End RR-11 validation ────────────────────────────────────────
 
+        // ── Step 23.2: Validate serial cho hàng has_serial khi return ──
+        // (a) count(serial_ids) === qty bắt buộc (không tự đoán/auto-pick).
+        // (b) mọi serial phải thuộc invoice_id (nếu có) và đang status='sold'.
+        // (c) một serial không xuất hiện 2 dòng cùng phiếu trả này.
+        // Áp dụng TRƯỚC DB::transaction để fail sớm, không tạo phiếu lỗi.
+        $seenSerialIds = [];
+        foreach ($validated['items'] as $item) {
+            $product = \App\Models\Product::find($item['product_id']);
+            if (!$product || !$product->has_serial) {
+                continue;
+            }
+            $qty = (int) $item['qty'];
+            $serialIds = array_values(array_filter(array_map('intval', (array) ($item['serial_ids'] ?? []))));
+
+            if (count($serialIds) !== $qty) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'items' => "Sản phẩm '{$product->name}' (Serial/IMEI) yêu cầu chọn đúng "
+                        . "{$qty} mã, hiện đã chọn " . count($serialIds) . '.',
+                ]);
+            }
+
+            // Trùng serial trong cùng request
+            foreach ($serialIds as $sid) {
+                if (isset($seenSerialIds[$sid])) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'items' => "Serial ID {$sid} bị chọn trùng nhiều dòng.",
+                    ]);
+                }
+                $seenSerialIds[$sid] = true;
+            }
+
+            // Mọi serial phải sold + thuộc product + (nếu có invoice) thuộc invoice
+            $serialQuery = SerialImei::whereIn('id', $serialIds)
+                ->where('product_id', $product->id)
+                ->where('status', 'sold');
+            if (!empty($validated['invoice_id'])) {
+                $serialQuery->where('invoice_id', $validated['invoice_id']);
+            }
+            $validCount = $serialQuery->count();
+            if ($validCount !== count($serialIds)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'items' => "Sản phẩm '{$product->name}': có serial không hợp lệ "
+                        . '(không thuộc hóa đơn này hoặc chưa từng bán).',
+                ]);
+            }
+        }
+        // ── End Step 23.2 serial validation ─────────────────────────────
+
         \Illuminate\Support\Facades\DB::transaction(function () use ($validated) {
             // Check return time limit
             if (Setting::get('return_time_limit_enabled', false) && !empty($validated['invoice_id'])) {
