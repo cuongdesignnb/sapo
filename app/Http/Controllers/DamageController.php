@@ -111,6 +111,90 @@ class DamageController extends Controller
             'note' => 'nullable|string'
         ]);
 
+        // ===== Step 23.6 pre-flight =====
+        // 1) Chặn duplicate product_id trong cùng phiếu.
+        // 2) Server-side cost_price/total_value (không tin client).
+        // 3) Hàng has_serial ở completed: serial_ids bắt buộc, count = qty,
+        //    không duplicate, thuộc product, status in_stock. Validate STRICT.
+        // 4) Chuẩn bị serverItems[] cho vòng lặp chính.
+        $seenProductIds = [];
+        $seenSerialIds  = [];
+        $serverItems    = [];
+        $serverTotalQty   = 0;
+        $serverTotalValue = 0.0;
+
+        foreach ($request->items as $idx => $line) {
+            $pid = (int) $line['product_id'];
+            if (isset($seenProductIds[$pid])) {
+                return back()->withErrors([
+                    "items.{$idx}.product_id" => 'Sản phẩm bị trùng trong cùng phiếu xuất hủy.',
+                ])->withInput();
+            }
+            $seenProductIds[$pid] = true;
+
+            $product = Product::find($pid);
+            if (!$product) {
+                return back()->withErrors([
+                    "items.{$idx}.product_id" => 'Sản phẩm không tồn tại.',
+                ])->withInput();
+            }
+
+            $qty = (int) $line['qty'];
+            $serialIds = array_values(array_unique(array_map('intval', (array) ($line['serial_ids'] ?? []))));
+
+            // Duplicate serial across the whole request
+            foreach ($serialIds as $sid) {
+                if (isset($seenSerialIds[$sid])) {
+                    return back()->withErrors([
+                        "items.{$idx}.serial_ids" => 'Serial bị trùng trong phiếu xuất hủy.',
+                    ])->withInput();
+                }
+                $seenSerialIds[$sid] = true;
+            }
+
+            // Duplicate within the same line (after array_unique they are distinct,
+            // nếu user gửi 2 cai giống nhau thì count sẽ lệch qty → fail step tiếp theo).
+            if (count($serialIds) !== count((array) ($line['serial_ids'] ?? []))) {
+                return back()->withErrors([
+                    "items.{$idx}.serial_ids" => 'Serial bị trùng trong cùng dòng sản phẩm.',
+                ])->withInput();
+            }
+
+            // Strict serial validation cho completed + has_serial
+            if ($request->status === 'completed' && $product->has_serial) {
+                if (count($serialIds) !== $qty) {
+                    return back()->withErrors([
+                        "items.{$idx}.serial_ids" => 'Số lượng serial phải bằng số lượng xuất hủy (sản phẩm “' . $product->name . '”).',
+                    ])->withInput();
+                }
+                $valid = SerialImei::whereIn('id', $serialIds)
+                    ->where('product_id', $product->id)
+                    ->where('status', 'in_stock')
+                    ->pluck('id')
+                    ->all();
+                if (count($valid) !== count($serialIds)) {
+                    return back()->withErrors([
+                        "items.{$idx}.serial_ids" => 'Serial không hợp lệ: phải thuộc sản phẩm “' . $product->name . '” và đang ở trạng thái in_stock.',
+                    ])->withInput();
+                }
+            }
+
+            $costPrice  = (float) $product->cost_price;
+            $totalValue = $qty * $costPrice;
+
+            $serverItems[] = [
+                'product_id'  => $pid,
+                'qty'         => $qty,
+                'cost_price'  => $costPrice,
+                'total_value' => $totalValue,
+                'note'        => $line['note'] ?? null,
+                'serial_ids'  => !empty($serialIds) ? $serialIds : null,
+                'product'     => $product,
+            ];
+            $serverTotalQty   += $qty;
+            $serverTotalValue += $totalValue;
+        }
+
         try {
             DB::beginTransaction();
 
@@ -119,11 +203,11 @@ class DamageController extends Controller
                 'branch_id' => $request->branch_id,
                 'status' => $request->status,
                 'created_by_name' => 'Trần Văn Tiến', // hardcoded cho demo
-                'destroyed_by_name' => collect($request->items)->sum('qty') > 0 ? 'Trần Văn Tiến' : 'Chưa có',
-                'destroyed_date' => clone Carbon::now(), // default if empty
+                'destroyed_by_name' => $serverTotalQty > 0 ? 'Trần Văn Tiến' : 'Chưa có',
+                'destroyed_date' => clone Carbon::now(),
                 'note' => $request->note,
-                'total_qty' => array_sum(array_column($request->items, 'qty')),
-                'total_value' => array_sum(array_column($request->items, 'total_value')),
+                'total_qty' => $serverTotalQty,
+                'total_value' => $serverTotalValue,
             ]);
 
             if ($request->filled('action_date')) {
@@ -132,62 +216,54 @@ class DamageController extends Controller
                 $damage->save();
             }
 
-            foreach ($request->items as $item) {
-                $product = Product::find($item['product_id']);
-
-                // RR-09: với hàng có serial, normalize serial_ids cho item này
-                $serialIds = [];
-                if ($product && $product->has_serial && !empty($item['serial_ids'])) {
-                    $serialIds = SerialImei::whereIn('id', $item['serial_ids'])
-                        ->where('product_id', $product->id)
-                        ->where('status', 'in_stock')
-                        ->pluck('id')
-                        ->all();
-                }
+            foreach ($serverItems as $row) {
+                /** @var \App\Models\Product $product */
+                $product   = $row['product'];
+                $qty       = $row['qty'];
+                $costPrice = $row['cost_price'];
+                $serialIds = $row['serial_ids'] ?? [];
 
                 DamageItem::create([
                     'damage_id'   => $damage->id,
-                    'product_id'  => $item['product_id'],
-                    'qty'         => $item['qty'],
-                    'cost_price'  => $item['cost_price'],
-                    'total_value' => $item['total_value'],
-                    'note'        => $item['note'] ?? null,
+                    'product_id'  => $product->id,
+                    'qty'         => $qty,
+                    'cost_price'  => $costPrice,
+                    'total_value' => $row['total_value'],
+                    'note'        => $row['note'],
                     'serial_ids'  => !empty($serialIds) ? $serialIds : null,
                 ]);
 
                 if ($request->status === 'completed') {
-                    if ($product) {
-                        if ($product->stock_quantity < $item['qty']) {
-                            throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để xuất hủy (Còn: {$product->stock_quantity}, Cần: {$item['qty']}).");
-                        }
-
-                        // RR-09: cập nhật BQ + ghi StockMovement (giống pattern RR-04 StockTake).
-                        $unitCostBefore = (float) $product->cost_price;
-                        MovingAvgCostingService::applyAdjustment($product, -(int) $item['qty']);
-
-                        // RR-09: với hàng serial, đổi đúng các serial đã chọn sang 'defective' (enum hiện có)
-                        if ($product->has_serial && !empty($serialIds)) {
-                            SerialImei::whereIn('id', $serialIds)
-                                ->where('product_id', $product->id)
-                                ->update(['status' => 'defective']);
-                            $product->refresh();
-                            $product->recomputeFromSerials();
-                        }
-
-                        StockMovementService::record(
-                            $product->fresh(),
-                            StockMovementService::TYPE_ADJUST_OUT,
-                            (int) $item['qty'],
-                            $unitCostBefore,
-                            $damage,
-                            [
-                                'branch_id' => $damage->branch_id,
-                                'ref_code'  => $damage->code,
-                                'moved_at'  => $damage->destroyed_date ?? now(),
-                                'note'      => 'Xuất hủy phiếu ' . $damage->code,
-                            ]
-                        );
+                    if ($product->stock_quantity < $qty) {
+                        throw new \Exception("Sản phẩm '{$product->name}' không đủ tồn kho để xuất hủy (Còn: {$product->stock_quantity}, Cần: {$qty}).");
                     }
+
+                    // RR-09: cập nhật BQ + ghi StockMovement (giống pattern RR-04 StockTake).
+                    $unitCostBefore = $costPrice;
+                    MovingAvgCostingService::applyAdjustment($product, -$qty);
+
+                    // RR-09: với hàng serial, đổi đúng các serial đã chọn sang 'defective'
+                    if ($product->has_serial && !empty($serialIds)) {
+                        SerialImei::whereIn('id', $serialIds)
+                            ->where('product_id', $product->id)
+                            ->update(['status' => 'defective']);
+                        $product->refresh();
+                        $product->recomputeFromSerials();
+                    }
+
+                    StockMovementService::record(
+                        $product->fresh(),
+                        StockMovementService::TYPE_ADJUST_OUT,
+                        $qty,
+                        $unitCostBefore,
+                        $damage,
+                        [
+                            'branch_id' => $damage->branch_id,
+                            'ref_code'  => $damage->code,
+                            'moved_at'  => $damage->destroyed_date ?? now(),
+                            'note'      => 'Xuất hủy phiếu ' . $damage->code,
+                        ]
+                    );
                 }
             }
 
@@ -207,7 +283,27 @@ class DamageController extends Controller
     public function cancel(Damage $damage)
     {
         if ($damage->status === DamageStatus::CANCELLED) {
+            if (request()->wantsJson()) {
+                return response()->json(['success' => false, 'message' => 'Phiếu xuất hủy đã bị hủy trước đó.'], 422);
+            }
             return back()->with('error', 'Phiếu xuất hủy đã bị hủy trước đó.');
+        }
+
+        // Step 23.6: chặn cancel cho legacy phiếu completed có hàng has_serial
+        // mà serial_ids bị null/empty — KHÔNG đoán serial.
+        if ($damage->status === DamageStatus::COMPLETED) {
+            $damage->load('items.product');
+            foreach ($damage->items as $item) {
+                if ($item->product && $item->product->has_serial) {
+                    if (!is_array($item->serial_ids) || empty($item->serial_ids)) {
+                        $msg = 'Phiếu có sản phẩm có serial nhưng không lưu serial_ids snapshot. Không thể tự động hủy; vui lòng xử lý thủ công.';
+                        if (request()->wantsJson()) {
+                            return response()->json(['success' => false, 'message' => $msg], 422);
+                        }
+                        return back()->with('error', $msg);
+                    }
+                }
+            }
         }
 
         DB::transaction(function () use ($damage) {
