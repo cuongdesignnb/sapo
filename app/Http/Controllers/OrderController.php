@@ -625,6 +625,9 @@ class OrderController extends Controller
                 'amount_paid' => $totalPaid,
             ]);
 
+            // 7) STEP 23.7B: Auto-generate warranty records (in-transaction → rollback-safe)
+            app(\App\Services\WarrantyGenerationService::class)->generateForInvoice($invoice);
+
             ActivityLog::log('order_convert', "Chuyển đơn {$order->code} → hóa đơn {$invoice->code}", $order);
 
             \Illuminate\Support\Facades\DB::commit();

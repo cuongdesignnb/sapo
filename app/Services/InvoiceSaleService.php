@@ -78,6 +78,9 @@ class InvoiceSaleService
             // ─── 5. CashFlow ───
             $this->createCashFlowIfPaid($invoice, $payload, $context);
 
+            // ─── 6. STEP 23.7B: Auto-generate warranty records (in-transaction → rollback-safe) ───
+            app(WarrantyGenerationService::class)->generateForInvoice($invoice);
+
             return $invoice->load('items.product');
         });
     }
