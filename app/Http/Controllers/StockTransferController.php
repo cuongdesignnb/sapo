@@ -36,13 +36,9 @@ class StockTransferController extends Controller
 
     public function index(Request $request)
     {
-        // Seed branches if empty
-        if (Branch::count() === 0) {
-            Branch::insert([
-                ['name' => 'Chi nhánh trung tâm', 'phone' => '0988123456'],
-                ['name' => 'Chi nhánh miền Nam', 'phone' => '0912123456']
-            ]);
-        }
+        // Step 24.2: removed runtime auto-seed of demo branches.
+        // Branches phải được tạo qua Settings/Branches UI hoặc seeder, không tự sinh
+        // khi user mở trang Stock Transfers ở production.
 
         $this->configureStockTransferFilters();
 

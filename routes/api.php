@@ -19,82 +19,13 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
-// =======================
-// 🔓 DEBUG ROUTES (public, for testing)
-// =======================
-
-Route::get('/attendance-agent/recent-logs', function () {
-    $logs = \App\Models\AttendanceLog::query()
-        ->orderByDesc('created_at')
-        ->limit(20)
-        ->get(['id', 'device_user_id', 'punched_at', 'event_type', 'employee_id', 'created_at']);
-
-    return response()->json([
-        'success' => true,
-        'total_logs' => \App\Models\AttendanceLog::count(),
-        'recent' => $logs,
-    ]);
-});
-
-Route::get('/attendance-agent/debug-status', function () {
-    $today = now()->toDateString();
-    $from = now()->subDays(7)->toDateString();
-
-    $totalLogs = \App\Models\AttendanceLog::count();
-    $logsWithEmployee = \App\Models\AttendanceLog::whereNotNull('employee_id')->count();
-    $logsWithoutEmployee = \App\Models\AttendanceLog::whereNull('employee_id')->count();
-
-    $schedulesThisWeek = \App\Models\EmployeeWorkSchedule::whereBetween('work_date', [$from, $today])->count();
-    $timekeepingRecordsThisWeek = \App\Models\TimekeepingRecord::whereBetween('work_date', [$from, $today])->count();
-    $timekeepingWithCheckin = \App\Models\TimekeepingRecord::whereBetween('work_date', [$from, $today])
-        ->whereNotNull('check_in_at')
-        ->count();
-
-    $employeesWithCode = \App\Models\Employee::whereNotNull('attendance_code')
-        ->get(['id', 'code', 'name', 'attendance_code']);
-
-    $recentSchedules = \App\Models\EmployeeWorkSchedule::with(['employee:id,code,name', 'timekeepingRecord'])
-        ->whereBetween('work_date', [$from, $today])
-        ->orderByDesc('work_date')
-        ->limit(10)
-        ->get();
-
-    return response()->json([
-        'success' => true,
-        'today' => $today,
-        'summary' => [
-            'total_logs' => $totalLogs,
-            'logs_with_employee_id' => $logsWithEmployee,
-            'logs_without_employee_id' => $logsWithoutEmployee,
-            'schedules_this_week' => $schedulesThisWeek,
-            'timekeeping_records_this_week' => $timekeepingRecordsThisWeek,
-            'timekeeping_with_checkin' => $timekeepingWithCheckin,
-        ],
-        'employees_with_attendance_code' => $employeesWithCode,
-        'recent_schedules' => $recentSchedules,
-    ]);
-});
-
-Route::post('/attendance-agent/force-recalculate', function (\Illuminate\Http\Request $request) {
-    $from = $request->input('from', now()->subDays(7)->toDateString());
-    $to = $request->input('to', now()->toDateString());
-    $employeeId = $request->input('employee_id');
-
-    $service = app(\App\Services\TimekeepingService::class);
-    $result = $service->recalculateForRange(
-        \Carbon\Carbon::parse($from),
-        \Carbon\Carbon::parse($to),
-        $employeeId ? (int) $employeeId : null
-    );
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Đã recalculate timekeeping (sync mode)',
-        'range' => ['from' => $from, 'to' => $to],
-        'employee_id' => $employeeId,
-        'result' => $result,
-    ]);
-});
+// Step 24.2: removed public debug endpoints
+//   - GET /api/attendance-agent/recent-logs (exposed attendance logs no auth)
+//   - GET /api/attendance-agent/debug-status (exposed employee codes no auth)
+//   - POST /api/attendance-agent/force-recalculate (wrote DB no auth — HIGH RISK)
+//   - GET /api/test (test endpoint)
+//   - POST /api/attendance-agent/debug-hmac (exposed HMAC config)
+// Để debug attendance giờ phải dùng Artisan CLI hoặc qua HMAC group bên dưới.
 
 // =======================
 // 🔒 ATTENDANCE AGENT (HMAC signed)
@@ -106,42 +37,6 @@ Route::prefix('attendance-agent')->middleware('attendance.agent')->group(functio
     Route::post('/sync-status', [AttendanceAgentController::class, 'syncStatus']);
     Route::get('/bridge/latest', [AttendanceAgentController::class, 'getLatestVersion']);
     Route::post('/refresh-mapping', [AttendanceAgentController::class, 'refreshMapping']);
-});
-
-Route::get('/test', [AttendanceAgentController::class, 'test']);
-
-// Debug HMAC — test tạm, xoá sau khi fix
-Route::post('/attendance-agent/debug-hmac', function (\Illuminate\Http\Request $request) {
-    $keyRaw = config('services.attendance_agent.hmac_key', 'your-long-random-secret-here-change-me');
-    $key = $keyRaw;
-    $isHex = ctype_xdigit($keyRaw) && strlen($keyRaw) % 2 === 0;
-    if ($isHex) {
-        $key = hex2bin($keyRaw);
-    }
-
-    $deviceId = $request->header('X-Device-Id', '');
-    $timestamp = $request->header('X-Timestamp', '');
-    $signature = $request->header('X-Signature', '');
-    $rawBody = $request->getContent();
-
-    $payload = "{$timestamp}.{$deviceId}.{$rawBody}";
-    $expected = hash_hmac('sha256', $payload, $key);
-
-    return response()->json([
-        'key_hint'       => substr($keyRaw, 0, 8) . '...(len=' . strlen($keyRaw) . ')',
-        'key_is_hex'     => $isHex,
-        'key_bin_length'  => strlen($key),
-        'device_id'      => $deviceId,
-        'timestamp'      => $timestamp,
-        'server_time'    => time(),
-        'time_diff'      => abs(time() - (int)$timestamp),
-        'body_length'    => strlen($rawBody),
-        'body_first80'   => substr($rawBody, 0, 80),
-        'payload_first80'=> substr($payload, 0, 80),
-        'expected_sig'   => $expected,
-        'received_sig'   => $signature,
-        'match'          => hash_equals($expected, $signature),
-    ]);
 });
 
 // =======================
