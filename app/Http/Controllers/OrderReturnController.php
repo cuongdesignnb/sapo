@@ -589,7 +589,7 @@ class OrderReturnController extends Controller
 
         // Step 24.0: audit log return cancel
         \App\Models\ActivityLog::log(
-            'return_cancel',
+            \App\Models\ActivityLog::ACTION_RETURN_CANCEL,
             "Hủy phiếu trả hàng {$return->code}",
             $return,
             ['total' => (float) $return->total]

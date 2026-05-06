@@ -114,7 +114,28 @@ class WarrantyController extends Controller
             'serial_imei'       => 'nullable|string|max:100',
         ]);
 
+        // Step 24.0C: snapshot before/after để audit log
+        $before = $warranty->only(array_keys($data));
         $warranty->update($data);
+        $after = $warranty->fresh()->only(array_keys($data));
+
+        $changed = [];
+        foreach ($data as $key => $_) {
+            if (($before[$key] ?? null) != ($after[$key] ?? null)) {
+                $changed[] = $key;
+            }
+        }
+
+        \App\Models\ActivityLog::log(
+            \App\Models\ActivityLog::ACTION_WARRANTY_UPDATE,
+            "Cập nhật bảo hành {$warranty->invoice_code}" . ($warranty->serial_imei ? " ({$warranty->serial_imei})" : ''),
+            $warranty,
+            [
+                'changed_fields' => $changed,
+                'old_values'     => $before,
+                'new_values'     => $after,
+            ]
+        );
 
         return redirect()->back()->with('success', 'Đã cập nhật thông tin bảo hành!');
     }

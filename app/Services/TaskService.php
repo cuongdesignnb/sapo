@@ -1022,7 +1022,7 @@ class TaskService
 
             // Step 24.0: audit log warranty attach
             ActivityLog::log(
-                'task_warranty_attach',
+                ActivityLog::ACTION_TASK_WARRANTY_ATTACH,
                 "Gắn bảo hành {$warranty->invoice_code} vào phiếu sửa chữa {$task->code}",
                 $task,
                 [

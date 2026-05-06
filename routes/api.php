@@ -326,6 +326,12 @@ Route::prefix('tasks')->group(function () {
     Route::post('/{task}/attach-warranty', [\App\Http\Controllers\Api\TaskController::class, 'attachWarranty'])->middleware('permission:tasks.attach_warranty');
 });
 
+// 📜 ACTIVITY LOGS (Step 24.0C)
+Route::prefix('activity-logs')->middleware('permission:system.audit.view')->group(function () {
+    Route::get('/', [\App\Http\Controllers\ActivityLogController::class, 'api']);
+    Route::get('/action-types', [\App\Http\Controllers\ActivityLogController::class, 'actionTypes']);
+});
+
 // 🔔 NOTIFICATIONS
 Route::prefix('notifications')->middleware('auth:sanctum')->group(function () {
     Route::get('/', [\App\Http\Controllers\Api\NotificationController::class, 'index']);

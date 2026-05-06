@@ -322,7 +322,7 @@ class PurchaseReturnController extends Controller
 
             // Step 24.0: audit log purchase return create
             \App\Models\ActivityLog::log(
-                'purchase_return_create',
+                \App\Models\ActivityLog::ACTION_PURCHASE_RETURN_CREATE,
                 "Tạo phiếu trả hàng nhập {$return->code}",
                 $return,
                 ['total' => (float) ($return->total ?? 0)]
@@ -540,7 +540,7 @@ class PurchaseReturnController extends Controller
 
             // Step 24.0: audit log purchase return cancel
             \App\Models\ActivityLog::log(
-                'purchase_return_cancel',
+                \App\Models\ActivityLog::ACTION_PURCHASE_RETURN_CANCEL,
                 "Hủy phiếu trả hàng nhập {$purchaseReturn->code}",
                 $purchaseReturn,
                 ['total' => (float) ($purchaseReturn->total ?? 0)]

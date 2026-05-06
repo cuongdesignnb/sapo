@@ -271,7 +271,7 @@ class DamageController extends Controller
 
             // Step 24.0: audit log damage create
             \App\Models\ActivityLog::log(
-                'damage_create',
+                \App\Models\ActivityLog::ACTION_DAMAGE_CREATE,
                 "Tạo phiếu xuất hủy {$damage->code}",
                 $damage,
                 ['total_quantity' => (int) ($damage->total_quantity ?? 0)]
@@ -364,7 +364,7 @@ class DamageController extends Controller
 
         // Step 24.0: audit log damage cancel
         \App\Models\ActivityLog::log(
-            'damage_cancel',
+            \App\Models\ActivityLog::ACTION_DAMAGE_CANCEL,
             "Hủy phiếu xuất hủy {$damage->code}",
             $damage
         );

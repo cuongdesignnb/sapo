@@ -16,6 +16,7 @@ class ActivityLog extends Model
         'subject_id',
         'properties',
         'ip_address',
+        'user_agent',
     ];
 
     protected $casts = [
@@ -54,6 +55,24 @@ class ActivityLog extends Model
     const ACTION_INVOICE_CREATE = 'invoice_create';
     const ACTION_INVOICE_CANCEL = 'invoice_cancel';
     const ACTION_RETURN_CREATE = 'return_create';
+    const ACTION_RETURN_CANCEL = 'return_cancel';
+
+    // Nhập hàng — trả NCC (Step 24.0C standardized)
+    const ACTION_PURCHASE_RETURN_CREATE = 'purchase_return_create';
+    const ACTION_PURCHASE_RETURN_CANCEL = 'purchase_return_cancel';
+
+    // Xuất hủy
+    const ACTION_DAMAGE_CREATE = 'damage_create';
+    const ACTION_DAMAGE_CANCEL = 'damage_cancel';
+
+    // Bảo hành & Sửa chữa
+    const ACTION_WARRANTY_UPDATE = 'warranty_update';
+    const ACTION_TASK_WARRANTY_ATTACH = 'task_warranty_attach';
+
+    // Khách hàng / Công nợ
+    const ACTION_CUSTOMER_DEBT_PAYMENT = 'customer_debt_payment';
+    const ACTION_CUSTOMER_DEBT_ADJUST  = 'customer_debt_adjust';
+    const ACTION_CUSTOMER_DEBT_OFFSET  = 'customer_debt_offset';
 
     // Sổ quỹ
     const ACTION_CASHFLOW_CREATE = 'cashflow_create';
@@ -138,6 +157,16 @@ class ActivityLog extends Model
         'invoice_create'    => 'Tạo hóa đơn',
         'invoice_cancel'    => 'Hủy hóa đơn',
         'return_create'     => 'Tạo phiếu trả hàng',
+        'return_cancel'     => 'Hủy phiếu trả hàng',
+        'purchase_return_create' => 'Tạo phiếu trả nhà cung cấp',
+        'purchase_return_cancel' => 'Hủy phiếu trả nhà cung cấp',
+        'damage_create'     => 'Tạo phiếu xuất hủy',
+        'damage_cancel'     => 'Hủy phiếu xuất hủy',
+        'warranty_update'   => 'Cập nhật bảo hành',
+        'task_warranty_attach' => 'Gắn bảo hành vào phiếu sửa chữa',
+        'customer_debt_payment' => 'Thanh toán công nợ khách hàng',
+        'customer_debt_adjust'  => 'Điều chỉnh công nợ khách hàng',
+        'customer_debt_offset'  => 'Cấn trừ công nợ',
         'cashflow_create'   => 'Tạo phiếu thu/chi',
         'cashflow_cancel'   => 'Hủy phiếu thu/chi',
         'cashflow_transfer' => 'Chuyển quỹ',
@@ -205,6 +234,16 @@ class ActivityLog extends Model
         'invoice_create'    => '🧾',
         'invoice_cancel'    => '🚫',
         'return_create'     => '↩️',
+        'return_cancel'     => '🚫',
+        'purchase_return_create' => '📤',
+        'purchase_return_cancel' => '🚫',
+        'damage_create'     => '🧯',
+        'damage_cancel'     => '🚫',
+        'warranty_update'   => '🛠️',
+        'task_warranty_attach' => '🛡️',
+        'customer_debt_payment' => '💵',
+        'customer_debt_adjust'  => '⚖️',
+        'customer_debt_offset'  => '🔄',
         'cashflow_create'   => '💰',
         'cashflow_cancel'   => '🚫',
         'cashflow_transfer' => '🔄',
@@ -294,7 +333,8 @@ class ActivityLog extends Model
         $resolvedUserId = $userId ?? $user?->id;
         $resolvedEmployeeId = $employeeId ?? $user?->employee?->id;
 
-        return self::create([
+        // Step 24.0C: capture user_agent nếu schema có cột (idempotent qua hasColumn).
+        $payload = [
             'user_id'      => $resolvedUserId,
             'employee_id'  => $resolvedEmployeeId,
             'action'       => $action,
@@ -303,6 +343,11 @@ class ActivityLog extends Model
             'subject_id'   => $subject?->id,
             'properties'   => $properties ?: null,
             'ip_address'   => request()?->ip(),
-        ]);
+        ];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('activity_logs', 'user_agent')) {
+            $ua = request()?->userAgent();
+            $payload['user_agent'] = $ua ? mb_substr($ua, 0, 500) : null;
+        }
+        return self::create($payload);
     }
 }

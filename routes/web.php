@@ -805,6 +805,11 @@ Route::get('/paysheets/export', [App\Http\Controllers\PaysheetController::class,
 // ======================
 // � TASKS (unified: repairs + general)
 // =======================
+// Step 24.0C: Audit Log Viewer
+Route::get('/activity-logs', [\App\Http\Controllers\ActivityLogController::class, 'index'])
+    ->name('activity-logs.index')
+    ->middleware('permission:system.audit.view');
+
 Route::get('/tasks', [TaskPageController::class, 'index'])->middleware('permission:tasks.view')->name('tasks.index');
 Route::get('/tasks/performance', [TaskPageController::class, 'performance'])->middleware('permission:tasks.view')->name('tasks.performance');
 Route::get('/tasks/{id}', [TaskPageController::class, 'show'])->middleware('permission:tasks.view')->name('tasks.show');
