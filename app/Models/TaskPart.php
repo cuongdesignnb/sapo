@@ -17,11 +17,13 @@ class TaskPart extends Model
         'exported_by',
         'notes',
         'direction',
+        'serial_ids',
     ];
 
     protected $casts = [
-        'unit_cost'  => 'decimal:0',
-        'total_cost' => 'decimal:0',
+        'unit_cost'   => 'decimal:0',
+        'total_cost'  => 'decimal:0',
+        'serial_ids'  => 'array',
     ];
 
     public function task()

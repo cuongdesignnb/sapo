@@ -235,9 +235,11 @@ class TaskController extends Controller
         }
 
         $data = $request->validate([
-            'product_id' => 'required|exists:products,id',
-            'quantity'   => 'required|integer|min:1',
-            'notes'      => 'nullable|string|max:500',
+            'product_id'   => 'required|exists:products,id',
+            'quantity'     => 'required|integer|min:1',
+            'notes'        => 'nullable|string|max:500',
+            'serial_ids'   => 'nullable|array',
+            'serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
 
         try {
@@ -246,7 +248,8 @@ class TaskController extends Controller
                 $data['product_id'],
                 $data['quantity'],
                 $data['notes'] ?? null,
-                $request->user()?->id
+                $request->user()?->id,
+                $data['serial_ids'] ?? null
             );
             $part->load('product:id,name,sku');
             $task->refresh();

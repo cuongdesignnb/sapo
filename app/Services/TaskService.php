@@ -321,33 +321,55 @@ class TaskService
 
     /**
      * Xuất linh kiện (chỉ cho repair task).
+     *
+     * @param array|null $serialIds  Bắt buộc nếu product has_serial=true.
      */
-    public function addPart(Task $task, int $productId, int $quantity = 1, ?string $notes = null, ?int $exportedBy = null): TaskPart
+    public function addPart(Task $task, int $productId, int $quantity = 1, ?string $notes = null, ?int $exportedBy = null, ?array $serialIds = null): TaskPart
     {
-        return DB::transaction(function () use ($task, $productId, $quantity, $notes, $exportedBy) {
+        return DB::transaction(function () use ($task, $productId, $quantity, $notes, $exportedBy, $serialIds) {
             $product = Product::findOrFail($productId);
+
+            // ── Serial validation cho linh kiện has_serial ──
+            if ($product->has_serial) {
+                $this->validatePartSerials($product, $quantity, $serialIds);
+            }
 
             if ($product->stock_quantity < $quantity) {
                 throw new \RuntimeException("Tồn kho linh kiện \"{$product->name}\" không đủ (còn {$product->stock_quantity}, cần {$quantity}).");
             }
 
             $unitCost = $product->cost_price ?? 0;
-            $totalCost = $unitCost * $quantity;
+
+            // Nếu has_serial, tính cost từ từng serial thực tế
+            if ($product->has_serial && !empty($serialIds)) {
+                $serials = SerialImei::whereIn('id', $serialIds)->get();
+                $totalCost = $serials->sum('cost_price');
+                $unitCost = $quantity > 0 ? round($totalCost / $quantity) : 0;
+            } else {
+                $totalCost = $unitCost * $quantity;
+            }
 
             $part = TaskPart::create([
-                'task_id'    => $task->id,
-                'product_id' => $productId,
-                'quantity'   => $quantity,
-                'unit_cost'  => $unitCost,
-                'total_cost' => $totalCost,
+                'task_id'     => $task->id,
+                'product_id'  => $productId,
+                'quantity'    => $quantity,
+                'unit_cost'   => $unitCost,
+                'total_cost'  => $totalCost,
                 'exported_by' => $exportedBy,
-                'notes'      => $notes,
-                'direction'  => 'export',
+                'notes'       => $notes,
+                'direction'   => 'export',
+                'serial_ids'  => $product->has_serial ? $serialIds : null,
             ]);
 
             // Trừ tồn kho linh kiện qua CostingService (cập nhật inventory_total_cost)
             MovingAvgCostingService::applySale($product, $quantity);
             $product->refresh();
+
+            // Đánh dấu serial linh kiện đã dùng
+            if ($product->has_serial && !empty($serialIds)) {
+                SerialImei::whereIn('id', $serialIds)->update(['status' => 'used_for_repair']);
+                $product->recomputeFromSerials();
+            }
 
             // Ghi StockMovement cho linh kiện xuất
             StockMovementService::record(
@@ -384,6 +406,40 @@ class TaskService
     }
 
     /**
+     * Validate serial IDs cho linh kiện has_serial trước khi xuất.
+     */
+    protected function validatePartSerials(Product $product, int $quantity, ?array $serialIds): void
+    {
+        if (empty($serialIds)) {
+            throw new \RuntimeException("Sản phẩm \"{$product->name}\" có Serial/IMEI — cần chọn đủ {$quantity} serial.");
+        }
+
+        if (count($serialIds) !== $quantity) {
+            throw new \RuntimeException("Số Serial/IMEI đã chọn (" . count($serialIds) . ") không khớp số lượng ({$quantity}).");
+        }
+
+        // Duplicate check
+        if (count($serialIds) !== count(array_unique($serialIds))) {
+            throw new \RuntimeException("Serial/IMEI bị trùng trong danh sách.");
+        }
+
+        $serials = SerialImei::whereIn('id', $serialIds)->get();
+
+        if ($serials->count() !== count($serialIds)) {
+            throw new \RuntimeException("Một hoặc nhiều Serial/IMEI không tồn tại.");
+        }
+
+        foreach ($serials as $s) {
+            if ((int) $s->product_id !== (int) $product->id) {
+                throw new \RuntimeException("Serial {$s->serial_number} không thuộc sản phẩm \"{$product->name}\".");
+            }
+            if ($s->status !== 'in_stock') {
+                throw new \RuntimeException("Serial {$s->serial_number} không còn trong kho (status: {$s->status}).");
+            }
+        }
+    }
+
+    /**
      * Gỡ linh kiện.
      */
     public function removePart(TaskPart $part): void
@@ -407,6 +463,14 @@ class TaskService
                     $task,
                     ['note' => 'Hoàn linh kiện — gỡ khỏi phiếu sửa chữa']
                 );
+
+                // Hoàn serial linh kiện về in_stock
+                if (!empty($part->serial_ids) && $product->has_serial) {
+                    SerialImei::whereIn('id', $part->serial_ids)
+                        ->where('status', 'used_for_repair')
+                        ->update(['status' => 'in_stock']);
+                    $product->recomputeFromSerials();
+                }
             }
 
             $deltaCost = -(float) $part->total_cost;
