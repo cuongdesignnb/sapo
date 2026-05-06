@@ -132,6 +132,16 @@ class TaskController extends Controller
         $type = $request->input('type', Task::TYPE_GENERAL);
         $isExternal = $request->boolean('external', false);
 
+        // Step 24.0B: external repair cần permission tách `tasks.create_external` (fallback `tasks.create`).
+        if ($type === Task::TYPE_REPAIR && $isExternal) {
+            $user = $request->user();
+            if ($user && !$user->hasAnyPermission(['tasks.create_external', 'tasks.create'])) {
+                return response()->json([
+                    'message' => 'Bạn không có quyền tạo phiếu sửa chữa khách ngoài.',
+                ], 403);
+            }
+        }
+
         if ($type === Task::TYPE_REPAIR && $isExternal) {
             // External repair — no serial required
             $data = $request->validate([
@@ -541,6 +551,14 @@ class TaskController extends Controller
     {
         // External repair — full completion flow
         if ($task->external && $task->type === Task::TYPE_REPAIR) {
+            // Step 24.0B: external repair cần permission tách `tasks.complete_external` (fallback `tasks.complete`).
+            $user = $request->user();
+            if ($user && !$user->hasAnyPermission(['tasks.complete_external', 'tasks.complete'])) {
+                return response()->json([
+                    'message' => 'Bạn không có quyền hoàn thành phiếu sửa chữa khách ngoài.',
+                ], 403);
+            }
+
             $data = $request->validate([
                 'labor_fee'       => 'required|numeric|min:0',
                 'paid_amount'     => 'required|numeric|min:0',
@@ -550,6 +568,14 @@ class TaskController extends Controller
                 'part_prices.*'   => 'numeric|min:0',
                 'warranty_policy' => 'nullable|in:none,free_labor,free_parts,full_free',
             ]);
+
+            // Step 24.0B: warranty policy free_* cần permission `tasks.apply_warranty_policy`.
+            $policy = $data['warranty_policy'] ?? 'none';
+            if ($policy !== 'none' && $user && !$user->hasPermission('tasks.apply_warranty_policy')) {
+                return response()->json([
+                    'message' => 'Bạn không có quyền áp chính sách miễn phí bảo hành.',
+                ], 403);
+            }
 
             try {
                 $task = $this->service->completeExternalRepair($task, $data);

@@ -421,8 +421,9 @@ Route::middleware('permission:purchases.view')->group(function () {
 Route::middleware('permission:purchases.create')->group(function () {
     Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
     Route::put('/purchases/{purchase}', [PurchaseController::class, 'update'])->name('purchases.update');
-    Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->name('purchases.destroy');
 });
+// Step 24.0B: hủy phiếu nhập tách khỏi quyền tạo
+Route::delete('/purchases/{purchase}', [PurchaseController::class, 'destroy'])->name('purchases.destroy')->middleware('permission:purchases.cancel');
 
 // ===== PURCHASE RETURNS =====
 Route::get('/purchase-returns/create', [PurchaseReturnController::class, 'create'])->name('purchase-returns.create')->middleware('permission:purchases.create');
@@ -430,10 +431,9 @@ Route::middleware('permission:purchases.view')->group(function () {
     Route::get('/purchase-returns', [PurchaseReturnController::class, 'index'])->name('purchase-returns.index');
     Route::get('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'show'])->name('purchase-returns.show');
 });
-Route::middleware('permission:purchases.create')->group(function () {
-    Route::post('/purchase-returns', [PurchaseReturnController::class, 'store'])->name('purchase-returns.store');
-    Route::delete('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'destroy'])->name('purchase-returns.destroy');
-});
+// Step 24.0B: tách quyền tạo / hủy phiếu trả NCC.
+Route::post('/purchase-returns', [PurchaseReturnController::class, 'store'])->name('purchase-returns.store')->middleware('permission:purchases.return.create');
+Route::delete('/purchase-returns/{purchaseReturn}', [PurchaseReturnController::class, 'destroy'])->name('purchase-returns.destroy')->middleware('permission:purchases.return.cancel');
 
 // ===== PRICE SETTINGS =====
 Route::middleware('permission:price_settings.view')->group(function () {
@@ -459,9 +459,10 @@ Route::get('/stock-transfers', [StockTransferController::class, 'index'])->name(
 Route::middleware('permission:stock_transfers.create')->group(function () {
     Route::get('/stock-transfers/create', [StockTransferController::class, 'create'])->name('stock-transfers.create');
     Route::post('/stock-transfers', [StockTransferController::class, 'store'])->name('stock-transfers.store');
-    Route::post('/stock-transfers/{id}/receive', [StockTransferController::class, 'receive'])->name('stock-transfers.receive');
-    Route::post('/stock-transfers/{id}/cancel', [StockTransferController::class, 'cancel'])->name('stock-transfers.cancel');
 });
+// Step 24.0B: tách quyền nhận / hủy chuyển kho.
+Route::post('/stock-transfers/{id}/receive', [StockTransferController::class, 'receive'])->name('stock-transfers.receive')->middleware('permission:stock_transfers.receive');
+Route::post('/stock-transfers/{id}/cancel', [StockTransferController::class, 'cancel'])->name('stock-transfers.cancel')->middleware('permission:stock_transfers.cancel');
 
 // ===== STOCK TAKES =====
 Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index')->middleware('permission:stock_takes.view');
@@ -469,9 +470,10 @@ Route::middleware('permission:stock_takes.create')->group(function () {
     Route::get('/stock-takes/create', [StockTakeController::class, 'create'])->name('stock-takes.create');
     Route::post('/stock-takes', [StockTakeController::class, 'store'])->name('stock-takes.store');
     Route::put('/stock-takes/{id}', [StockTakeController::class, 'update'])->name('stock-takes.update');
-    Route::post('/stock-takes/{id}/balance', [StockTakeController::class, 'balance'])->name('stock-takes.balance');
-    Route::post('/stock-takes/{id}/cancel', [StockTakeController::class, 'cancel'])->name('stock-takes.cancel');
 });
+// Step 24.0B: tách quyền cân bằng / hủy kiểm kho.
+Route::post('/stock-takes/{id}/balance', [StockTakeController::class, 'balance'])->name('stock-takes.balance')->middleware('permission:stock_takes.balance');
+Route::post('/stock-takes/{id}/cancel', [StockTakeController::class, 'cancel'])->name('stock-takes.cancel')->middleware('permission:stock_takes.cancel');
 Route::get('/stock-takes/{stockTake}', [StockTakeController::class, 'show'])->name('stock-takes.show')->middleware('permission:stock_takes.view');
 
 // ===== DAMAGES =====
@@ -479,9 +481,9 @@ Route::get('/damages', [DamageController::class, 'index'])->name('damages.index'
 Route::middleware('permission:damages.create')->group(function () {
     Route::get('/damages/create', [DamageController::class, 'create'])->name('damages.create');
     Route::post('/damages', [DamageController::class, 'store'])->name('damages.store');
-    // RR-09: hủy phiếu xuất hủy (đảo tồn/cost/serial, idempotent)
-    Route::post('/damages/{damage}/cancel', [DamageController::class, 'cancel'])->name('damages.cancel');
 });
+// Step 24.0B: tách quyền hủy phiếu xuất hủy.
+Route::post('/damages/{damage}/cancel', [DamageController::class, 'cancel'])->name('damages.cancel')->middleware('permission:damages.cancel');
 
 // ===== PURCHASE ORDERS =====
 Route::get('/purchase-orders', [PurchaseOrderController::class, 'index'])->name('purchase-orders.index')->middleware('permission:purchase_orders.view');
@@ -583,13 +585,15 @@ Route::middleware('permission:invoices.view')->group(function () {
     Route::get('/invoices/{invoice}/detail', [InvoiceController::class, 'detail']);
 });
 Route::post('/invoices', [InvoiceController::class, 'store'])->name('invoices.store')->middleware('permission:invoices.create');
-Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy')->middleware('permission:invoices.delete');
+// Step 24.0B: hủy hóa đơn dùng quyền tách `invoices.cancel`.
+Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->name('invoices.destroy')->middleware('permission:invoices.cancel');
 
 // ===== RETURNS =====
 Route::get('/returns', [OrderReturnController::class, 'index'])->name('returns.index')->middleware('permission:returns.view');
 Route::post('/returns', [OrderReturnController::class, 'store'])->name('returns.store')->middleware('permission:returns.create');
 // RR-08: route hủy phiếu trả hàng (rollback serial chính xác qua serial_ids đã lưu)
-Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel'])->name('returns.cancel')->middleware('permission:returns.create');
+// Step 24.0B: hủy phiếu trả hàng dùng quyền tách `returns.cancel`.
+Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel'])->name('returns.cancel')->middleware('permission:returns.cancel');
 
 // ===== ORDERS =====
 Route::middleware('permission:orders.view')->group(function () {

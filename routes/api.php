@@ -292,29 +292,38 @@ Route::prefix('device-repairs')->group(function () {
 // 📋 TASKS (unified: repairs + general)
 // =======================
 
+// Step 24.0B: enforce permission middleware cho API task/repair routes.
+// Read endpoints dùng `tasks.view`; write endpoints có permission tách riêng.
 Route::prefix('tasks')->group(function () {
-    Route::get('/', [\App\Http\Controllers\Api\TaskController::class, 'index']);
-    Route::get('/categories', [\App\Http\Controllers\Api\TaskController::class, 'categories']);
-    Route::get('/performance', [\App\Http\Controllers\Api\TaskController::class, 'performance']);
-    Route::get('/search-serials', [\App\Http\Controllers\Api\TaskController::class, 'searchSerials']);
-    Route::get('/search-products', [\App\Http\Controllers\Api\TaskController::class, 'searchProducts']);
-    Route::get('/product-serials', [\App\Http\Controllers\Api\TaskController::class, 'productSerials']);
-    // Step 23.8D — warranty lookup (theo serial_imei hoặc invoice_code)
-    Route::get('/lookup-warranty', [\App\Http\Controllers\Api\TaskController::class, 'lookupWarranty']);
-    Route::post('/batch-repair', [\App\Http\Controllers\Api\TaskController::class, 'batchCreateRepair']);
-    Route::post('/', [\App\Http\Controllers\Api\TaskController::class, 'store']);
-    Route::get('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'show']);
-    Route::put('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'update']);
-    Route::delete('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'destroy']);
-    Route::post('/{task}/assign', [\App\Http\Controllers\Api\TaskController::class, 'assign']);
-    Route::post('/{task}/parts', [\App\Http\Controllers\Api\TaskController::class, 'addPart']);
-    Route::delete('/{task}/parts/{partId}', [\App\Http\Controllers\Api\TaskController::class, 'removePart']);
-    Route::post('/{task}/disassemble-part', [\App\Http\Controllers\Api\TaskController::class, 'disassemblePart']);
-    Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete']);
-    Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress']);
-    Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment']);
+    Route::middleware('permission:tasks.view')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\TaskController::class, 'index']);
+        Route::get('/categories', [\App\Http\Controllers\Api\TaskController::class, 'categories']);
+        Route::get('/performance', [\App\Http\Controllers\Api\TaskController::class, 'performance']);
+        Route::get('/search-serials', [\App\Http\Controllers\Api\TaskController::class, 'searchSerials']);
+        Route::get('/search-products', [\App\Http\Controllers\Api\TaskController::class, 'searchProducts']);
+        Route::get('/product-serials', [\App\Http\Controllers\Api\TaskController::class, 'productSerials']);
+        // Step 23.8D — warranty lookup
+        Route::get('/lookup-warranty', [\App\Http\Controllers\Api\TaskController::class, 'lookupWarranty'])->middleware('permission:tasks.attach_warranty');
+        Route::get('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'show']);
+    });
+    Route::middleware('permission:tasks.create')->group(function () {
+        Route::post('/batch-repair', [\App\Http\Controllers\Api\TaskController::class, 'batchCreateRepair']);
+        Route::post('/', [\App\Http\Controllers\Api\TaskController::class, 'store']);
+        Route::put('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'update']);
+    });
+    Route::delete('/{task}', [\App\Http\Controllers\Api\TaskController::class, 'destroy'])->middleware('permission:tasks.create');
+    Route::post('/{task}/assign', [\App\Http\Controllers\Api\TaskController::class, 'assign'])->middleware('permission:tasks.assign');
+    // Step 24.0B: parts management tách quyền `tasks.manage_parts`.
+    Route::middleware('permission:tasks.manage_parts')->group(function () {
+        Route::post('/{task}/parts', [\App\Http\Controllers\Api\TaskController::class, 'addPart']);
+        Route::delete('/{task}/parts/{partId}', [\App\Http\Controllers\Api\TaskController::class, 'removePart']);
+    });
+    Route::post('/{task}/disassemble-part', [\App\Http\Controllers\Api\TaskController::class, 'disassemblePart'])->middleware('permission:tasks.disassemble');
+    Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete'])->middleware('permission:tasks.complete');
+    Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress'])->middleware('permission:tasks.complete');
+    Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment'])->middleware('permission:tasks.view');
     // Step 23.8D — attach warranty vào task
-    Route::post('/{task}/attach-warranty', [\App\Http\Controllers\Api\TaskController::class, 'attachWarranty']);
+    Route::post('/{task}/attach-warranty', [\App\Http\Controllers\Api\TaskController::class, 'attachWarranty'])->middleware('permission:tasks.attach_warranty');
 });
 
 // 🔔 NOTIFICATIONS
