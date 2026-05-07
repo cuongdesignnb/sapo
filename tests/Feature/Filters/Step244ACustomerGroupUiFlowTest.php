@@ -243,4 +243,57 @@ class Step244ACustomerGroupUiFlowTest extends TestCase
         $res->assertStatus(403);
         $this->assertDatabaseMissing('customer_groups', ['name' => 'Forbidden Group']);
     }
+
+    // ═══ TC-12: birthday preset filter resolves correctly ═══
+    public function test_birthday_filter_preset_this_month_only_matches_birthdays_this_month(): void
+    {
+        $admin = $this->adminUser();
+        $this->actingAs($admin);
+
+        $now = \Carbon\Carbon::now();
+        $thisMonth = $now->copy()->startOfMonth()->addDays(5)->toDateString();
+        $lastMonth = $now->copy()->subMonthNoOverflow()->startOfMonth()->addDays(3)->toDateString();
+
+        Customer::create(['code' => 'KH-BD-A', 'name' => 'A', 'birthday' => $thisMonth, 'is_customer' => true]);
+        Customer::create(['code' => 'KH-BD-B', 'name' => 'B', 'birthday' => $lastMonth, 'is_customer' => true]);
+
+        $res = $this->get('/customers?birthday_filter=this_month');
+        $res->assertInertia(fn ($p) => $p->where('customers.total', 1));
+    }
+
+    // ═══ TC-13: last_transaction preset ═══
+    public function test_last_transaction_filter_preset_last_7_days(): void
+    {
+        $admin = $this->adminUser();
+        $this->actingAs($admin);
+
+        $cRecent = Customer::create(['code' => 'KH-LT-R', 'name' => 'Recent', 'is_customer' => true]);
+        $cOld    = Customer::create(['code' => 'KH-LT-O', 'name' => 'Old',    'is_customer' => true]);
+
+        \App\Models\Invoice::create([
+            'code' => 'HD-LT-R', 'customer_id' => $cRecent->id, 'total' => 100000,
+            'transaction_date' => \Carbon\Carbon::now()->subDays(2),
+        ]);
+        \App\Models\Invoice::create([
+            'code' => 'HD-LT-O', 'customer_id' => $cOld->id, 'total' => 100000,
+            'transaction_date' => \Carbon\Carbon::now()->subDays(30),
+        ]);
+
+        $res = $this->get('/customers?last_transaction_filter=last_7_days');
+        $res->assertInertia(fn ($p) => $p->where('customers.total', 1));
+    }
+
+    // ═══ TC-14: filters are echoed back so DateRangeFilter v-model can hydrate ═══
+    public function test_index_echoes_back_date_filter_keys(): void
+    {
+        $admin = $this->adminUser();
+        $this->actingAs($admin);
+
+        $res = $this->get('/customers?birthday_filter=this_month&last_transaction_filter=last_7_days&total_sales_date_filter=this_year');
+        $res->assertInertia(fn ($p) => $p
+            ->where('filters.birthday_filter', 'this_month')
+            ->where('filters.last_transaction_filter', 'last_7_days')
+            ->where('filters.total_sales_date_filter', 'this_year')
+        );
+    }
 }

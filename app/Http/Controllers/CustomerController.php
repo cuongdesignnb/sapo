@@ -17,6 +17,7 @@ use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
 use App\Models\DebtOffset;
 use App\Support\Filters\FilterableIndex;
+use App\Support\Filters\DateRangePresets;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
@@ -92,34 +93,57 @@ class CustomerController extends Controller
             }
         }
 
-        // Birthday range
-        if ($request->filled('birthday_from')) {
-            $query->whereDate('birthday', '>=', $request->birthday_from);
+        // Birthday range — supports preset (birthday_filter) OR direct from/to.
+        // If no preset given but bare from/to provided, treat as 'custom' for back-compat.
+        $birthdayPreset = $request->input('birthday_filter')
+            ?: (($request->filled('birthday_from') || $request->filled('birthday_to')) ? 'custom' : null);
+        [$birthdayFrom, $birthdayTo] = DateRangePresets::resolve(
+            $birthdayPreset,
+            $request->input('birthday_from'),
+            $request->input('birthday_to'),
+        );
+        if ($birthdayFrom) {
+            $query->whereDate('birthday', '>=', $birthdayFrom->toDateString());
         }
-        if ($request->filled('birthday_to')) {
-            $query->whereDate('birthday', '<=', $request->birthday_to);
+        if ($birthdayTo) {
+            $query->whereDate('birthday', '<=', $birthdayTo->toDateString());
         }
 
         // Last transaction date (max invoice transaction_date for this customer)
-        if ($request->filled('last_transaction_from') || $request->filled('last_transaction_to')) {
+        // Supports preset (last_transaction_filter) OR direct from/to.
+        $lastTxPreset = $request->input('last_transaction_filter')
+            ?: (($request->filled('last_transaction_from') || $request->filled('last_transaction_to')) ? 'custom' : null);
+        [$lastTxFrom, $lastTxTo] = DateRangePresets::resolve(
+            $lastTxPreset,
+            $request->input('last_transaction_from'),
+            $request->input('last_transaction_to'),
+        );
+        if ($lastTxFrom || $lastTxTo) {
             $subquery = Invoice::selectRaw('MAX(COALESCE(transaction_date, created_at))')
                 ->whereColumn('invoices.customer_id', 'customers.id');
 
-            if ($request->filled('last_transaction_from')) {
-                $query->where(function ($q) use ($subquery, $request) {
-                    $q->whereRaw('(' . $subquery->toSql() . ') >= ?', array_merge($subquery->getBindings(), [$request->last_transaction_from]));
+            if ($lastTxFrom) {
+                $query->where(function ($q) use ($subquery, $lastTxFrom) {
+                    $q->whereRaw('(' . $subquery->toSql() . ') >= ?', array_merge($subquery->getBindings(), [$lastTxFrom->toDateTimeString()]));
                 });
             }
-            if ($request->filled('last_transaction_to')) {
-                $query->where(function ($q) use ($subquery, $request) {
-                    $q->whereRaw('(' . $subquery->toSql() . ') <= ?', array_merge($subquery->getBindings(), [$request->last_transaction_to . ' 23:59:59']));
+            if ($lastTxTo) {
+                $query->where(function ($q) use ($subquery, $lastTxTo) {
+                    $q->whereRaw('(' . $subquery->toSql() . ') <= ?', array_merge($subquery->getBindings(), [$lastTxTo->toDateTimeString()]));
                 });
             }
         }
 
-        // Total sales range (lifetime or time-scoped)
+        // Total sales range (lifetime or time-scoped via preset/custom)
         $hasTotalSalesFilter = $request->filled('total_sales_from') || $request->filled('total_sales_to');
-        $hasTotalSalesTime = $request->filled('total_sales_date_from') || $request->filled('total_sales_date_to');
+        $totalSalesPreset = $request->input('total_sales_date_filter')
+            ?: (($request->filled('total_sales_date_from') || $request->filled('total_sales_date_to')) ? 'custom' : null);
+        [$totalSalesFrom, $totalSalesTo] = DateRangePresets::resolve(
+            $totalSalesPreset,
+            $request->input('total_sales_date_from'),
+            $request->input('total_sales_date_to'),
+        );
+        $hasTotalSalesTime = $totalSalesFrom || $totalSalesTo;
 
         if ($hasTotalSalesFilter) {
             if ($hasTotalSalesTime) {
@@ -127,11 +151,11 @@ class CustomerController extends Controller
                 $sumSubquery = Invoice::selectRaw('COALESCE(SUM(total), 0)')
                     ->whereColumn('invoices.customer_id', 'customers.id');
 
-                if ($request->filled('total_sales_date_from')) {
-                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '>=', $request->total_sales_date_from);
+                if ($totalSalesFrom) {
+                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '>=', $totalSalesFrom->toDateTimeString());
                 }
-                if ($request->filled('total_sales_date_to')) {
-                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '<=', $request->total_sales_date_to . ' 23:59:59');
+                if ($totalSalesTo) {
+                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '<=', $totalSalesTo->toDateTimeString());
                 }
 
                 if ($request->filled('total_sales_from')) {
@@ -258,14 +282,17 @@ class CustomerController extends Controller
         $filters['partner_type']          = $request->input('partner_type', '');
         $filters['net_debt_from']         = $request->input('net_debt_from', '');
         $filters['net_debt_to']           = $request->input('net_debt_to', '');
-        $filters['birthday_from']         = $request->input('birthday_from', '');
-        $filters['birthday_to']           = $request->input('birthday_to', '');
-        $filters['last_transaction_from'] = $request->input('last_transaction_from', '');
-        $filters['last_transaction_to']   = $request->input('last_transaction_to', '');
-        $filters['total_sales_from']      = $request->input('total_sales_from', '');
-        $filters['total_sales_to']        = $request->input('total_sales_to', '');
-        $filters['total_sales_date_from'] = $request->input('total_sales_date_from', '');
-        $filters['total_sales_date_to']   = $request->input('total_sales_date_to', '');
+        $filters['birthday_filter']           = $request->input('birthday_filter', 'all');
+        $filters['birthday_from']             = $request->input('birthday_from', '');
+        $filters['birthday_to']               = $request->input('birthday_to', '');
+        $filters['last_transaction_filter']   = $request->input('last_transaction_filter', 'all');
+        $filters['last_transaction_from']     = $request->input('last_transaction_from', '');
+        $filters['last_transaction_to']       = $request->input('last_transaction_to', '');
+        $filters['total_sales_from']          = $request->input('total_sales_from', '');
+        $filters['total_sales_to']            = $request->input('total_sales_to', '');
+        $filters['total_sales_date_filter']   = $request->input('total_sales_date_filter', 'all');
+        $filters['total_sales_date_from']     = $request->input('total_sales_date_from', '');
+        $filters['total_sales_date_to']       = $request->input('total_sales_date_to', '');
         $filters['delivery_city']         = $request->input('delivery_city', '');
         $filters['delivery_district']     = $request->input('delivery_district', '');
 

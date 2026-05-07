@@ -5,6 +5,7 @@ import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import DateRangeFilter from "@/Components/Filters/DateRangeFilter.vue";
 import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
@@ -649,28 +650,59 @@ const submitGroupModal = async () => {
     }
 };
 
-// Birthday filter mode
-const birthdayMode = computed({
-    get: () => (filters.birthday_from || filters.birthday_to) ? 'custom' : 'all',
+// Date-range filter v-model bridges for the shared DateRangeFilter component.
+// Each exposes { filter, from, to } and writes back into the flat filter fields
+// the backend already echoes on /customers.
+const birthdayRange = computed({
+    get: () => ({
+        filter: filters.birthday_filter || (filters.birthday_from || filters.birthday_to ? 'custom' : 'all'),
+        from: filters.birthday_from || '',
+        to: filters.birthday_to || '',
+    }),
     set: (v) => {
-        if (v === 'all') { filters.birthday_from = ''; filters.birthday_to = ''; }
-    }
+        filters.birthday_filter = v?.filter || 'all';
+        filters.birthday_from = v?.filter === 'custom' ? (v?.from || '') : '';
+        filters.birthday_to = v?.filter === 'custom' ? (v?.to || '') : '';
+    },
 });
 
-// Last transaction filter mode
-const lastTxMode = computed({
-    get: () => (filters.last_transaction_from || filters.last_transaction_to) ? 'custom' : 'all',
+const lastTransactionRange = computed({
+    get: () => ({
+        filter: filters.last_transaction_filter || (filters.last_transaction_from || filters.last_transaction_to ? 'custom' : 'all'),
+        from: filters.last_transaction_from || '',
+        to: filters.last_transaction_to || '',
+    }),
     set: (v) => {
-        if (v === 'all') { filters.last_transaction_from = ''; filters.last_transaction_to = ''; }
-    }
+        filters.last_transaction_filter = v?.filter || 'all';
+        filters.last_transaction_from = v?.filter === 'custom' ? (v?.from || '') : '';
+        filters.last_transaction_to = v?.filter === 'custom' ? (v?.to || '') : '';
+    },
 });
 
-// Total sales time mode
-const totalSalesTimeMode = computed({
-    get: () => (filters.total_sales_date_from || filters.total_sales_date_to) ? 'custom' : 'all',
+const totalSalesDateRange = computed({
+    get: () => ({
+        filter: filters.total_sales_date_filter || (filters.total_sales_date_from || filters.total_sales_date_to ? 'custom' : 'all'),
+        from: filters.total_sales_date_from || '',
+        to: filters.total_sales_date_to || '',
+    }),
     set: (v) => {
-        if (v === 'all') { filters.total_sales_date_from = ''; filters.total_sales_date_to = ''; }
-    }
+        filters.total_sales_date_filter = v?.filter || 'all';
+        filters.total_sales_date_from = v?.filter === 'custom' ? (v?.from || '') : '';
+        filters.total_sales_date_to = v?.filter === 'custom' ? (v?.to || '') : '';
+    },
+});
+
+const createdDateRange = computed({
+    get: () => ({
+        filter: filters.date_filter || (filters.date_from || filters.date_to ? 'custom' : 'all'),
+        from: filters.date_from || '',
+        to: filters.date_to || '',
+    }),
+    set: (v) => {
+        filters.date_filter = v?.filter || 'all';
+        filters.date_from = v?.filter === 'custom' ? (v?.from || '') : '';
+        filters.date_to = v?.filter === 'custom' ? (v?.to || '') : '';
+    },
 });
 </script>
 
@@ -694,80 +726,39 @@ const totalSalesTimeMode = computed({
             <!-- 2. LOẠI KHÁCH HÀNG -->
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Loại khách hàng</label>
-                <div class="flex gap-2 text-sm">
-                    <button @click="filters.type = ''" :class="!filters.type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="t in filterTypes" :key="t.value" @click="filters.type = t.value" :class="filters.type === t.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ t.label }}</button>
+                <div class="flex flex-wrap gap-2 text-sm">
+                    <button @click="filters.type = ''" :class="!filters.type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">Tất cả</button>
+                    <button v-for="t in filterTypes" :key="t.value" @click="filters.type = t.value" :class="filters.type === t.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">{{ t.label }}</button>
                 </div>
             </div>
 
             <!-- 3. GIỚI TÍNH -->
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Giới tính</label>
-                <div class="flex gap-2 text-sm">
-                    <button @click="filters.gender = ''" :class="!filters.gender ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="g in filterGenders" :key="g.value" @click="filters.gender = g.value" :class="filters.gender === g.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ g.label }}</button>
+                <div class="flex flex-wrap gap-2 text-sm">
+                    <button @click="filters.gender = ''" :class="!filters.gender ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">Tất cả</button>
+                    <button v-for="g in filterGenders" :key="g.value" @click="filters.gender = g.value" :class="filters.gender === g.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">{{ g.label }}</button>
                 </div>
             </div>
 
             <!-- 4. SINH NHẬT -->
             <div v-if="hasCapability('supportsBirthdayFilter')" class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Sinh nhật</label>
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="birthday_mode" value="all" v-model="birthdayMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Toàn thời gian
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="birthday_mode" value="custom" v-model="birthdayMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Tùy chỉnh
-                    </label>
-                    <div v-if="birthdayMode === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
-                        <input type="date" v-model="filters.birthday_from" class="w-full min-w-0 border rounded p-1 text-xs" placeholder="Từ" />
-                        <input type="date" v-model="filters.birthday_to" class="w-full min-w-0 border rounded p-1 text-xs" placeholder="Đến" />
-                    </div>
-                </div>
+                <DateRangeFilter v-model="birthdayRange" label="Sinh nhật" flat />
             </div>
 
             <!-- 5. NGÀY GIAO DỊCH CUỐI -->
             <div v-if="hasCapability('supportsLastTransactionFilter')" class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Ngày giao dịch cuối</label>
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="last_tx_mode" value="all" v-model="lastTxMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Toàn thời gian
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="last_tx_mode" value="custom" v-model="lastTxMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Tùy chỉnh
-                    </label>
-                    <div v-if="lastTxMode === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
-                        <input type="date" v-model="filters.last_transaction_from" class="w-full min-w-0 border rounded p-1 text-xs" />
-                        <input type="date" v-model="filters.last_transaction_to" class="w-full min-w-0 border rounded p-1 text-xs" />
-                    </div>
-                </div>
+                <DateRangeFilter v-model="lastTransactionRange" label="Ngày giao dịch cuối" flat />
             </div>
 
             <!-- 6. TỔNG BÁN -->
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Tổng bán</label>
-                <div class="grid grid-cols-2 gap-2 mb-2">
+                <div class="grid grid-cols-2 gap-2 mb-3">
                     <input type="number" v-model="filters.total_sales_from" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Giá trị từ" min="0" />
                     <input type="number" v-model="filters.total_sales_to" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Giá trị tới" min="0" />
                 </div>
-                <div v-if="hasCapability('supportsTotalSalesTimeFilter')" class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="total_sales_time" value="all" v-model="totalSalesTimeMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Toàn thời gian
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="total_sales_time" value="custom" v-model="totalSalesTimeMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Thời gian tổng bán
-                    </label>
-                    <div v-if="totalSalesTimeMode === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
-                        <input type="date" v-model="filters.total_sales_date_from" class="w-full min-w-0 border rounded p-1 text-xs" />
-                        <input type="date" v-model="filters.total_sales_date_to" class="w-full min-w-0 border rounded p-1 text-xs" />
-                    </div>
-                </div>
+                <DateRangeFilter v-if="hasCapability('supportsTotalSalesTimeFilter')" v-model="totalSalesDateRange" label="Thời gian tổng bán" flat />
             </div>
 
             <!-- 7. NỢ HIỆN TẠI -->
@@ -791,9 +782,9 @@ const totalSalesTimeMode = computed({
             <!-- 9. TRẠNG THÁI -->
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Trạng thái</label>
-                <div class="flex gap-2 text-sm">
-                    <button @click="filters.status = []" :class="!filters.status?.length ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="s in filterStatuses" :key="s.value" @click="filters.status = [s.value]" :class="filters.status?.includes?.(s.value) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ s.label }}</button>
+                <div class="flex flex-wrap gap-2 text-sm">
+                    <button @click="filters.status = []" :class="!filters.status?.length ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">Tất cả</button>
+                    <button v-for="s in filterStatuses" :key="s.value" @click="filters.status = [s.value]" :class="filters.status?.includes?.(s.value) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">{{ s.label }}</button>
                 </div>
             </div>
 
@@ -801,8 +792,8 @@ const totalSalesTimeMode = computed({
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Loại đối tác</label>
                 <div class="flex flex-wrap gap-2 text-sm">
-                    <button @click="filters.partner_type = ''" :class="!filters.partner_type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">Tất cả</button>
-                    <button v-for="p in filterPartnerTypes" :key="p.value" @click="filters.partner_type = p.value" :class="filters.partner_type === p.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1">{{ p.label }}</button>
+                    <button @click="filters.partner_type = ''" :class="!filters.partner_type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">Tất cả</button>
+                    <button v-for="p in filterPartnerTypes" :key="p.value" @click="filters.partner_type = p.value" :class="filters.partner_type === p.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'" class="border rounded-full px-3 py-1 whitespace-nowrap">{{ p.label }}</button>
                 </div>
             </div>
 
@@ -826,21 +817,7 @@ const totalSalesTimeMode = computed({
 
             <!-- 13. NGÀY TẠO -->
             <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2">Ngày tạo</label>
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="date_filter" value="all" v-model="filters.date_filter" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Toàn thời gian
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="date_filter" value="custom" v-model="filters.date_filter" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                        Tùy chỉnh
-                    </label>
-                    <div v-if="filters.date_filter === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
-                        <input type="date" v-model="filters.date_from" class="w-full min-w-0 border rounded p-1 text-xs" />
-                        <input type="date" v-model="filters.date_to" class="w-full min-w-0 border rounded p-1 text-xs" />
-                    </div>
-                </div>
+                <DateRangeFilter v-model="createdDateRange" label="Ngày tạo" flat />
             </div>
 
             <!-- CLEAR FILTER -->

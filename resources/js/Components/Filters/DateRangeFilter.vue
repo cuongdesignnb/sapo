@@ -25,6 +25,8 @@ const props = defineProps({
     label: { type: String, default: "Thời gian" },
     /** Optional custom preset list (advanced use). When null, use built-in groups. */
     presets: { type: Array, default: null },
+    /** When true, drop the card wrapper styling so it blends into a flat sidebar. */
+    flat: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update:modelValue"]);
@@ -170,8 +172,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div ref="rootEl" class="bg-white rounded-lg shadow-sm p-4 relative">
-        <label class="block text-sm font-semibold text-gray-700 mb-2">{{ label }}</label>
+    <div ref="rootEl" :class="['relative', flat ? '' : 'bg-white rounded-lg shadow-sm p-4']">
+        <label :class="['block', flat ? 'text-sm font-bold text-gray-800 mb-2' : 'text-sm font-semibold text-gray-700 mb-2']">{{ label }}</label>
 
         <div class="space-y-2">
             <!-- Preset row: radio + pill that opens popover -->
