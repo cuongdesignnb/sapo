@@ -531,7 +531,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
             <!-- Sidebar slot (if provided) -->
             <aside
                 v-if="slots.sidebar"
-                class="w-64 bg-white border-r border-gray-200 overflow-y-auto flex-shrink-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] h-[calc(100vh-3.5rem)] sticky top-0"
+                class="w-64 bg-white border-r border-gray-200 overflow-y-auto overflow-x-hidden flex-shrink-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] h-[calc(100vh-3.5rem)] sticky top-0"
             >
                 <slot name="sidebar"></slot>
             </aside>

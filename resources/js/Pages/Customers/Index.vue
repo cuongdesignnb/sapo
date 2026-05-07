@@ -543,10 +543,11 @@ const submit = () => {
         },
     });
 };
-</script>
 
-
-// ====== CUSTOMER GROUP MODAL (KiotViet-style) ======
+// ====== CUSTOMER GROUP MODAL (HOTFIX 24.4A-3) ======
+// Hoisted into the script-setup block so openGroupModal / submitGroupModal
+// are actually reactive — previously they sat after the script close tag and
+// Vue treated them as orphan template text.
 const showGroupModal = ref(false);
 const groupForm = reactive({
     name: '',
@@ -561,6 +562,25 @@ const groupForm = reactive({
 });
 const groupModalTab = ref('info');
 const groupSubmitting = ref(false);
+const groupErrors = ref({});
+
+// Locally cached groups merged on top of backend filterOptions.customerGroups
+// so a freshly created group is selectable immediately, even if the Inertia
+// partial reload hasn't propagated yet.
+const localCustomerGroups = ref([]);
+
+const mergedCustomerGroups = computed(() => {
+    const backend = filterCustomerGroups.value || [];
+    const seen = new Set(backend.map((g) => g.value));
+    const out = [...backend];
+    for (const g of localCustomerGroups.value || []) {
+        if (g?.value && !seen.has(g.value)) {
+            out.push(g);
+            seen.add(g.value);
+        }
+    }
+    return out;
+});
 
 const openGroupModal = () => {
     groupForm.name = '';
@@ -573,29 +593,61 @@ const openGroupModal = () => {
     groupForm.update_mode = 'none';
     groupForm.auto_update = false;
     groupModalTab.value = 'info';
+    groupErrors.value = {};
     showGroupModal.value = true;
 };
 
+const reloadCustomerGroups = async () => {
+    try {
+        const { data } = await axios.get('/customer-groups/options');
+        if (Array.isArray(data)) {
+            localCustomerGroups.value = data.map((g) => ({
+                value: g.name,
+                label: g.name,
+                id: g.id,
+                source: 'master',
+            }));
+        }
+    } catch (_) {
+        // silent — Inertia partial reload below is the second line of defence
+    }
+    router.reload({ only: ['filterOptions'], preserveScroll: true, preserveState: true });
+};
+
 const submitGroupModal = async () => {
-    if (!groupForm.name) {
-        alert('Vui lòng nhập tên nhóm khách hàng');
+    groupErrors.value = {};
+    if (!groupForm.name?.trim()) {
+        groupErrors.value = { name: ['Vui lòng nhập tên nhóm khách hàng.'] };
         return;
     }
     groupSubmitting.value = true;
     try {
-        await axios.post('/customer-groups', groupForm);
+        const { data } = await axios.post('/customer-groups', groupForm);
+        const created = data?.group;
+        if (created?.name) {
+            localCustomerGroups.value = [
+                ...localCustomerGroups.value.filter((g) => g.value !== created.name),
+                { value: created.name, label: created.name, id: created.id, source: 'master' },
+            ];
+        }
+        await reloadCustomerGroups();
         showGroupModal.value = false;
-        router.reload({ only: ['filterOptions'], preserveScroll: true });
     } catch (e) {
-        alert(e.response?.data?.message || 'Có lỗi xảy ra');
+        const status = e.response?.status;
+        if (status === 403) {
+            groupErrors.value = { _generic: 'Bạn không có quyền tạo nhóm khách hàng.' };
+        } else if (status === 422) {
+            const errors = e.response?.data?.errors;
+            groupErrors.value = errors && Object.keys(errors).length
+                ? errors
+                : { _generic: e.response?.data?.message || 'Dữ liệu không hợp lệ.' };
+        } else {
+            groupErrors.value = { _generic: e.response?.data?.message || 'Có lỗi xảy ra khi lưu nhóm.' };
+        }
     } finally {
         groupSubmitting.value = false;
     }
 };
-
-// Capabilities from backend
-// HOTFIX 24.4A-1: alias for backward compat with template references to `capabilities`.
-const capabilities = filterCapabilities;
 
 // Birthday filter mode
 const birthdayMode = computed({
@@ -620,6 +672,8 @@ const totalSalesTimeMode = computed({
         if (v === 'all') { filters.total_sales_date_from = ''; filters.total_sales_date_to = ''; }
     }
 });
+</script>
+
 <template>
     <Head title="Khách hàng - KiotViet Clone" />
     <AppLayout>
@@ -633,7 +687,7 @@ const totalSalesTimeMode = computed({
                 </div>
                 <select v-model="filters.customer_group" class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none focus:border-blue-500">
                     <option value="">Tất cả các nhóm</option>
-                    <option v-for="g in filterCustomerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
+                    <option v-for="g in mergedCustomerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
                 </select>
             </div>
 
@@ -667,9 +721,9 @@ const totalSalesTimeMode = computed({
                         <input type="radio" name="birthday_mode" value="custom" v-model="birthdayMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Tùy chỉnh
                     </label>
-                    <div v-if="birthdayMode === 'custom'" class="flex gap-2 mt-1">
-                        <input type="date" v-model="filters.birthday_from" class="w-1/2 border rounded p-1 text-xs" placeholder="Từ" />
-                        <input type="date" v-model="filters.birthday_to" class="w-1/2 border rounded p-1 text-xs" placeholder="Đến" />
+                    <div v-if="birthdayMode === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
+                        <input type="date" v-model="filters.birthday_from" class="w-full min-w-0 border rounded p-1 text-xs" placeholder="Từ" />
+                        <input type="date" v-model="filters.birthday_to" class="w-full min-w-0 border rounded p-1 text-xs" placeholder="Đến" />
                     </div>
                 </div>
             </div>
@@ -686,9 +740,9 @@ const totalSalesTimeMode = computed({
                         <input type="radio" name="last_tx_mode" value="custom" v-model="lastTxMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Tùy chỉnh
                     </label>
-                    <div v-if="lastTxMode === 'custom'" class="flex gap-2 mt-1">
-                        <input type="date" v-model="filters.last_transaction_from" class="w-1/2 border rounded p-1 text-xs" />
-                        <input type="date" v-model="filters.last_transaction_to" class="w-1/2 border rounded p-1 text-xs" />
+                    <div v-if="lastTxMode === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
+                        <input type="date" v-model="filters.last_transaction_from" class="w-full min-w-0 border rounded p-1 text-xs" />
+                        <input type="date" v-model="filters.last_transaction_to" class="w-full min-w-0 border rounded p-1 text-xs" />
                     </div>
                 </div>
             </div>
@@ -696,9 +750,9 @@ const totalSalesTimeMode = computed({
             <!-- 6. TỔNG BÁN -->
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Tổng bán</label>
-                <div class="flex gap-2 mb-2">
-                    <input type="number" v-model="filters.total_sales_from" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Giá trị từ" min="0" />
-                    <input type="number" v-model="filters.total_sales_to" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Giá trị tới" min="0" />
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                    <input type="number" v-model="filters.total_sales_from" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Giá trị từ" min="0" />
+                    <input type="number" v-model="filters.total_sales_to" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Giá trị tới" min="0" />
                 </div>
                 <div v-if="hasCapability('supportsTotalSalesTimeFilter')" class="space-y-2 text-sm text-gray-700">
                     <label class="flex items-center gap-2 cursor-pointer">
@@ -709,9 +763,9 @@ const totalSalesTimeMode = computed({
                         <input type="radio" name="total_sales_time" value="custom" v-model="totalSalesTimeMode" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Thời gian tổng bán
                     </label>
-                    <div v-if="totalSalesTimeMode === 'custom'" class="flex gap-2 mt-1">
-                        <input type="date" v-model="filters.total_sales_date_from" class="w-1/2 border rounded p-1 text-xs" />
-                        <input type="date" v-model="filters.total_sales_date_to" class="w-1/2 border rounded p-1 text-xs" />
+                    <div v-if="totalSalesTimeMode === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
+                        <input type="date" v-model="filters.total_sales_date_from" class="w-full min-w-0 border rounded p-1 text-xs" />
+                        <input type="date" v-model="filters.total_sales_date_to" class="w-full min-w-0 border rounded p-1 text-xs" />
                     </div>
                 </div>
             </div>
@@ -719,9 +773,9 @@ const totalSalesTimeMode = computed({
             <!-- 7. NỢ HIỆN TẠI -->
             <div class="px-3 py-4 border-b border-gray-200">
                 <label class="block text-sm font-bold text-gray-800 mb-2">Nợ hiện tại</label>
-                <div class="flex gap-2">
-                    <input type="number" v-model="filters.net_debt_from" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Từ" />
-                    <input type="number" v-model="filters.net_debt_to" class="w-1/2 border rounded p-1.5 text-sm" placeholder="Tới" />
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="number" v-model="filters.net_debt_from" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Từ" />
+                    <input type="number" v-model="filters.net_debt_to" class="w-full min-w-0 border rounded p-1.5 text-sm" placeholder="Tới" />
                 </div>
             </div>
 
@@ -782,9 +836,9 @@ const totalSalesTimeMode = computed({
                         <input type="radio" name="date_filter" value="custom" v-model="filters.date_filter" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
                         Tùy chỉnh
                     </label>
-                    <div v-if="filters.date_filter === 'custom'" class="flex gap-2 mt-1">
-                        <input type="date" v-model="filters.date_from" class="w-1/2 border rounded p-1 text-xs" />
-                        <input type="date" v-model="filters.date_to" class="w-1/2 border rounded p-1 text-xs" />
+                    <div v-if="filters.date_filter === 'custom'" class="grid grid-cols-2 gap-2 mt-1">
+                        <input type="date" v-model="filters.date_from" class="w-full min-w-0 border rounded p-1 text-xs" />
+                        <input type="date" v-model="filters.date_to" class="w-full min-w-0 border rounded p-1 text-xs" />
                     </div>
                 </div>
             </div>
@@ -2405,12 +2459,13 @@ const totalSalesTimeMode = computed({
                                     <label class="block font-semibold mb-1"
                                         >Nhóm khách hàng</label
                                     >
-                                    <input
+                                    <select
                                         v-model="form.customer_group"
-                                        type="text"
-                                        class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none"
-                                        placeholder="Chọn nhóm khách hàng"
-                                    />
+                                        class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 outline-none bg-white"
+                                    >
+                                        <option value="">-- Chọn nhóm khách hàng --</option>
+                                        <option v-for="g in mergedCustomerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
+                                    </select>
                                 </div>
                                 <div>
                                     <label class="block font-semibold mb-1"
@@ -2736,7 +2791,10 @@ const totalSalesTimeMode = computed({
                             </div>
                             <div>
                                 <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm khách hàng</label>
-                                <input v-model="editForm.customer_group" type="text" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+                                <select v-model="editForm.customer_group" class="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white">
+                                    <option value="">-- Chọn nhóm khách hàng --</option>
+                                    <option v-for="g in mergedCustomerGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
+                                </select>
                             </div>
                         </div>
                         <div>
@@ -3269,15 +3327,21 @@ const totalSalesTimeMode = computed({
                     <button @click="groupModalTab = 'advanced'" :class="groupModalTab === 'advanced' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'" class="px-4 py-2 text-sm font-medium">Thiết lập nâng cao</button>
                 </div>
                 <div class="px-6 py-4 max-h-96 overflow-y-auto">
+                    <!-- Generic / permission errors -->
+                    <div v-if="groupErrors._generic" class="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                        {{ groupErrors._generic }}
+                    </div>
                     <!-- Tab: Thông tin -->
                     <div v-if="groupModalTab === 'info'" class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Tên nhóm <span class="text-red-500">*</span></label>
-                            <input v-model="groupForm.name" type="text" class="w-full border rounded p-2 text-sm" placeholder="VD: Khách VIP" />
+                            <input v-model="groupForm.name" type="text" :class="['w-full border rounded p-2 text-sm', groupErrors.name ? 'border-red-400' : '']" placeholder="VD: Khách VIP" />
+                            <p v-if="groupErrors.name" class="mt-1 text-xs text-red-600">{{ Array.isArray(groupErrors.name) ? groupErrors.name[0] : groupErrors.name }}</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Mã nhóm</label>
-                            <input v-model="groupForm.code" type="text" class="w-full border rounded p-2 text-sm" placeholder="Tự sinh nếu để trống" />
+                            <input v-model="groupForm.code" type="text" :class="['w-full border rounded p-2 text-sm', groupErrors.code ? 'border-red-400' : '']" placeholder="Tự sinh nếu để trống" />
+                            <p v-if="groupErrors.code" class="mt-1 text-xs text-red-600">{{ Array.isArray(groupErrors.code) ? groupErrors.code[0] : groupErrors.code }}</p>
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
