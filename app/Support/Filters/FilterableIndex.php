@@ -37,7 +37,8 @@ trait FilterableIndex
     /** @var string[] */
     protected array $sortable = [];
 
-    protected string $dateColumn = 'created_at';
+    /** @var string|\Illuminate\Database\Query\Expression */
+    protected string|\Illuminate\Database\Query\Expression $dateColumn = 'created_at';
 
     protected ?string $creatorColumn = null;
 

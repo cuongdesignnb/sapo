@@ -41,7 +41,8 @@ class InvoiceController extends Controller
         $this->dateColumn = \Illuminate\Support\Facades\Schema::hasColumn('invoices', 'transaction_date')
             ? \Illuminate\Support\Facades\DB::raw('COALESCE(invoices.transaction_date, invoices.created_at)')
             : 'created_at';
-        $this->creatorColumn = 'created_by';
+        $this->creatorColumn = \Illuminate\Support\Facades\Schema::hasColumn('invoices', 'created_by')
+            ? 'created_by' : null;
         $this->scalarFilters = [
             'branch_id', 'customer_id', 'employee_id',
             'is_delivery', 'delivery_partner',
