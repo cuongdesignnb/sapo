@@ -3,6 +3,7 @@ import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const props = defineProps({
     purchase: Object,
@@ -450,7 +451,11 @@ const paymentMethodLabel = (method) => {
                     <!-- Thời gian -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Thời gian</label>
-                        <input type="datetime-local" v-model="editForm.purchase_date" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+                        <DateTimePicker
+                            v-model="editForm.purchase_date"
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                        />
                     </div>
 
                     <!-- Nhân viên -->

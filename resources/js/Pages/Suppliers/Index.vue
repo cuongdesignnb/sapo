@@ -6,6 +6,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import DateTimePicker from "@/Components/DateTimePicker.vue";
 import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
@@ -1468,11 +1469,19 @@ const showCbToast = () => {
                         <label class="block text-sm font-semibold text-gray-700 mb-1">
                             {{ debtActionType === 'discount' ? 'Ngày chiết khấu' : 'Ngày điều chỉnh' }}
                         </label>
-                        <input v-model="debtDate" type="datetime-local" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        <DateTimePicker
+                            v-model="debtDate"
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                        />
                     </div>
                     <div v-else>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Ngày thanh toán</label>
-                        <input v-model="debtDate" type="datetime-local" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none" />
+                        <DateTimePicker
+                            v-model="debtDate"
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none"
+                        />
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>

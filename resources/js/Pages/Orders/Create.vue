@@ -3,6 +3,7 @@ import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const props = defineProps({
     customers: Array,
@@ -913,10 +914,23 @@ onUnmounted(() => {
                            <i class="fas fa-walking text-gray-400"></i> 
                            <i class="fas fa-caret-down text-gray-400"></i>
                        </div>
-                       <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" @click.stop />
+                       <DateTimePicker
+                            v-model="activeTab.orderDate"
+                            naked
+                            compact
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer w-[150px]"
+                            @click.stop
+                       />
                     </div>
                     <div v-else class="flex justify-end mb-2">
-                        <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" />
+                        <DateTimePicker
+                            v-model="activeTab.orderDate"
+                            naked
+                            compact
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer w-[150px]"
+                        />
                     </div>
                     
                     <div class="flex gap-2 relative">

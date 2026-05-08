@@ -4,6 +4,7 @@ import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const props = defineProps({
     purchase: Object,
@@ -466,7 +467,13 @@ const goToCreateProduct = () => {
                             <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
                         </select>
                     </div>
-                    <input type="datetime-local" v-model="purchaseDate" class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 w-[170px]" />
+                    <DateTimePicker
+                        v-model="purchaseDate"
+                        naked
+                        compact
+                        placeholder="dd/MM/yyyy HH:mm"
+                        input-class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 w-[170px]"
+                    />
                 </div>
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">

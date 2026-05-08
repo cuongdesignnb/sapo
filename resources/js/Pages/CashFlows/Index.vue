@@ -6,6 +6,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import DateTimePicker from "@/Components/DateTimePicker.vue";
 import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
@@ -847,10 +848,11 @@ const printFlow = (flow) => {
                                 class="block text-[13px] font-semibold text-gray-700"
                                 >Thời gian</label
                             >
-                            <input
-                                type="datetime-local"
+                            <DateTimePicker
                                 v-model="form.time"
-                                class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-[13px] text-gray-800"
+                                naked
+                                placeholder="dd/MM/yyyy HH:mm"
+                                input-class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-[13px] text-gray-800"
                             />
                         </div>
 
@@ -1216,10 +1218,10 @@ const printFlow = (flow) => {
                                     class="w-32 text-gray-700 font-medium text-[13px]"
                                     >Thời gian:</span
                                 >
-                                <input
-                                    type="datetime-local"
+                                <DateTimePicker
                                     v-model="form.time"
-                                    class="flex-1 border border-gray-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-blue-500 text-[13px]"
+                                    placeholder="dd/MM/yyyy HH:mm"
+                                    input-class="flex-1 border border-gray-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-blue-500 text-[13px]"
                                 />
                             </div>
                             <div class="flex items-center">

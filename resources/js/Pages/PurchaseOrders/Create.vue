@@ -3,6 +3,7 @@ import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const props = defineProps({
     products: Array,
@@ -255,7 +256,13 @@ const save = async (saveStatus) => {
                         </div>
                         <span class="font-medium text-[13px] text-gray-700">Trần Văn Tiến <span class="text-gray-400 font-normal ml-1">▼</span></span>
                     </div>
-                    <input type="datetime-local" v-model="orderDate" class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 py-0.5 w-[170px]" />
+                    <DateTimePicker
+                        v-model="orderDate"
+                        naked
+                        compact
+                        placeholder="dd/MM/yyyy HH:mm"
+                        input-class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-blue-500 py-0.5 w-[170px]"
+                    />
                 </div>
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">

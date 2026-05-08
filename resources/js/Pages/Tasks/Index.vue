@@ -4,6 +4,7 @@ import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import DateTimePicker from "@/Components/DateTimePicker.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -669,7 +670,11 @@ loadTasks();
                         </div>
                         <div>
                             <label class="block font-semibold text-sm mb-1">Ngày tiếp nhận</label>
-                            <input v-model="createForm.received_at" type="datetime-local" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none" />
+                            <DateTimePicker
+                                v-model="createForm.received_at"
+                                placeholder="dd/MM/yyyy HH:mm"
+                                input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none"
+                            />
                         </div>
                         <p class="text-[11px] text-gray-500">
                             Phiếu sửa chữa khách ngoài không trừ tồn kho nội bộ. Sau khi hoàn thành sẽ tạo hóa đơn sửa chữa stock-neutral.

@@ -6,6 +6,7 @@ import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import DateRangeFilter from "@/Components/Filters/DateRangeFilter.vue";
+import DateTimePicker from "@/Components/DateTimePicker.vue";
 import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
@@ -2929,10 +2930,10 @@ const createdDateRange = computed({
                         <label class="block text-sm font-medium text-gray-700 mb-1">
                             {{ debtModal.type === 'payment' ? 'Ngày thanh toán' : 'Ngày điều chỉnh' }}
                         </label>
-                        <input
+                        <DateTimePicker
                             v-model="debtForm.date"
-                            type="datetime-local"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
                         />
                     </div>
                     <div>

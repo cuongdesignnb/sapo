@@ -3,6 +3,7 @@ import { formatVND as formatCurrency, formatMoneyInput as formatCurrencyInput } 
 import { ref, computed, onMounted, watch } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const page = usePage();
 
@@ -595,7 +596,13 @@ const quickCreateBrand = async () => {
                             <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
                         </select>
                     </div>
-                    <input type="datetime-local" v-model="purchaseDate" class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 w-[170px]" />
+                    <DateTimePicker
+                        v-model="purchaseDate"
+                        naked
+                        compact
+                        placeholder="dd/MM/yyyy HH:mm"
+                        input-class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 w-[170px]"
+                    />
                 </div>
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">
