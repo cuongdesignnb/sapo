@@ -38,7 +38,9 @@ class InvoiceController extends Controller
         ];
         $this->sortable = ['code', 'created_at', 'subtotal', 'discount', 'total', 'customer_paid', 'status'];
         // Step 24.3: filtering/sorting by transaction_date, fallback created_at for legacy
-        $this->dateColumn = \Illuminate\Support\Facades\DB::raw('COALESCE(transaction_date, created_at)');
+        $this->dateColumn = \Illuminate\Support\Facades\Schema::hasColumn('invoices', 'transaction_date')
+            ? \Illuminate\Support\Facades\DB::raw('COALESCE(invoices.transaction_date, invoices.created_at)')
+            : 'created_at';
         $this->creatorColumn = 'created_by';
         $this->scalarFilters = [
             'branch_id', 'customer_id', 'employee_id',

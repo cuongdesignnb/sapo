@@ -33,7 +33,9 @@ class PurchaseController extends Controller
             'items'    => ['product_name'],
         ];
         $this->sortable = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status', 'purchase_date'];
-        $this->dateColumn = \Illuminate\Support\Facades\DB::raw('COALESCE(purchases.purchase_date, purchases.created_at)');
+        $this->dateColumn = \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'purchase_date')
+            ? \Illuminate\Support\Facades\DB::raw('COALESCE(purchases.purchase_date, purchases.created_at)')
+            : 'created_at';
         $this->creatorColumn = 'employee_id';
         $this->scalarFilters = ['branch_id', 'supplier_id', 'warehouse_id', 'payment_method'];
     }
@@ -57,7 +59,10 @@ class PurchaseController extends Controller
                 if ($request->sort_by === 'need_pay') {
                     $q->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
                 } elseif ($request->sort_by === 'purchase_date') {
-                    $q->orderByRaw("COALESCE(purchase_date, created_at) $dir");
+                    $expr = \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'purchase_date')
+                        ? "COALESCE(purchase_date, created_at) $dir"
+                        : "created_at $dir";
+                    $q->orderByRaw($expr);
                 }
             });
 

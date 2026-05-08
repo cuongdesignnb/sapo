@@ -57,19 +57,24 @@ class InvoiceSaleService
             // ─── 2. Tạo Invoice ───
             $invoice = Invoice::create($this->buildInvoiceAttributes($payload, $context));
 
-            // Step 24.3: set transaction_date + lock_started_at
-            $txDate = !empty($context['transaction_date'])
-                ? Carbon::parse($context['transaction_date'])
-                : now();
-            $updateFields = [
-                'transaction_date' => $txDate,
-                'lock_started_at'  => now(),
-            ];
-            // Backward compat: keep created_at override for legacy reports
-            if (!empty($context['transaction_date'])) {
-                $updateFields['created_at'] = $txDate;
+            // Step 24.3: set transaction_date + lock_started_at (defensive: only if migrated)
+            if (\Illuminate\Support\Facades\Schema::hasColumn('invoices', 'transaction_date')) {
+                $txDate = !empty($context['transaction_date'])
+                    ? Carbon::parse($context['transaction_date'])
+                    : now();
+                $updateFields = [
+                    'transaction_date' => $txDate,
+                    'lock_started_at'  => now(),
+                ];
+                // Backward compat: keep created_at override for legacy reports
+                if (!empty($context['transaction_date'])) {
+                    $updateFields['created_at'] = $txDate;
+                }
+                $invoice->update($updateFields);
+            } elseif (!empty($context['transaction_date'])) {
+                // Column doesn't exist yet but user supplied a date — only update created_at
+                $invoice->update(['created_at' => Carbon::parse($context['transaction_date'])]);
             }
-            $invoice->update($updateFields);
 
             // ─── 3. Loop items ───
             $allowOversell = $context['allow_oversell'] ?? false;

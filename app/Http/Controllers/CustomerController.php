@@ -39,15 +39,26 @@ class CustomerController extends Controller
      */
     private function buildCapabilities(): array
     {
+        $hasInvoiceTxDate = Schema::hasColumn('invoices', 'transaction_date');
         return [
-            'supportsBirthdayFilter'        => true, // customers.birthday exists
-            'supportsLastTransactionFilter'  => true, // computed via invoices subquery
-            'supportsTotalSalesTimeFilter'   => true, // computed via invoices subquery
-            'supportsDebtDaysFilter'         => false, // no due_date in customer_debts — backlog
-            'supportsPointsFilter'           => false, // no loyalty/points schema — backlog
-            'supportsDeliveryAreaFilter'     => true, // customers.city/district/ward
+            'supportsBirthdayFilter'        => true,
+            'supportsLastTransactionFilter'  => true,
+            'supportsTotalSalesTimeFilter'   => true,
+            'supportsDebtDaysFilter'         => false,
+            'supportsPointsFilter'           => false,
+            'supportsDeliveryAreaFilter'     => true,
             'supportsCreatedByFilter'        => Schema::hasColumn('customers', 'created_by'),
         ];
+    }
+
+    /**
+     * Safe invoice date expression: COALESCE(transaction_date, created_at) if column exists.
+     */
+    private function invoiceDateExpr(): string
+    {
+        return Schema::hasColumn('invoices', 'transaction_date')
+            ? 'COALESCE(transaction_date, created_at)'
+            : 'created_at';
     }
 
     /**
@@ -119,7 +130,7 @@ class CustomerController extends Controller
             $request->input('last_transaction_to'),
         );
         if ($lastTxFrom || $lastTxTo) {
-            $subquery = Invoice::selectRaw('MAX(COALESCE(transaction_date, created_at))')
+            $subquery = Invoice::selectRaw('MAX(' . $this->invoiceDateExpr() . ')')
                 ->whereColumn('invoices.customer_id', 'customers.id');
 
             if ($lastTxFrom) {
@@ -152,10 +163,10 @@ class CustomerController extends Controller
                     ->whereColumn('invoices.customer_id', 'customers.id');
 
                 if ($totalSalesFrom) {
-                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '>=', $totalSalesFrom->toDateTimeString());
+                    $sumSubquery->where(DB::raw($this->invoiceDateExpr()), '>=', $totalSalesFrom->toDateTimeString());
                 }
                 if ($totalSalesTo) {
-                    $sumSubquery->where(DB::raw('COALESCE(transaction_date, created_at)'), '<=', $totalSalesTo->toDateTimeString());
+                    $sumSubquery->where(DB::raw($this->invoiceDateExpr()), '<=', $totalSalesTo->toDateTimeString());
                 }
 
                 if ($request->filled('total_sales_from')) {

@@ -210,7 +210,11 @@ class InvoiceUpdateService
             $newTxDate = Carbon::parse($payload['transaction_date']);
             $oldTxDate = $invoice->transaction_date ?? $invoice->created_at;
 
-            $invoice->transaction_date = $newTxDate;
+            if (Schema::hasColumn('invoices', 'transaction_date')) {
+                $invoice->transaction_date = $newTxDate;
+            }
+            // Fallback: also update created_at for legacy queries
+            $invoice->created_at = $newTxDate;
             $invoice->save();
 
             // Update related CashFlow time if policy
@@ -312,7 +316,7 @@ class InvoiceUpdateService
                 'payment_method' => $payload['payment_method'] ?? 'Tiền mặt',
                 'price_book_name' => $payload['price_book_name'] ?? $invoice->price_book_name,
             ];
-            if ($changePlan['date_changed']) {
+            if ($changePlan['date_changed'] && Schema::hasColumn('invoices', 'transaction_date')) {
                 $updateData['transaction_date'] = $newTxDate;
             }
             $invoice->update($updateData);

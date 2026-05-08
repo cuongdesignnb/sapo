@@ -27,7 +27,9 @@ class DamageController extends Controller
             'items.product' => ['name', 'code', 'barcode'],
         ];
         $this->sortable = ['code', 'created_at', 'total_qty', 'total_value', 'status'];
-        $this->dateColumn = \Illuminate\Support\Facades\DB::raw('COALESCE(destroyed_date, created_at)');
+        $this->dateColumn = \Illuminate\Support\Facades\Schema::hasColumn('damages', 'destroyed_date')
+            ? \Illuminate\Support\Facades\DB::raw('COALESCE(destroyed_date, created_at)')
+            : 'created_at';
         $this->creatorColumn = null;
         $this->scalarFilters = ['branch_id'];
     }
