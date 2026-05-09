@@ -397,4 +397,14 @@ class DamageController extends Controller
         $damage->load(['items.product', 'branch']);
         return view('prints.damage', compact('damage'));
     }
+
+    /**
+     * Step 24.7: read-only show endpoint. Dedicated Show.vue not yet wired;
+     * redirect to the index filtered by code so the stock-card "Mở phiếu"
+     * link lands the user on the correct voucher row.
+     */
+    public function show(\App\Models\Damage $damage)
+    {
+        return redirect()->route('damages.index', ['search' => $damage->code]);
+    }
 }

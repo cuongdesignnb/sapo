@@ -758,11 +758,16 @@ class ProductController extends Controller
             return response()->json(['error' => 'Missing type or id'], 400);
         }
 
+        // Step 24.7: resolve the source-voucher URL once. Each case below
+        // injects this into its response so the FE never has to guess routes.
+        $source = app(\App\Services\DocumentLinkResolver::class)->resolve((string) $type, (int) $id);
+
         switch ($type) {
             case 'invoice':
                 $doc = \App\Models\Invoice::with(['items.product', 'customer'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
                 return response()->json([
+                    'source_document' => $source,
                     'type' => 'invoice',
                     'title' => 'Hóa đơn',
                     'code' => $doc->code,
@@ -794,6 +799,7 @@ class ProductController extends Controller
                 $doc = \App\Models\Purchase::with(['items.product', 'supplier', 'user'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
                 return response()->json([
+                    'source_document' => $source,
                     'type' => 'purchase',
                     'title' => 'Phiếu nhập hàng',
                     'code' => $doc->code,
@@ -825,6 +831,7 @@ class ProductController extends Controller
                 $doc = \App\Models\OrderReturn::with(['items.product', 'customer'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
                 return response()->json([
+                    'source_document' => $source,
                     'type' => 'return',
                     'title' => 'Phiếu trả hàng',
                     'code' => $doc->code,
@@ -860,6 +867,7 @@ class ProductController extends Controller
                 $machineName = $task->product->name ?? $task->title ?? 'Sửa chữa';
                 $serialNumber = $task->serialImei->serial_number ?? null;
                 return response()->json([
+                    'source_document' => $source,
                     'type' => $type,
                     'title' => $type === 'repair_part' ? 'Phiếu xuất sửa chữa' : 'Phiếu nhập bóc máy',
                     'code' => $task->code,
@@ -894,6 +902,7 @@ class ProductController extends Controller
                 $doc = \App\Models\PurchaseReturn::with(['items.product', 'supplier'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
                 return response()->json([
+                    'source_document' => $source,
                     'type' => 'purchase_return',
                     'title' => 'Phiếu trả hàng NCC',
                     'code' => $doc->code,
@@ -926,6 +935,7 @@ class ProductController extends Controller
                 $doc = \App\Models\StockTake::with(['items.product'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
                 return response()->json([
+                    'source_document' => $source,
                     'type' => 'stock_take',
                     'title' => 'Phiếu kiểm kho',
                     'code' => $doc->code,
@@ -960,6 +970,7 @@ class ProductController extends Controller
                 $doc = \App\Models\Damage::with(['items.product'])->find($id);
                 if (!$doc) return response()->json(['error' => 'Not found'], 404);
                 return response()->json([
+                    'source_document' => $source,
                     'type' => 'damage',
                     'title' => 'Phiếu xuất hủy',
                     'code' => $doc->code,

@@ -145,6 +145,8 @@ Route::middleware('permission:stock_transfers.create')->group(function () {
 // Step 24.0B: tách quyền nhận / hủy chuyển kho.
 Route::post('/stock-transfers/{id}/receive', [StockTransferController::class, 'receive'])->name('stock-transfers.receive')->middleware('permission:stock_transfers.receive');
 Route::post('/stock-transfers/{id}/cancel', [StockTransferController::class, 'cancel'])->name('stock-transfers.cancel')->middleware('permission:stock_transfers.cancel');
+// Step 24.7: route to view a stock transfer (used by stock-card "Mở phiếu" link).
+Route::get('/stock-transfers/{stockTransfer}/show', [StockTransferController::class, 'show'])->name('stock-transfers.show')->middleware('permission:stock_transfers.view');
 
 // ===== STOCK TAKES =====
 Route::get('/stock-takes', [StockTakeController::class, 'index'])->name('stock-takes.index')->middleware('permission:stock_takes.view');
@@ -166,6 +168,8 @@ Route::middleware('permission:damages.create')->group(function () {
 });
 // Step 24.0B: tách quyền hủy phiếu xuất hủy.
 Route::post('/damages/{damage}/cancel', [DamageController::class, 'cancel'])->name('damages.cancel')->middleware('permission:damages.cancel');
+// Step 24.7: route to view a damage voucher (used by stock-card "Mở phiếu" link).
+Route::get('/damages/{damage}/show', [DamageController::class, 'show'])->name('damages.show')->middleware('permission:damages.view');
 
 // ===== PURCHASE ORDERS =====
 Route::get('/purchase-orders', [PurchaseOrderController::class, 'index'])->name('purchase-orders.index')->middleware('permission:purchase_orders.view');

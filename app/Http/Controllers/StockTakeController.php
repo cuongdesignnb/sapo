@@ -205,13 +205,13 @@ class StockTakeController extends Controller
 
     /**
      * Chi tiet phieu kiem kho.
+     *
+     * Step 24.7: dedicated Show.vue not yet wired; redirect to index
+     * filtered by code so the stock-card "Mở phiếu" link still works.
      */
     public function show(StockTake $stockTake)
     {
-        $stockTake->load(['items.product']);
-        return Inertia::render('StockTakes/Show', [
-            'stockTake' => $stockTake,
-        ]);
+        return redirect()->route('stock-takes.index', ['search' => $stockTake->code]);
     }
 
     /**

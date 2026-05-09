@@ -309,14 +309,16 @@ class StockTransferController extends Controller
 
     /**
      * Chi tiet phieu chuyen hang.
+     *
+     * Step 24.7: a dedicated Show.vue does not yet exist; redirect to the
+     * index filtered by code so the "Mở phiếu" link from the stock-card
+     * popup still lands the user on the correct voucher row. The
+     * resolver-emitted URL stays stable; only the redirect target evolves
+     * as we add a real Show page later.
      */
     public function show(StockTransfer $stockTransfer)
     {
-        $stockTransfer->load(['items.product', 'fromBranch', 'toBranch']);
-
-        return Inertia::render('StockTransfers/Show', [
-            'transfer' => $stockTransfer,
-        ]);
+        return redirect()->route('stock-transfers.index', ['search' => $stockTransfer->code]);
     }
 
     /**

@@ -2090,10 +2090,27 @@ const formatDate = (val) => {
                     <!-- Footer -->
                     <div
                         v-if="docDetail"
-                        class="px-6 py-3 border-t border-gray-200 bg-gray-50 flex justify-end"
+                        class="px-6 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-end gap-2"
                     >
-                        <button
-                            @click="closeDocPopup"
+                        <span
+                            v-if="docDetail.source_document && !docDetail.source_document.can_open"
+                            class="text-xs text-red-600 mr-auto"
+                        >
+                            {{ docDetail.source_document.missing_reason || 'Không thể mở phiếu này.' }}
+                        </span>
+                        <a
+                            v-if="docDetail.source_document?.can_print"
+                            :href="docDetail.source_document.print_url"
+                            target="_blank"
+                            class="border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-2 transition-all"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                            In phiếu
+                        </a>
+                        <a
+                            v-if="docDetail.source_document?.can_open"
+                            :href="docDetail.source_document.open_url"
+                            target="_blank"
                             class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
                         >
                             <svg
@@ -2109,6 +2126,15 @@ const formatDate = (val) => {
                                     d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
                                 ></path>
                             </svg>
+                            Mở phiếu
+                        </a>
+                        <button
+                            v-else
+                            disabled
+                            class="bg-gray-300 text-gray-500 px-5 py-2 rounded text-sm font-bold flex items-center gap-2 cursor-not-allowed"
+                            :title="docDetail.source_document?.missing_reason || 'Không thể mở phiếu'"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                             Mở phiếu
                         </button>
                     </div>
