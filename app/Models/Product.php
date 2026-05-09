@@ -35,7 +35,11 @@ class Product extends Model
         'image',
         'description',
         'weight',
-        'location'
+        'location',
+        // Step 24.9 — warranty/maintenance configuration
+        'warranty_months',
+        'warranty_policies',
+        'maintenance_policies',
     ];
 
     protected $casts = [
@@ -48,6 +52,10 @@ class Product extends Model
         'last_purchase_price' => 'decimal:2',
         'retail_price' => 'decimal:2',
         'inventory_total_cost' => 'decimal:2',
+        // Step 24.9
+        'warranty_months'      => 'integer',
+        'warranty_policies'    => 'array',
+        'maintenance_policies' => 'array',
     ];
 
     public function category(): BelongsTo

@@ -251,7 +251,28 @@ class ProductController extends Controller
             'variants.*.retail_price' => 'numeric|min:0',
             'variants.*.stock_quantity' => 'numeric|min:0',
             'variants.*.attribute_value_ids' => 'nullable|array',
+            // Step 24.9 — warranty / maintenance configuration
+            'warranty_months' => 'nullable|integer|min:0|max:1200',
+            'warranty_policies' => 'nullable|array',
+            'warranty_policies.*.name' => 'required_with:warranty_policies|string|max:255',
+            'warranty_policies.*.duration_value' => 'required_with:warranty_policies|integer|min:0|max:1200',
+            'warranty_policies.*.duration_unit' => 'required_with:warranty_policies|in:day,month,year',
+            'warranty_policies.*.is_default' => 'nullable|boolean',
+            'maintenance_policies' => 'nullable|array',
+            'maintenance_policies.*.name' => 'required_with:maintenance_policies|string|max:255',
+            'maintenance_policies.*.duration_value' => 'required_with:maintenance_policies|integer|min:0|max:1200',
+            'maintenance_policies.*.duration_unit' => 'required_with:maintenance_policies|in:day,month,year',
         ]);
+
+        // Step 24.9 — normalise + derive primary warranty_months for back-compat
+        $normalizer = app(\App\Services\ProductWarrantyPolicyNormalizer::class);
+        $warrantyPolicies = $normalizer->normalizeWarrantyPolicies($validatedData['warranty_policies'] ?? null);
+        $maintenancePolicies = $normalizer->normalizeMaintenancePolicies($validatedData['maintenance_policies'] ?? null);
+        $validatedData['warranty_policies'] = $warrantyPolicies ?: null;
+        $validatedData['maintenance_policies'] = $maintenancePolicies ?: null;
+        $validatedData['warranty_months'] = $warrantyPolicies
+            ? $normalizer->resolvePrimaryWarrantyMonths($warrantyPolicies)
+            : (isset($validatedData['warranty_months']) ? (int) $validatedData['warranty_months'] : null);
 
         if (empty($validatedData['sku'])) {
             do {
@@ -443,7 +464,32 @@ class ProductController extends Controller
             'variants.*.retail_price' => 'numeric|min:0',
             'variants.*.stock_quantity' => 'numeric|min:0',
             'variants.*.attribute_value_ids' => 'nullable|array',
+            // Step 24.9 — warranty / maintenance configuration
+            'warranty_months' => 'nullable|integer|min:0|max:1200',
+            'warranty_policies' => 'nullable|array',
+            'warranty_policies.*.name' => 'required_with:warranty_policies|string|max:255',
+            'warranty_policies.*.duration_value' => 'required_with:warranty_policies|integer|min:0|max:1200',
+            'warranty_policies.*.duration_unit' => 'required_with:warranty_policies|in:day,month,year',
+            'warranty_policies.*.is_default' => 'nullable|boolean',
+            'maintenance_policies' => 'nullable|array',
+            'maintenance_policies.*.name' => 'required_with:maintenance_policies|string|max:255',
+            'maintenance_policies.*.duration_value' => 'required_with:maintenance_policies|integer|min:0|max:1200',
+            'maintenance_policies.*.duration_unit' => 'required_with:maintenance_policies|in:day,month,year',
         ]);
+
+        // Step 24.9 — normalise + derive primary warranty_months
+        $normalizer = app(\App\Services\ProductWarrantyPolicyNormalizer::class);
+        if (array_key_exists('warranty_policies', $validated) || array_key_exists('warranty_months', $validated)) {
+            $warrantyPolicies = $normalizer->normalizeWarrantyPolicies($validated['warranty_policies'] ?? null);
+            $validated['warranty_policies'] = $warrantyPolicies ?: null;
+            $validated['warranty_months'] = $warrantyPolicies
+                ? $normalizer->resolvePrimaryWarrantyMonths($warrantyPolicies)
+                : (isset($validated['warranty_months']) ? (int) $validated['warranty_months'] : null);
+        }
+        if (array_key_exists('maintenance_policies', $validated)) {
+            $maintenancePolicies = $normalizer->normalizeMaintenancePolicies($validated['maintenance_policies'] ?? null);
+            $validated['maintenance_policies'] = $maintenancePolicies ?: null;
+        }
 
         $technicianPrice = $validated['technician_price'] ?? null;
         $variants = $validated['variants'] ?? [];

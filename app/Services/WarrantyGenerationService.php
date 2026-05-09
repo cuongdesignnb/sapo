@@ -33,24 +33,77 @@ class WarrantyGenerationService
         $customerName = $invoice->customer?->name;
         $invoiceCode  = $invoice->code;
 
+        $normalizer = app(\App\Services\ProductWarrantyPolicyNormalizer::class);
+
         foreach ($invoice->items as $item) {
             $product = $item->product;
             if (! $product) {
                 continue;
             }
 
-            $months = $this->resolveWarrantyMonths($item, $product);
+            // Step 24.9 — prefer product.warranty_policies over the legacy
+            // warranty_months fallback. Snapshot the full policy + maintenance
+            // arrays so future product edits cannot mutate this warranty.
+            $warrantyPolicies = Schema::hasColumn('products', 'warranty_policies')
+                ? $normalizer->normalizeWarrantyPolicies($product->getAttribute('warranty_policies'))
+                : [];
+            $maintenancePolicies = Schema::hasColumn('products', 'maintenance_policies')
+                ? $normalizer->normalizeMaintenancePolicies($product->getAttribute('maintenance_policies'))
+                : [];
+
+            $months  = 0;
+            $endDate = null;
+
+            if (!empty($warrantyPolicies)) {
+                // Use the default policy to set warranty_period/end_date.
+                $primary = $this->pickPrimary($warrantyPolicies);
+                $months  = $normalizer->durationInMonths(
+                    (int) $primary['duration_value'],
+                    (string) $primary['duration_unit'],
+                );
+                $endDate = $normalizer->addDurationToDate(
+                    $purchaseDate,
+                    (int) $primary['duration_value'],
+                    (string) $primary['duration_unit'],
+                );
+            } else {
+                // Legacy fallback chain (Step 23.7B): item / product / latest purchase_item.
+                $months = $this->resolveWarrantyMonths($item, $product);
+                if ($months > 0) {
+                    $endDate = $purchaseDate->copy()->addMonths($months);
+                }
+            }
+
             if ($months <= 0) {
                 continue;
             }
 
-            $endDate = $purchaseDate->copy()->addMonths($months);
+            // Compute next_maintenance_date from the first maintenance policy.
+            $nextMaintenance = null;
+            if (!empty($maintenancePolicies) && Schema::hasColumn('warranties', 'next_maintenance_date')) {
+                $first = $maintenancePolicies[0];
+                $nextMaintenance = $normalizer->addDurationToDate(
+                    $purchaseDate,
+                    (int) $first['duration_value'],
+                    (string) $first['duration_unit'],
+                );
+            }
+
             $base = [
                 'customer_name'     => $customerName,
                 'warranty_period'   => $months,
                 'purchase_date'     => $purchaseDate,
                 'warranty_end_date' => $endDate,
             ];
+            if (Schema::hasColumn('warranties', 'warranty_policy_snapshot') && !empty($warrantyPolicies)) {
+                $base['warranty_policy_snapshot'] = $warrantyPolicies;
+            }
+            if (Schema::hasColumn('warranties', 'maintenance_policy_snapshot') && !empty($maintenancePolicies)) {
+                $base['maintenance_policy_snapshot'] = $maintenancePolicies;
+            }
+            if (Schema::hasColumn('warranties', 'next_maintenance_date') && $nextMaintenance) {
+                $base['next_maintenance_date'] = $nextMaintenance;
+            }
 
             if ($product->has_serial) {
                 foreach ($item->serials as $invSerial) {
@@ -70,6 +123,19 @@ class WarrantyGenerationService
                 );
             }
         }
+    }
+
+    /**
+     * Pick the primary policy (default or first row).
+     *
+     * @param array<int, array{name:string, duration_value:int, duration_unit:string, is_default:bool}> $policies
+     */
+    private function pickPrimary(array $policies): array
+    {
+        foreach ($policies as $row) {
+            if (!empty($row['is_default'])) return $row;
+        }
+        return $policies[0];
     }
 
     private function resolveWarrantyMonths(InvoiceItem $item, Product $product): int
