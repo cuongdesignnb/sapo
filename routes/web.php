@@ -92,6 +92,10 @@ Route::put('/customer-groups/{customerGroup}', [App\Http\Controllers\CustomerGro
 // ===== SUPPLIERS =====
 Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index')->middleware('permission:suppliers.view');
 Route::post('/suppliers', [SupplierController::class, 'store'])->name('suppliers.store')->middleware('permission:suppliers.create');
+// Step 24.8: supplier update + deactivate/activate (non-destructive).
+Route::put('/suppliers/{supplier}', [SupplierController::class, 'update'])->name('suppliers.update')->middleware('permission:suppliers.edit');
+Route::post('/suppliers/{supplier}/deactivate', [SupplierController::class, 'deactivate'])->name('suppliers.deactivate')->middleware('permission:suppliers.edit');
+Route::post('/suppliers/{supplier}/activate', [SupplierController::class, 'activate'])->name('suppliers.activate')->middleware('permission:suppliers.edit');
 
 // ===== PURCHASES =====
 Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create')->middleware('permission:purchases.create');

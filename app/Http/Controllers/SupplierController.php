@@ -122,6 +122,78 @@ class SupplierController extends Controller
         return redirect()->route('suppliers.index')->with('success', 'Tạo nhà cung cấp thành công.');
     }
 
+    /**
+     * Step 24.8 — Update an existing supplier (basic info only).
+     *
+     * is_supplier is force-locked to true. Debt fields (supplier_debt_amount,
+     * total_bought, debt_amount) are not touched — they stay maintained by the
+     * purchase / payment flows.
+     */
+    public function update(Request $request, Customer $supplier)
+    {
+        if (!$supplier->is_supplier) {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'name'            => 'required|string|max:255',
+            'code'            => 'nullable|string|max:255|unique:customers,code,' . $supplier->id,
+            'phone'           => 'nullable|string|max:255|unique:customers,phone,' . $supplier->id,
+            'phone2'          => 'nullable|string|max:255',
+            'email'           => 'nullable|email|max:255',
+            'address'         => 'nullable|string',
+            'city'            => 'nullable|string|max:255',
+            'district'        => 'nullable|string|max:255',
+            'ward'            => 'nullable|string|max:255',
+            'customer_group'  => 'nullable|string|max:255',
+            'tax_code'        => 'nullable|string|max:255',
+            'note'            => 'nullable|string',
+            'invoice_name'    => 'nullable|string|max:255',
+            'invoice_address' => 'nullable|string',
+            'invoice_email'   => 'nullable|email|max:255',
+            'invoice_phone'   => 'nullable|string|max:255',
+            'bank_name'       => 'nullable|string|max:255',
+            'bank_account'    => 'nullable|string|max:255',
+            'is_customer'     => 'sometimes|boolean',
+        ]);
+
+        // Force is_supplier=true. Never let edit form clear it.
+        $validated['is_supplier'] = true;
+
+        $supplier->update($validated);
+
+        return back()->with('success', 'Cập nhật nhà cung cấp thành công.');
+    }
+
+    /**
+     * Step 24.8 — Mark a supplier as inactive without deleting any record.
+     * Purchase / payment / debt history is preserved.
+     */
+    public function deactivate(Customer $supplier)
+    {
+        if (!$supplier->is_supplier) {
+            abort(404);
+        }
+
+        $supplier->update(['status' => 'inactive']);
+
+        return back()->with('success', 'Đã ngừng hoạt động nhà cung cấp.');
+    }
+
+    /**
+     * Step 24.8 — Re-activate a previously deactivated supplier.
+     */
+    public function activate(Customer $supplier)
+    {
+        if (!$supplier->is_supplier) {
+            abort(404);
+        }
+
+        $supplier->update(['status' => 'active']);
+
+        return back()->with('success', 'Đã kích hoạt lại nhà cung cấp.');
+    }
+
     public function quickStore(Request $request)
     {
         $validated = $request->validate([

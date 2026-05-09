@@ -106,6 +106,7 @@ class Role extends Model
                     'Nhà cung cấp' => [
                         'suppliers.view'   => 'Xem nhà cung cấp',
                         'suppliers.create' => 'Thêm nhà cung cấp',
+                        'suppliers.edit'   => 'Sửa / Ngừng hoạt động NCC',
                         'suppliers.import' => 'Import NCC',
                         'suppliers.export' => 'Xuất file NCC',
                     ],

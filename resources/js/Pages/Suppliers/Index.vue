@@ -418,6 +418,102 @@ const showCbToast = () => {
     cbToast.value.show = true;
     cbToast.value.timer = setTimeout(() => { cbToast.value.show = false; }, 4000);
 };
+
+// ════════════════════════════════════════════════════════════════════
+//  HOTFIX 24.8 — Update + Deactivate/Activate supplier
+//  Backend (SupplierController) is the source of truth for which fields
+//  may be edited and forces is_supplier=true. UI never touches debt
+//  or total_bought.
+// ════════════════════════════════════════════════════════════════════
+const showEditModal = ref(false);
+const editingSupplier = ref(null);
+const editForm = useForm({
+    name: '',
+    code: '',
+    phone: '',
+    phone2: '',
+    email: '',
+    address: '',
+    city: '',
+    district: '',
+    ward: '',
+    customer_group: '',
+    tax_code: '',
+    note: '',
+    invoice_name: '',
+    invoice_address: '',
+    invoice_email: '',
+    invoice_phone: '',
+    bank_name: '',
+    bank_account: '',
+    is_customer: false,
+});
+
+const openEditModal = (supplier) => {
+    editingSupplier.value = supplier;
+    editForm.name           = supplier.name           ?? '';
+    editForm.code           = supplier.code           ?? '';
+    editForm.phone          = supplier.phone          ?? '';
+    editForm.phone2         = supplier.phone2         ?? '';
+    editForm.email          = supplier.email          ?? '';
+    editForm.address        = supplier.address        ?? '';
+    editForm.city           = supplier.city           ?? '';
+    editForm.district       = supplier.district       ?? '';
+    editForm.ward           = supplier.ward           ?? '';
+    editForm.customer_group = supplier.customer_group ?? '';
+    editForm.tax_code       = supplier.tax_code       ?? '';
+    editForm.note           = supplier.note           ?? '';
+    editForm.invoice_name   = supplier.invoice_name   ?? '';
+    editForm.invoice_address= supplier.invoice_address?? '';
+    editForm.invoice_email  = supplier.invoice_email  ?? '';
+    editForm.invoice_phone  = supplier.invoice_phone  ?? '';
+    editForm.bank_name      = supplier.bank_name      ?? '';
+    editForm.bank_account   = supplier.bank_account   ?? '';
+    editForm.is_customer    = !!supplier.is_customer;
+    showEditModal.value = true;
+};
+
+const closeEditModal = () => {
+    if (editForm.processing) return;
+    showEditModal.value = false;
+    editingSupplier.value = null;
+};
+
+const submitEdit = () => {
+    if (!editingSupplier.value) return;
+    editForm.put(`/suppliers/${editingSupplier.value.id}`, {
+        preserveScroll: true,
+        onSuccess: () => {
+            showEditModal.value = false;
+            editingSupplier.value = null;
+        },
+    });
+};
+
+const deactivateConfirm = ref({ show: false, supplier: null, processing: false });
+const openDeactivateConfirm = (supplier) => {
+    deactivateConfirm.value = { show: true, supplier, processing: false };
+};
+const closeDeactivateConfirm = () => {
+    if (deactivateConfirm.value.processing) return;
+    deactivateConfirm.value = { show: false, supplier: null, processing: false };
+};
+const submitDeactivate = () => {
+    const sup = deactivateConfirm.value.supplier;
+    if (!sup) return;
+    deactivateConfirm.value.processing = true;
+    router.post(`/suppliers/${sup.id}/deactivate`, {}, {
+        preserveScroll: true,
+        onFinish: () => {
+            deactivateConfirm.value = { show: false, supplier: null, processing: false };
+        },
+    });
+};
+
+const submitActivate = (supplier) => {
+    if (!supplier) return;
+    router.post(`/suppliers/${supplier.id}/activate`, {}, { preserveScroll: true });
+};
 </script>
 
 <template>
@@ -749,7 +845,10 @@ const showCbToast = () => {
                                                     <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>Xóa
                                                 </button>
                                                 <div class="flex gap-2 text-[13.5px]">
-                                                    <button class="text-white bg-blue-600 rounded px-4 py-1.5 font-bold hover:bg-blue-700 flex items-center gap-1 shadow-sm">
+                                                    <button
+                                                        @click.stop="openEditModal(supplier)"
+                                                        class="text-white bg-blue-600 rounded px-4 py-1.5 font-bold hover:bg-blue-700 flex items-center gap-1 shadow-sm"
+                                                    >
                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>Cập nhật
                                                     </button>
                                                     <button
@@ -759,7 +858,16 @@ const showCbToast = () => {
                                                     >
                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>Gộp KH
                                                     </button>
-                                                    <button class="text-gray-700 bg-white border border-gray-300 rounded px-4 py-1.5 font-bold hover:bg-gray-50 shadow-sm">Ngừng hoạt động</button>
+                                                    <button
+                                                        v-if="supplier.status !== 'inactive'"
+                                                        @click.stop="openDeactivateConfirm(supplier)"
+                                                        class="text-gray-700 bg-white border border-gray-300 rounded px-4 py-1.5 font-bold hover:bg-gray-50 shadow-sm"
+                                                    >Ngừng hoạt động</button>
+                                                    <button
+                                                        v-else
+                                                        @click.stop="submitActivate(supplier)"
+                                                        class="text-white bg-green-600 rounded px-4 py-1.5 font-bold hover:bg-green-700 shadow-sm"
+                                                    >Hoạt động lại</button>
                                                 </div>
                                             </div>
                                         </template>
@@ -1779,6 +1887,118 @@ const showCbToast = () => {
                 <span class="text-sm text-orange-800">Giao dịch này thuộc khách hàng, vui lòng sang bên khách hàng để xử lý</span>
             </div>
         </transition>
+
+        <!-- ════ HOTFIX 24.8 — Edit supplier modal ════ -->
+        <div v-if="showEditModal && editingSupplier" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h3 class="text-lg font-bold text-gray-800">Cập nhật nhà cung cấp</h3>
+                    <button @click="closeEditModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto px-6 py-4 grid grid-cols-2 gap-4 text-sm">
+                    <div class="col-span-2 grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Mã NCC</label>
+                            <input v-model="editForm.code" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <p v-if="editForm.errors.code" class="mt-1 text-xs text-red-600">{{ editForm.errors.code }}</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Tên NCC <span class="text-red-500">*</span></label>
+                            <input v-model="editForm.name" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <p v-if="editForm.errors.name" class="mt-1 text-xs text-red-600">{{ editForm.errors.name }}</p>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Điện thoại</label>
+                        <input v-model="editForm.phone" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        <p v-if="editForm.errors.phone" class="mt-1 text-xs text-red-600">{{ editForm.errors.phone }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Điện thoại 2</label>
+                        <input v-model="editForm.phone2" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                        <input v-model="editForm.email" type="email" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Mã số thuế</label>
+                        <input v-model="editForm.tax_code" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div class="col-span-2">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Địa chỉ</label>
+                        <input v-model="editForm.address" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Tỉnh/Thành</label>
+                        <input v-model="editForm.city" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Quận/Huyện</label>
+                        <input v-model="editForm.district" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Phường/Xã</label>
+                        <input v-model="editForm.ward" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Nhóm NCC</label>
+                        <input v-model="editForm.customer_group" type="text" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div class="col-span-2">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Ghi chú</label>
+                        <textarea v-model="editForm.note" rows="2" class="w-full border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"></textarea>
+                    </div>
+                    <div class="col-span-2 border-t pt-3 mt-1">
+                        <label class="inline-flex items-center gap-2">
+                            <input v-model="editForm.is_customer" type="checkbox" class="rounded text-blue-600 focus:ring-blue-500" />
+                            <span class="text-gray-700">Vừa là khách hàng</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="px-6 py-3 border-t bg-gray-50 flex justify-end gap-2 rounded-b-lg">
+                    <button @click="closeEditModal" :disabled="editForm.processing" class="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50">Đóng</button>
+                    <button
+                        @click="submitEdit"
+                        :disabled="editForm.processing"
+                        class="px-5 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 disabled:opacity-50"
+                    >{{ editForm.processing ? 'Đang lưu...' : 'Lưu' }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════ HOTFIX 24.8 — Deactivate confirm modal ════ -->
+        <div v-if="deactivateConfirm.show && deactivateConfirm.supplier" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+                <div class="px-6 py-4 border-b">
+                    <h3 class="text-lg font-bold text-gray-800">Ngừng hoạt động NCC</h3>
+                </div>
+                <div class="px-6 py-4 space-y-3 text-sm text-gray-700">
+                    <div class="text-base font-semibold text-gray-900">{{ deactivateConfirm.supplier.name }}</div>
+                    <p>
+                        Ngừng hoạt động NCC sẽ <strong>không xóa</strong> lịch sử nhập/trả hàng và công nợ.
+                        NCC sẽ không xuất hiện cho giao dịch mới.
+                    </p>
+                    <div
+                        v-if="(Number(deactivateConfirm.supplier.supplier_debt_amount) || 0) > 0"
+                        class="px-3 py-2 bg-amber-50 border border-amber-200 rounded text-amber-800 text-xs"
+                    >
+                        NCC còn nợ phải trả: <strong class="tabular-nums">{{ Number(deactivateConfirm.supplier.supplier_debt_amount).toLocaleString('vi-VN') }}đ</strong>.
+                        Bạn vẫn có thể thanh toán/đối chiếu sau khi ngừng hoạt động.
+                    </div>
+                </div>
+                <div class="px-6 py-3 border-t bg-gray-50 flex justify-end gap-2 rounded-b-lg">
+                    <button @click="closeDeactivateConfirm" :disabled="deactivateConfirm.processing" class="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50">Đóng</button>
+                    <button
+                        @click="submitDeactivate"
+                        :disabled="deactivateConfirm.processing"
+                        class="px-5 py-2 bg-red-600 text-white rounded text-sm font-bold hover:bg-red-700 disabled:opacity-50"
+                    >{{ deactivateConfirm.processing ? 'Đang xử lý...' : 'Xác nhận ngừng' }}</button>
+                </div>
+            </div>
+        </div>
 
     </AppLayout>
 </template>
