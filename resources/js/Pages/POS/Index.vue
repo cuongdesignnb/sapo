@@ -1549,32 +1549,41 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Giảm giá</span>
-                        <MoneyInput v-model="activeTab.returnState.discount" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        <MoneyInput v-model="activeTab.returnState.discount" :min="0" input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                     </div>
-                    <!-- Step 24.6E: fee VND / % toggle -->
-                    <div class="space-y-1">
-                        <div class="flex items-center justify-between gap-2">
-                            <span class="text-gray-500">Phí trả hàng</span>
-                            <div class="flex items-center gap-1">
-                                <div class="inline-flex border border-gray-300 rounded overflow-hidden text-xs">
+                    <!-- Step 24.6E (UI polish): fee VND/% as one combined input group -->
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-gray-500">Phí trả hàng</span>
+                        <div class="w-44">
+                            <!-- combined input group: segmented toggle + input + suffix -->
+                            <div
+                                class="flex items-stretch border border-gray-300 rounded-md overflow-hidden bg-white focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500 transition-colors"
+                            >
+                                <div class="flex items-stretch bg-gray-50 border-r border-gray-300 p-0.5 gap-0.5">
                                     <button
                                         type="button"
                                         @click="activeTab.returnState.feeType = 'amount'"
-                                        :class="activeTab.returnState.feeType === 'amount' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
-                                        class="px-2 py-1"
-                                    >VND</button>
+                                        :class="activeTab.returnState.feeType === 'amount'
+                                            ? 'bg-blue-600 text-white shadow-sm'
+                                            : 'text-gray-500 hover:text-gray-700'"
+                                        class="px-2 text-[11px] font-semibold rounded transition-colors"
+                                        title="Phí theo VND"
+                                    >₫</button>
                                     <button
                                         type="button"
                                         @click="activeTab.returnState.feeType = 'percent'"
-                                        :class="activeTab.returnState.feeType === 'percent' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
-                                        class="px-2 py-1"
+                                        :class="activeTab.returnState.feeType === 'percent'
+                                            ? 'bg-blue-600 text-white shadow-sm'
+                                            : 'text-gray-500 hover:text-gray-700'"
+                                        class="px-2 text-[11px] font-semibold rounded transition-colors"
+                                        title="Phí theo %"
                                     >%</button>
                                 </div>
                                 <MoneyInput
                                     v-if="activeTab.returnState.feeType === 'amount'"
                                     v-model="activeTab.returnState.feeValue"
                                     :min="0"
-                                    input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    input-class="flex-1 min-w-0 px-2 py-1 text-sm text-right tabular-nums border-0 outline-none focus:ring-0 bg-transparent"
                                 />
                                 <input
                                     v-else
@@ -1583,13 +1592,15 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                     min="0"
                                     max="100"
                                     step="0.01"
-                                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    class="flex-1 min-w-0 px-2 py-1 text-sm text-right tabular-nums border-0 outline-none focus:ring-0 bg-transparent"
                                 />
-                                <span v-if="activeTab.returnState.feeType === 'percent'" class="text-xs text-gray-400">%</span>
                             </div>
-                        </div>
-                        <div v-if="activeTab.returnState.feeType === 'percent' && activeReturnFeeAmount > 0" class="flex items-center justify-end text-xs text-gray-500">
-                            = {{ formatCurrency(activeReturnFeeAmount) }}
+                            <div
+                                v-if="activeTab.returnState.feeType === 'percent' && activeReturnFeeAmount > 0"
+                                class="text-right text-[11px] text-gray-400 mt-0.5 tabular-nums"
+                            >
+                                = {{ formatCurrency(activeReturnFeeAmount) }}
+                            </div>
                         </div>
                     </div>
                     <div class="flex items-center justify-between border-t pt-2 mt-2">
@@ -1601,7 +1612,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         <MoneyInput
                             v-model="activeTab.returnState.paidToCustomer"
                             :min="0"
-                            input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
                             @update:model-value="activeTab.returnState.paidToCustomerTouched = true"
                         />
                     </div>
