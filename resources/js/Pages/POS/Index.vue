@@ -5,6 +5,7 @@ import { Head, Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     employees: Array,
@@ -1095,13 +1096,13 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             </template>
                         </div>
                         <div class="col-span-2 text-right">
-                            <input type="number" v-model="item.price" class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700">
+                            <MoneyInput v-model="item.price" :min="0" input-class="w-full text-right outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-1 font-semibold text-gray-700" />
                         </div>
                         <div class="col-span-2 text-right">
                             <div class="font-bold text-gray-900 text-[15px]">{{ formatCurrency(Number(item.price * item.quantity - (item.discount || 0)) || 0) }}</div>
                             <div class="flex items-center justify-end gap-1 mt-0.5">
                                 <span class="text-[10px] text-gray-400">CK:</span>
-                                <input type="number" v-model="item.discount" min="0" class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500" placeholder="0">
+                                <MoneyInput v-model="item.discount" :min="0" input-class="w-16 text-right text-[11px] outline-none bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 py-0 text-gray-500" placeholder="0" />
                             </div>
                         </div>
                         <div class="col-span-1 flex justify-center">
@@ -1207,7 +1208,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     <div class="flex justify-between items-center text-gray-700 font-medium">
                         <span class="border-b border-dashed border-gray-400 cursor-pointer hover:text-blue-600 transition-colors">Giảm giá</span>
                         <div class="flex items-center">
-                            <input type="number" v-model="discount" class="w-24 text-right border-b border-gray-300 focus:border-blue-500 outline-none pr-1">
+                            <MoneyInput v-model="discount" :min="0" input-class="w-24 text-right border-b border-gray-300 focus:border-blue-500 outline-none pr-1" />
                         </div>
                     </div>
                     
@@ -1218,7 +1219,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
 
                     <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
                         <span>Khách thanh toán</span>
-                        <input type="number" v-model="customerPaid" :placeholder="totalAmount" class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900">
+                        <MoneyInput v-model="customerPaid" :min="0" :placeholder="String(totalAmount)" input-class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900" />
                     </div>
 
                     <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
@@ -1373,7 +1374,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                 <div class="text-xs text-gray-500">{{ inv.customer_name || 'Khách lẻ' }}<span v-if="inv.customer_phone"> — {{ inv.customer_phone }}</span></div>
                             </div>
                             <div class="text-right">
-                                <div class="font-medium text-gray-700 tabular-nums">{{ Number(inv.total).toLocaleString('vi-VN') }} ₫</div>
+                                <div class="font-medium text-gray-700 tabular-nums">{{ formatCurrency(inv.total || 0) }}</div>
                                 <div class="text-xs text-gray-400">{{ inv.status }}</div>
                             </div>
                         </li>
@@ -1416,7 +1417,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                             <td class="px-3 py-2 text-right tabular-nums">{{ item.sold_qty }}</td>
                                             <td class="px-3 py-2 text-right tabular-nums text-gray-500">{{ item.already_returned_qty }}</td>
                                             <td class="px-3 py-2 text-right tabular-nums font-medium" :class="item.remaining_qty > 0 ? 'text-blue-600' : 'text-gray-400'">{{ item.remaining_qty }}</td>
-                                            <td class="px-3 py-2 text-right tabular-nums">{{ Number(item.price).toLocaleString('vi-VN') }}</td>
+                                            <td class="px-3 py-2 text-right tabular-nums">{{ formatCurrency(item.price || 0) }}</td>
                                             <td class="px-3 py-2 text-center">
                                                 <input
                                                     v-if="!item.has_serial"
@@ -1501,33 +1502,33 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     <div class="text-xs text-gray-500">Trả hàng</div>
                     <div class="font-semibold text-sm text-gray-800">{{ activeTab.returnState.sourceInvoice.code }}</div>
                     <div class="text-xs text-gray-500 mt-1">Tổng giá gốc hàng mua</div>
-                    <div class="font-medium text-sm tabular-nums">{{ Number(activeTab.returnState.sourceInvoice.total).toLocaleString('vi-VN') }} ₫</div>
+                    <div class="font-medium text-sm tabular-nums">{{ formatCurrency(activeTab.returnState.sourceInvoice.total || 0) }}</div>
                 </div>
 
                 <div class="flex-1 overflow-y-auto px-4 py-3 space-y-2 text-sm">
                     <div class="flex items-center justify-between">
                         <span class="text-gray-500">Tổng tiền hàng trả</span>
-                        <span class="font-medium tabular-nums">{{ Number(activeReturnSubtotal).toLocaleString('vi-VN') }} ₫</span>
+                        <span class="font-medium tabular-nums">{{ formatCurrency(activeReturnSubtotal || 0) }}</span>
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Giảm giá</span>
-                        <input v-model.number="activeTab.returnState.discount" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        <MoneyInput v-model="activeTab.returnState.discount" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Phí trả hàng</span>
-                        <input v-model.number="activeTab.returnState.fee" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        <MoneyInput v-model="activeTab.returnState.fee" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Hoàn trả thu khác</span>
-                        <input v-model.number="activeTab.returnState.refundOther" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        <MoneyInput v-model="activeTab.returnState.refundOther" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                     </div>
                     <div class="flex items-center justify-between border-t pt-2 mt-2">
                         <span class="font-semibold text-gray-700">Cần trả khách</span>
-                        <span class="font-bold text-blue-600 text-base tabular-nums">{{ Number(activeReturnTotal).toLocaleString('vi-VN') }} ₫</span>
+                        <span class="font-bold text-blue-600 text-base tabular-nums">{{ formatCurrency(activeReturnTotal || 0) }}</span>
                     </div>
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-gray-500">Tiền trả khách (paid_to_customer)</span>
-                        <input v-model.number="activeTab.returnState.paidToCustomer" type="number" min="0" class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        <MoneyInput v-model="activeTab.returnState.paidToCustomer" :min="0" input-class="w-32 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                     </div>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Ghi chú</label>
