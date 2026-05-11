@@ -43,6 +43,7 @@ class ActivityLog extends Model
     const ACTION_PART_INSTALL = 'part_install';
     const ACTION_PART_REMOVE = 'part_remove';
     const ACTION_PART_DISASSEMBLE = 'part_disassemble';
+    const ACTION_PART_DISASSEMBLE_ROLLBACK = 'part_disassemble_rollback';
 
     // Bình luận / Ghi chú
     const ACTION_COMMENT_ADD = 'comment_add';

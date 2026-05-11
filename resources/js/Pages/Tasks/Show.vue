@@ -224,6 +224,19 @@ const removePart = async (partId) => {
     }
 };
 
+// HOTFIX 24.11B — Rollback a disassembled part (direction='import').
+// Separate handler so removePart's UX (instant Gỡ) and the rollback's UX
+// (longer warning + 422 surfaces) don't get muddled.
+const rollbackDisassemblyPart = async (partId) => {
+    if (!confirm("Hoàn tác bóc linh kiện này?\nTồn kho linh kiện sẽ giảm lại, giá vốn máy gốc sẽ được cộng lại, và nếu không còn linh kiện bóc nào khác thì serial máy gốc sẽ trở về trạng thái cũ.")) return;
+    try {
+        await axios.post(`/api/tasks/${props.taskId}/parts/${partId}/rollback-disassembly`);
+        loadTask();
+    } catch (e) {
+        alert(e.response?.data?.message || "Không thể hoàn tác bóc linh kiện.");
+    }
+};
+
 // Step 23.8F — sync serial_numbers length với quantity khi user đổi qty cho output has_serial
 watch(() => disForm.value.quantity, (qty) => {
     if (!disSelectedProduct.value?.has_serial) {
@@ -791,10 +804,20 @@ loadTask();
                                     <div>{{ part.notes || '' }}</div>
                                 </td>
                                 <td class="px-4 py-3 text-center" v-if="isActive">
-                                    <button @click="removePart(part.id)"
-                                        :disabled="(part.direction || 'export') === 'import'"
-                                        :title="(part.direction || 'export') === 'import' ? 'Không thể gỡ linh kiện đã bóc tách' : ''"
-                                        class="text-red-500 hover:text-red-700 text-xs font-semibold disabled:opacity-30 disabled:cursor-not-allowed">
+                                    <button
+                                        v-if="(part.direction || 'export') === 'import'"
+                                        @click="rollbackDisassemblyPart(part.id)"
+                                        class="text-orange-600 hover:text-orange-800 text-xs font-semibold"
+                                        title="Hoàn tác bóc — rollback tồn kho + giá vốn máy"
+                                    >
+                                        Hoàn tác
+                                    </button>
+                                    <button
+                                        v-else
+                                        @click="removePart(part.id)"
+                                        class="text-red-500 hover:text-red-700 text-xs font-semibold"
+                                        title="Gỡ linh kiện khỏi phiếu sửa chữa"
+                                    >
                                         Gỡ
                                     </button>
                                 </td>

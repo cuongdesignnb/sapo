@@ -214,6 +214,8 @@ Route::prefix('tasks')->group(function () {
         Route::delete('/{task}/parts/{partId}', [\App\Http\Controllers\Api\TaskController::class, 'removePart']);
     });
     Route::post('/{task}/disassemble-part', [\App\Http\Controllers\Api\TaskController::class, 'disassemblePart'])->middleware('permission:tasks.disassemble');
+    // HOTFIX 24.11B — separate rollback endpoint for direction='import' parts.
+    Route::post('/{task}/parts/{partId}/rollback-disassembly', [\App\Http\Controllers\Api\TaskController::class, 'rollbackDisassemblyPart'])->middleware('permission:tasks.disassemble');
     Route::post('/{task}/complete', [\App\Http\Controllers\Api\TaskController::class, 'complete'])->middleware('permission:tasks.complete');
     Route::post('/{task}/progress', [\App\Http\Controllers\Api\TaskController::class, 'updateProgress'])->middleware('permission:tasks.complete');
     Route::post('/{task}/comments', [\App\Http\Controllers\Api\TaskController::class, 'addComment'])->middleware('permission:tasks.view');

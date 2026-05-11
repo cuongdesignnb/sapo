@@ -706,6 +706,166 @@ class TaskService
     }
 
     /**
+     * HOTFIX 24.11B — Rollback a disassembled part (direction='import').
+     *
+     * removePart() intentionally blocks direction='import' because the
+     * disassembly flow created a TaskPart, bumped output stock, created
+     * output serials, debited the source machine's cost, marked the source
+     * serial 'dismantled', and wrote a TYPE_REPAIR_IN movement. A safe
+     * rollback must reverse all of those — atomically — and refuse if any
+     * of the output stock/serials has already been consumed downstream.
+     *
+     * Guards (fail-fast, no mutation on guard failure):
+     *   - part.direction must be 'import'
+     *   - task must be a repair, not completed/cancelled
+     *   - output product must exist; output stock must be enough
+     *   - if has_serial: every stored serial_id must still belong to the
+     *     output product and be status='in_stock'
+     */
+    public function rollbackDisassembledPart(TaskPart $part, ?int $userId = null): void
+    {
+        if ($part->direction !== 'import') {
+            throw new \RuntimeException(
+                'Chỉ hoàn tác được linh kiện đã bóc tách (direction=import). Linh kiện lắp dùng nút "Gỡ".'
+            );
+        }
+
+        $task = $part->task;
+        if (!$task) {
+            throw new \RuntimeException('Không tìm thấy phiếu sửa chữa của linh kiện này.');
+        }
+        if (in_array($task->status, [Task::STATUS_COMPLETED, Task::STATUS_CANCELLED], true)) {
+            throw new \RuntimeException('Phiếu đã hoàn thành/hủy, không thể hoàn tác.');
+        }
+        if ($task->type !== Task::TYPE_REPAIR) {
+            throw new \RuntimeException('Task không phải phiếu sửa chữa.');
+        }
+
+        $product = Product::find($part->product_id);
+        if (!$product) {
+            throw new \RuntimeException('Không tìm thấy sản phẩm linh kiện output.');
+        }
+
+        $quantity = (int) $part->quantity;
+        $unitCost = (float) ($part->unit_cost ?? 0);
+        $totalCost = (float) $part->total_cost;
+
+        if ($quantity < 1) {
+            throw new \RuntimeException('Số lượng linh kiện không hợp lệ.');
+        }
+
+        // ── Pre-flight: serial sanity (no mutation yet) ────────────────
+        $serialIds = is_array($part->serial_ids) ? $part->serial_ids : [];
+        if ($product->has_serial) {
+            if (count($serialIds) !== $quantity) {
+                throw new \RuntimeException('Dữ liệu serial output không khớp số lượng linh kiện đã bóc.');
+            }
+            $serials = SerialImei::whereIn('id', $serialIds)
+                ->where('product_id', $product->id)
+                ->get();
+            if ($serials->count() !== $quantity) {
+                throw new \RuntimeException('Một hoặc nhiều serial output đã bị xóa hoặc đổi sản phẩm — không thể hoàn tác.');
+            }
+            foreach ($serials as $s) {
+                if ($s->status !== 'in_stock') {
+                    throw new \RuntimeException(
+                        'Serial output "' . $s->serial_number . '" hiện ở trạng thái "' . $s->status .
+                        '" — không thể hoàn tác (đã phát sinh giao dịch khác).'
+                    );
+                }
+            }
+        }
+
+        // ── Pre-flight: non-serial stock sanity ────────────────────────
+        $product->refresh();
+        if (!$product->has_serial && (float) $product->stock_quantity < $quantity) {
+            throw new \RuntimeException(
+                'Tồn kho linh kiện hiện không đủ để hoàn tác (cần ' . $quantity . ', còn ' .
+                (int) $product->stock_quantity . ').'
+            );
+        }
+
+        DB::transaction(function () use ($part, $task, $product, $quantity, $unitCost, $totalCost, $serialIds, $userId) {
+            // ── 1. Reverse output stock ──────────────────────────────
+            // Use applySaleReturn-style adjustment in reverse: decrement
+            // qty at the snapshot cost so inventory_total_cost balances.
+            MovingAvgCostingService::applySale($product, $quantity);
+            $product->refresh();
+
+            // ── 2. Delete output serials (only after the in_stock guard) ─
+            if ($product->has_serial && !empty($serialIds)) {
+                SerialImei::whereIn('id', $serialIds)
+                    ->where('product_id', $product->id)
+                    ->where('status', 'in_stock')
+                    ->delete();
+                $product->refresh();
+                $product->recomputeFromSerials();
+            }
+
+            // ── 3. Stock movement (reverse) ──────────────────────────
+            StockMovementService::record(
+                $product,
+                StockMovementService::TYPE_REPAIR_OUT,
+                $quantity,
+                $unitCost,
+                $task,
+                ['note' => 'Hoàn tác bóc linh kiện — xuất ngược khỏi kho']
+            );
+
+            // ── 4. Restore machine serial cost ───────────────────────
+            $serial = $task->serialImei;
+            if ($serial) {
+                $serial->cost_price = max(0, (float) $serial->cost_price + $totalCost);
+                $serial->save();
+
+                if ($serial->product) {
+                    MovingAvgCostingService::applyRepairAdjustment($serial->product, $totalCost);
+                }
+            } elseif ($task->product_id) {
+                $repairedProduct = Product::find($task->product_id);
+                if ($repairedProduct) {
+                    MovingAvgCostingService::applyRepairAdjustment($repairedProduct, $totalCost);
+                }
+            }
+
+            // ── 5. Restore machine serial status if no other import parts ─
+            $remainingImportTotal = (float) $task->parts()
+                ->where('id', '!=', $part->id)
+                ->where('direction', 'import')
+                ->sum('total_cost');
+
+            if ($serial && $remainingImportTotal <= 0 && $serial->status === 'dismantled') {
+                $serial->status = 'in_stock';
+                $serial->save();
+                if ($serial->product) {
+                    $serial->product->recomputeFromSerials();
+                }
+            }
+
+            // ── 6. Snapshot + delete TaskPart + recalc ──────────────
+            $snapshot = [
+                'task_part_id'      => $part->id,
+                'output_product_id' => $part->product_id,
+                'quantity'          => $quantity,
+                'unit_cost'         => $unitCost,
+                'total_cost'        => $totalCost,
+                'output_serial_ids' => $serialIds,
+                'input_serial_id'   => $task->serial_imei_id,
+            ];
+            $part->delete();
+            $task->recalculateCosts();
+
+            // ── 7. Audit log ────────────────────────────────────────
+            ActivityLog::log(
+                ActivityLog::ACTION_PART_DISASSEMBLE_ROLLBACK,
+                "Hoàn tác bóc linh kiện {$product->name} (x{$quantity}) khỏi phiếu {$task->code}",
+                $task,
+                $snapshot
+            );
+        });
+    }
+
+    /**
      * Thêm bình luận.
      */
     public function addComment(Task $task, int $userId, string $body): TaskComment

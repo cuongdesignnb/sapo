@@ -311,6 +311,28 @@ class TaskController extends Controller
 
 
     /**
+     * HOTFIX 24.11B — Rollback a disassembled part (direction='import').
+     * Separate endpoint from removePart() so the export and import flows
+     * keep their own guards and cannot be confused.
+     */
+    public function rollbackDisassemblyPart(Request $request, Task $task, int $partId)
+    {
+        $part = $task->parts()->findOrFail($partId);
+
+        try {
+            $this->service->rollbackDisassembledPart($part, $request->user()?->id);
+            $task->refresh();
+
+            return response()->json([
+                'message' => 'Đã hoàn tác bóc linh kiện.',
+                'task'    => $task->only(['parts_cost', 'total_cost']),
+            ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
      * Bóc linh kiện từ máy — nhập vào tồn kho. (Step 23.8E hardening)
      */
     public function disassemblePart(Request $request, Task $task)
