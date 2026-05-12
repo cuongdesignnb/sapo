@@ -119,12 +119,18 @@ class PaysheetController extends Controller
         $yearLabel = $periodStart->year;
         $name = "Bảng lương tháng {$monthLabel}/{$yearLabel}";
 
+        // Step 24.12 — seed standard_working_days from the calendar so the
+        // right side panel has a sensible default; the user can override later.
+        $calendarStandard = app(\App\Services\SalaryCalculationService::class)
+            ->standardWorkingDaysForBranch($data['branch_id'] ?? null, $periodStart, $periodEnd);
+
         $paysheet = Paysheet::create([
             'code' => Paysheet::nextCode(),
             'name' => $name,
             'pay_period' => $data['pay_period'],
             'period_start' => $periodStart->toDateString(),
             'period_end' => $periodEnd->toDateString(),
+            'standard_working_days' => $calendarStandard > 0 ? round($calendarStandard, 2) : null,
             'branch_id' => $data['branch_id'] ?? null,
             'scope' => $data['scope'] ?? 'all',
             'status' => 'calculating',
@@ -219,11 +225,18 @@ class PaysheetController extends Controller
         }
 
         // Step 2: Recalculate salary for each payslip
+        // Step 24.12 — honour paysheet.standard_working_days as the denominator
+        // when set; null falls back to calendar via SalaryCalculationService.
+        $standardOverride = $paysheet->standard_working_days
+            ? (float) $paysheet->standard_working_days
+            : null;
+        $salaryService = app(\App\Services\SalaryCalculationService::class);
+
         foreach ($paysheet->payslips as $slip) {
             $employee = Employee::with(['salarySetting'])->find($slip->employee_id);
             if (!$employee) continue;
 
-            $calc = $employee->calculateSalaryForRange($periodStart, $periodEnd);
+            $calc = $salaryService->calculateForEmployee($employee, $periodStart, $periodEnd, $standardOverride);
 
             // Merge manual adjustments (giữ qua recalculate)
             $adjs = $slip->adjustments()->get();
@@ -409,6 +422,49 @@ class PaysheetController extends Controller
         $paysheet = Paysheet::findOrFail($id);
         $paysheet->update(['notes' => $request->input('notes', '')]);
         return response()->json(['success' => true, 'data' => $paysheet]);
+    }
+
+    /**
+     * Step 24.12 — PUT /api/paysheets/{id}/standard-working-days
+     *
+     * Update the per-paysheet "ngày công chuẩn" and recompute every payslip
+     * in the sheet. Backend recomputes — frontend's net_pay / totals are
+     * never trusted. Locked or cancelled sheets are refused outright.
+     */
+    public function updateStandardWorkingDays(Request $request, $id)
+    {
+        $data = $request->validate([
+            'standard_working_days' => 'required|numeric|min:1|max:31',
+            'name'                  => 'sometimes|string|max:255',
+            'notes'                 => 'sometimes|nullable|string|max:2000',
+        ]);
+
+        $paysheet = Paysheet::with('payslips')->findOrFail($id);
+
+        if (in_array($paysheet->status, ['locked', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bảng lương đã chốt hoặc hủy, không thể chỉnh sửa ngày công chuẩn.',
+            ], 422);
+        }
+
+        $paysheet->standard_working_days = (float) $data['standard_working_days'];
+        if (array_key_exists('name', $data)) {
+            $paysheet->name = $data['name'];
+        }
+        if (array_key_exists('notes', $data)) {
+            $paysheet->notes = $data['notes'];
+        }
+        $paysheet->save();
+
+        // Recompute every payslip with the new denominator. Backend never
+        // trusts the FE-sent net_pay — recalculation is the source of truth.
+        $this->performRecalculation($paysheet);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $paysheet->fresh()->load(['payslips.employee:id,code,name', 'branch:id,name']),
+        ]);
     }
 
     /**

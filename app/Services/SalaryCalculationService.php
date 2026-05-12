@@ -19,7 +19,7 @@ class SalaryCalculationService
     /**
      * Tính lương đầy đủ cho nhân viên theo mẫu lương trong khoảng thời gian
      */
-    public function calculateForEmployee(Employee $employee, Carbon $from, Carbon $to): array
+    public function calculateForEmployee(Employee $employee, Carbon $from, Carbon $to, ?float $standardWorkingDaysOverride = null): array
     {
         $setting = $employee->salarySetting;
         if (!$setting) {
@@ -42,8 +42,13 @@ class SalaryCalculationService
         $allowanceList = !empty($setting->custom_allowances) ? collect($setting->custom_allowances) : ($template ? $template->allowances : collect());
         $deductionList = !empty($setting->custom_deductions) ? collect($setting->custom_deductions) : ($template ? $template->deductions : collect());
 
-        // Tính ngày công chuẩn theo lịch thực tế (WorkdaySetting + Holiday)
-        $standardWorkUnits = $this->getStandardWorkUnits($employee->branch_id, $from, $to);
+        // Step 24.12 — paysheet-level standard_working_days override.
+        // When set, use the user-supplied value (e.g. 25 or 26) as the
+        // denominator for salary_main. Fall back to the calendar
+        // (WorkdaySetting + Holiday) computation otherwise.
+        $standardWorkUnits = ($standardWorkingDaysOverride !== null && $standardWorkingDaysOverride > 0)
+            ? (float) $standardWorkingDaysOverride
+            : $this->getStandardWorkUnits($employee->branch_id, $from, $to);
 
         // Lấy dữ liệu chấm công
         $records = $employee->timekeepingRecords()
@@ -842,6 +847,15 @@ class SalaryCalculationService
      * - Trừ ngày lễ (Holiday) không tính công
      * - Ngày lễ có paid_leave=true vẫn tính vào công chuẩn
      */
+    /**
+     * Step 24.12 — public wrapper so PaysheetController can seed
+     * `paysheets.standard_working_days` with the calendar default.
+     */
+    public function standardWorkingDaysForBranch(?int $branchId, Carbon $from, Carbon $to): float
+    {
+        return $this->getStandardWorkUnits($branchId, $from, $to);
+    }
+
     private function getStandardWorkUnits(?int $branchId, Carbon $from, Carbon $to): float
     {
         // Lấy cấu hình ngày làm theo chi nhánh, fallback sang cấu hình chung

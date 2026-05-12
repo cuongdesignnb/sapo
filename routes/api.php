@@ -157,6 +157,8 @@ Route::prefix('paysheets')->group(function () {
     Route::put('/{id}/cancel', [PaysheetController::class, 'cancel']);
     Route::post('/{id}/pay', [PaysheetController::class, 'pay']);
     Route::put('/{id}/notes', [PaysheetController::class, 'updateNotes']);
+    // Step 24.12 — update standard_working_days + auto-recalc payslips
+    Route::put('/{id}/standard-working-days', [PaysheetController::class, 'updateStandardWorkingDays']);
     Route::put('/{id}/payslips/{slipId}', [PaysheetController::class, 'updatePayslip']);
     Route::get('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'listAdjustments']);
     Route::post('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'storeAdjustment']);

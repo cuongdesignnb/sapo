@@ -69,6 +69,8 @@
                 </div>
             </div>
 
+            <!-- Main + Right Panel (Step 24.12) -->
+            <div class="flex-1 flex overflow-hidden">
             <!-- Main Table -->
             <div class="flex-1 overflow-auto px-4 py-3">
                 <table class="w-full bg-white border border-gray-200 rounded-lg text-sm">
@@ -155,6 +157,114 @@
                         </tr>
                     </tfoot>
                 </table>
+            </div>
+
+            <!-- ════ Step 24.12 — RIGHT SIDE PANEL ════ -->
+            <button
+                v-if="panelCollapsed"
+                @click="panelCollapsed = false"
+                class="self-center px-1 py-6 bg-blue-500 hover:bg-blue-600 text-white rounded-l shadow-md transition-colors flex-shrink-0"
+                title="Mở bảng thông tin"
+            >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <aside
+                v-else
+                class="w-80 bg-white border-l border-gray-200 overflow-y-auto flex-shrink-0 relative"
+            >
+                <button
+                    @click="panelCollapsed = true"
+                    class="absolute -left-3 top-6 w-6 h-10 bg-blue-500 hover:bg-blue-600 text-white rounded-l shadow-md flex items-center justify-center"
+                    title="Thu bảng thông tin"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                </button>
+
+                <div class="p-4 space-y-3 text-sm">
+                    <div>
+                        <div class="text-[11px] text-gray-500 uppercase mb-1">Người tạo</div>
+                        <div class="text-gray-800">{{ localPaysheet.created_by || 'Admin' }}</div>
+                    </div>
+                    <div>
+                        <div class="text-[11px] text-gray-500 uppercase mb-1">Mã bảng lương</div>
+                        <div class="text-gray-800 font-medium">{{ localPaysheet.code }}</div>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] text-gray-500 uppercase mb-1">Tên bảng lương</label>
+                        <input
+                            v-model="panelForm.name"
+                            :disabled="isLocked"
+                            type="text"
+                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                        />
+                    </div>
+                    <div>
+                        <div class="text-[11px] text-gray-500 uppercase mb-1">Kỳ hạn trả</div>
+                        <div class="text-gray-800">{{ localPaysheet.pay_period === 'biweekly' ? 'Nửa tháng' : 'Tháng' }}</div>
+                    </div>
+                    <div>
+                        <div class="text-[11px] text-gray-500 uppercase mb-1">Kỳ làm việc</div>
+                        <div class="text-gray-800">{{ formatDate(localPaysheet.period_start) }} → {{ formatDate(localPaysheet.period_end) }}</div>
+                    </div>
+
+                    <!-- Ngày công chuẩn — the actionable field -->
+                    <div>
+                        <label class="block text-[11px] text-gray-500 uppercase mb-1">Ngày công chuẩn</label>
+                        <div class="flex items-center gap-2">
+                            <input
+                                v-model.number="panelForm.standard_working_days"
+                                :disabled="isLocked"
+                                type="number"
+                                min="1"
+                                max="31"
+                                step="0.5"
+                                class="w-24 border border-gray-300 rounded px-2 py-1.5 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                            />
+                            <span class="text-xs text-gray-400">ngày</span>
+                        </div>
+                        <p v-if="!isLocked" class="text-[11px] text-gray-400 mt-1">Khi đổi và Lưu, hệ thống sẽ tính lại lương chính cho mọi nhân viên trong bảng.</p>
+                    </div>
+
+                    <div>
+                        <div class="text-[11px] text-gray-500 uppercase mb-1">Trạng thái</div>
+                        <span :class="statusClass(localPaysheet.status)" class="px-2 py-0.5 text-xs font-medium rounded-full">
+                            {{ statusLabel(localPaysheet.status) }}
+                        </span>
+                    </div>
+                    <div>
+                        <div class="text-[11px] text-gray-500 uppercase mb-1">Chi nhánh trả lương</div>
+                        <div class="text-gray-800">{{ localPaysheet.branch?.name || 'Tất cả chi nhánh' }}</div>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] text-gray-500 uppercase mb-1">Ghi chú</label>
+                        <textarea
+                            v-model="panelForm.notes"
+                            :disabled="isLocked"
+                            rows="3"
+                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                            placeholder="Ghi chú nội bộ"
+                        ></textarea>
+                    </div>
+
+                    <div v-if="panelError" class="px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                        {{ panelError }}
+                    </div>
+
+                    <div class="flex flex-col gap-2 pt-2">
+                        <button
+                            v-if="!isLocked"
+                            @click="savePanelDraft"
+                            :disabled="panelSaving"
+                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition disabled:opacity-50"
+                        >{{ panelSaving ? 'Đang lưu...' : 'Lưu tạm' }}</button>
+                        <button
+                            v-if="!isLocked && localPaysheet.status === 'calculated'"
+                            @click="lockPaysheet"
+                            class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition"
+                        >Chốt lương</button>
+                    </div>
+                </div>
+            </aside>
             </div>
         </div>
 
@@ -483,6 +593,41 @@ const recalculating = ref(false);
 const autoRecalcMessage = ref('');
 
 const isLocked = computed(() => localPaysheet.value.status === 'locked' || localPaysheet.value.status === 'cancelled');
+
+// ===== Step 24.12 — Right side panel state =====
+const panelCollapsed = ref(false);
+const panelSaving = ref(false);
+const panelError = ref('');
+const panelForm = reactive({
+    name: localPaysheet.value.name || '',
+    standard_working_days: localPaysheet.value.standard_working_days
+        ? Number(localPaysheet.value.standard_working_days)
+        : 26,
+    notes: localPaysheet.value.notes || '',
+});
+
+async function savePanelDraft() {
+    panelError.value = '';
+    if (!panelForm.standard_working_days || panelForm.standard_working_days < 1 || panelForm.standard_working_days > 31) {
+        panelError.value = 'Ngày công chuẩn phải trong khoảng 1–31.';
+        return;
+    }
+    panelSaving.value = true;
+    try {
+        const res = await axios.put(`/api/paysheets/${localPaysheet.value.id}/standard-working-days`, {
+            standard_working_days: Number(panelForm.standard_working_days),
+            name: panelForm.name,
+            notes: panelForm.notes,
+        });
+        // Backend recomputes — replace local state with what it returned.
+        localPaysheet.value = res.data?.data || localPaysheet.value;
+        autoRecalcMessage.value = 'Đã cập nhật ngày công chuẩn và tính lại bảng lương.';
+    } catch (e) {
+        panelError.value = e.response?.data?.message || 'Không thể lưu thay đổi.';
+    } finally {
+        panelSaving.value = false;
+    }
+}
 
 // Auto-recalc khi mở trang nếu có dữ liệu thay đổi
 onMounted(async () => {
