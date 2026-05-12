@@ -159,6 +159,9 @@ Route::prefix('paysheets')->group(function () {
     Route::put('/{id}/notes', [PaysheetController::class, 'updateNotes']);
     // Step 24.12 — update standard_working_days + auto-recalc payslips
     Route::put('/{id}/standard-working-days', [PaysheetController::class, 'updateStandardWorkingDays']);
+    // HOTFIX 24.12B — bulk replace + reset-default for popup adjustments
+    Route::put('/{id}/payslips/{slipId}/adjustments/{type}/bulk', [PaysheetController::class, 'bulkSaveAdjustments']);
+    Route::post('/{id}/payslips/{slipId}/adjustments/{type}/reset-default', [PaysheetController::class, 'resetDefaultAdjustments']);
     Route::put('/{id}/payslips/{slipId}', [PaysheetController::class, 'updatePayslip']);
     Route::get('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'listAdjustments']);
     Route::post('/{id}/payslips/{slipId}/adjustments', [PaysheetController::class, 'storeAdjustment']);

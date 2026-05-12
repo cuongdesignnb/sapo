@@ -12,6 +12,7 @@ use App\Models\Employee;
 use App\Models\EmployeeSalarySetting;
 use App\Services\TimekeepingService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class PaysheetController extends Controller
 {
@@ -258,6 +259,18 @@ class PaysheetController extends Controller
 
             $calc = $salaryService->calculateForEmployee($employee, $periodStart, $periodEnd, $standardOverride);
 
+            // HOTFIX 24.12B — Preserve manual_overrides set by bulkSaveAdjustments
+            // across performRecalculation (otherwise $calc overwrites details and
+            // the user's "phụ cấp = 0" intent silently reverts to auto).
+            $oldDetails = is_array($slip->details) ? $slip->details : [];
+            if (isset($oldDetails['manual_overrides']) && is_array($oldDetails['manual_overrides'])) {
+                $calc['manual_overrides'] = $oldDetails['manual_overrides'];
+            }
+            $manualOverrides = $calc['manual_overrides'] ?? [];
+            $allowanceOverride = (bool) ($manualOverrides['allowance'] ?? false);
+            $bonusOverride     = (bool) ($manualOverrides['bonus']     ?? false);
+            $deductionOverride = (bool) ($manualOverrides['deduction'] ?? false);
+
             // Merge manual adjustments (giữ qua recalculate)
             $adjs = $slip->adjustments()->get();
             $adjBonus = $adjs->where('type', 'bonus')->sum('amount');
@@ -268,11 +281,15 @@ class PaysheetController extends Controller
             $autoOt = ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0);
             $autoLatePenalty = $calc['late_penalty'] ?? 0;
 
-            // Bonus/Allowance/Deduction: adjustments REPLACE auto (items from settings)
+            // Bonus/Allowance/Deduction: adjustments OR manual override REPLACE auto.
             // OT: adjustments ADD to auto. Late penalty always from auto.
-            $totalBonus = $adjs->where('type', 'bonus')->count() > 0 ? $adjBonus : ($calc['bonus'] ?? 0);
-            $totalAllowance = $adjs->where('type', 'allowance')->count() > 0 ? $adjAllowance : ($calc['allowances'] ?? 0);
-            $totalDeduction = $adjs->where('type', 'deduction')->count() > 0
+            $totalBonus = ($bonusOverride || $adjs->where('type', 'bonus')->count() > 0)
+                ? $adjBonus
+                : ($calc['bonus'] ?? 0);
+            $totalAllowance = ($allowanceOverride || $adjs->where('type', 'allowance')->count() > 0)
+                ? $adjAllowance
+                : ($calc['allowances'] ?? 0);
+            $totalDeduction = ($deductionOverride || $adjs->where('type', 'deduction')->count() > 0)
                 ? ($adjDeduction + $autoLatePenalty)
                 : ($calc['deductions'] ?? 0);
             $totalOt = $autoOt + $adjOt;
@@ -639,13 +656,28 @@ class PaysheetController extends Controller
         $autoLatePenalty = $details['late_penalty'] ?? 0;
         $autoOt = ($details['ot_pay'] ?? 0) + ($details['holiday_pay'] ?? 0);
 
-        // Bonus/Allowance/Deduction: adjustments REPLACE auto values (items from settings)
-        // OT: adjustments ADD to auto. Late penalty always from auto.
-        $slip->bonus = $adjs->where('type', 'bonus')->count() > 0 ? $adjBonus : $autoBonus;
-        $slip->allowances = $adjs->where('type', 'allowance')->count() > 0 ? $adjAllowance : $autoAllowance;
-        $slip->deductions = $adjs->where('type', 'deduction')->count() > 0
+        // HOTFIX 24.12B — Honour `details.manual_overrides` so deleting every
+        // row in the popup (sum=0) does NOT fall back to the auto value. The
+        // override flag is set by bulkSaveAdjustments() and cleared by
+        // resetDefaultAdjustments(). Without it, "xóa hết phụ cấp" silently
+        // restored the auto allowance from the template.
+        $manualOverrides = is_array($details['manual_overrides'] ?? null)
+            ? $details['manual_overrides']
+            : [];
+        $allowanceOverride = (bool) ($manualOverrides['allowance'] ?? false);
+        $bonusOverride     = (bool) ($manualOverrides['bonus']     ?? false);
+        $deductionOverride = (bool) ($manualOverrides['deduction'] ?? false);
+
+        $slip->bonus = ($bonusOverride || $adjs->where('type', 'bonus')->count() > 0)
+            ? $adjBonus
+            : $autoBonus;
+        $slip->allowances = ($allowanceOverride || $adjs->where('type', 'allowance')->count() > 0)
+            ? $adjAllowance
+            : $autoAllowance;
+        $slip->deductions = ($deductionOverride || $adjs->where('type', 'deduction')->count() > 0)
             ? ($adjDeduction + $autoLatePenalty)
             : $autoDeduction;
+        // OT stays additive — autoOt + any manual OT items.
         $slip->ot_pay = $autoOt + $adjOt;
 
         $slip->total_salary = max(0, $slip->base_salary + $slip->bonus + $autoCommission + $slip->allowances + $slip->ot_pay - $slip->deductions);
@@ -653,5 +685,139 @@ class PaysheetController extends Controller
         $slip->save();
 
         $slip->paysheet->recalculateTotals();
+    }
+
+    /**
+     * HOTFIX 24.12B — Bulk-replace every adjustment of a given type in one shot.
+     *
+     * Why a separate endpoint: the popup is a list editor — the user adds rows,
+     * removes rows, edits inline, then clicks "Xong". The legacy per-row
+     * POST/PUT/DELETE endpoints can't express "remove the last allowance row
+     * and keep allowance = 0" because once the count drops to 0 the old recalc
+     * fell back to the auto value. This endpoint atomically (a) deletes the
+     * existing rows of that type, (b) re-inserts the user's list, (c) sets the
+     * manual_overrides[type] flag for allowance/bonus/deduction so the empty
+     * list is honoured, then (d) recomputes the slip.
+     */
+    public function bulkSaveAdjustments(Request $request, $id, $slipId, string $type)
+    {
+        if (!in_array($type, ['allowance', 'bonus', 'deduction', 'ot'], true)) {
+            return response()->json(['success' => false, 'message' => 'Loại không hợp lệ.'], 422);
+        }
+
+        $paysheet = Paysheet::findOrFail($id);
+        if (in_array($paysheet->status, ['locked', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bảng lương đã chốt hoặc hủy, không thể chỉnh ' . $type . '.',
+            ], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+
+        $data = $request->validate([
+            'items'           => 'nullable|array',
+            'items.*.id'      => 'nullable|integer',
+            'items.*.name'    => 'required_with:items|string|max:255',
+            'items.*.amount'  => 'required_with:items|integer|min:0',
+            'items.*.notes'   => 'nullable|string|max:500',
+            'items.*.meta'    => 'nullable|array',
+        ]);
+
+        DB::transaction(function () use ($slip, $type, $data) {
+            // 1. Wipe existing rows of this type.
+            PayslipAdjustment::where('payslip_id', $slip->id)
+                ->where('type', $type)
+                ->delete();
+
+            // 2. Re-insert. Skip rows with no name and no amount (UI may leave a
+            //    blank row when the user is mid-edit).
+            $rows = $data['items'] ?? [];
+            foreach ($rows as $row) {
+                $name = trim((string) ($row['name'] ?? ''));
+                $amount = (int) ($row['amount'] ?? 0);
+                if ($name === '' && $amount <= 0) {
+                    continue;
+                }
+                PayslipAdjustment::create([
+                    'payslip_id' => $slip->id,
+                    'type'       => $type,
+                    'name'       => $name !== '' ? $name : ucfirst($type),
+                    'amount'     => $amount,
+                    'notes'      => $row['notes'] ?? null,
+                    'meta'       => $row['meta'] ?? null,
+                ]);
+            }
+
+            // 3. Set manual_overrides flag for replace-style types so that
+            //    sum=0 is honoured. OT stays additive — no flag.
+            if ($type !== 'ot') {
+                $details = is_array($slip->details) ? $slip->details : [];
+                $overrides = is_array($details['manual_overrides'] ?? null) ? $details['manual_overrides'] : [];
+                $overrides[$type] = true;
+                $details['manual_overrides'] = $overrides;
+                $slip->details = $details;
+                $slip->save();
+            }
+        });
+
+        // 4. Recompute outside the transaction so any service calls run on
+        //    the committed state.
+        $this->recalcSlipWithAdjustments($slip);
+
+        $slip->refresh()->load('employee:id,code,name', 'adjustments');
+        return response()->json([
+            'success'     => true,
+            'slip'        => $slip,
+            'adjustments' => $slip->adjustments,
+        ]);
+    }
+
+    /**
+     * HOTFIX 24.12B — Restore the auto-computed value for a given type by
+     * dropping its adjustments + clearing the manual_overrides flag.
+     */
+    public function resetDefaultAdjustments($id, $slipId, string $type)
+    {
+        if (!in_array($type, ['allowance', 'bonus', 'deduction', 'ot'], true)) {
+            return response()->json(['success' => false, 'message' => 'Loại không hợp lệ.'], 422);
+        }
+
+        $paysheet = Paysheet::findOrFail($id);
+        if (in_array($paysheet->status, ['locked', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bảng lương đã chốt hoặc hủy.',
+            ], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+
+        DB::transaction(function () use ($slip, $type) {
+            PayslipAdjustment::where('payslip_id', $slip->id)
+                ->where('type', $type)
+                ->delete();
+
+            if ($type !== 'ot') {
+                $details = is_array($slip->details) ? $slip->details : [];
+                if (isset($details['manual_overrides']) && is_array($details['manual_overrides'])) {
+                    unset($details['manual_overrides'][$type]);
+                    if (empty($details['manual_overrides'])) {
+                        unset($details['manual_overrides']);
+                    }
+                }
+                $slip->details = $details;
+                $slip->save();
+            }
+        });
+
+        $this->recalcSlipWithAdjustments($slip);
+
+        $slip->refresh()->load('employee:id,code,name', 'adjustments');
+        return response()->json([
+            'success'     => true,
+            'slip'        => $slip,
+            'adjustments' => $slip->adjustments,
+        ]);
     }
 }

@@ -861,9 +861,9 @@ function addAdjustmentRow(type) {
 }
 
 function deleteAdjustment(adj) {
-    if (adj._existing && adj.id > 0) {
-        pendingDeletes.value.push(adj.id);
-    }
+    // HOTFIX 24.12B — pure local splice; the bulk endpoint replaces the
+    // entire row set for this type on save, so we no longer need to track
+    // server-side deletes separately.
     popupAdjustments.value = popupAdjustments.value.filter(a => a !== adj);
 }
 
@@ -873,44 +873,44 @@ async function saveAdjustments() {
     const slipId = popup.slip.id;
     const type = popup.type;
 
+    // HOTFIX 24.12B — single bulk call replaces the previous N delete + N PUT/POST loop.
+    // Empty items array intentionally clears the type entirely (and sets manual_overrides
+    // for allowance/bonus/deduction so the backend honours 0 instead of falling back to
+    // the auto value). OT stays additive on the backend side.
+    const items = popupAdjustments.value
+        .filter(row => (row.name && String(row.name).trim() !== '') || Number(row.amount) > 0)
+        .map(row => ({
+            id: row.id && row.id > 0 ? row.id : null,
+            name: row.name || (type === 'allowance' ? 'Phụ cấp' : type === 'bonus' ? 'Thưởng' : type === 'deduction' ? 'Giảm trừ' : 'OT'),
+            amount: Math.max(0, Math.round(Number(row.amount) || 0)),
+            notes: row.notes || null,
+            meta: row.meta || null,
+        }));
+
     try {
-        // Delete removed adjustments
-        for (const adjId of pendingDeletes.value) {
-            await axios.delete(`/api/paysheets/${psId}/payslips/${slipId}/adjustments/${adjId}`);
-        }
+        const { data } = await axios.put(
+            `/api/paysheets/${psId}/payslips/${slipId}/adjustments/${type}/bulk`,
+            { items }
+        );
 
-        // Update existing or create new
-        for (const adj of popupAdjustments.value) {
-            if (!adj.amount && adj.amount !== 0) continue;
-            if (!adj.name) adj.name = type === 'allowance' ? 'Phụ cấp' : type === 'bonus' ? 'Thưởng' : type === 'deduction' ? 'Giảm trừ' : 'OT';
-            if (adj._existing && adj.id > 0) {
-                await axios.put(`/api/paysheets/${psId}/payslips/${slipId}/adjustments/${adj.id}`, {
-                    name: adj.name,
-                    amount: adj.amount,
-                    notes: adj.notes || '',
-                    meta: adj.meta || {},
-                });
+        if (data?.success && data.slip) {
+            // Replace just this slip in localPaysheet — backend has recomputed it.
+            const slips = localPaysheet.value.payslips || [];
+            const idx = slips.findIndex(s => s.id === data.slip.id);
+            if (idx !== -1) {
+                slips.splice(idx, 1, data.slip);
+                localPaysheet.value = { ...localPaysheet.value, payslips: slips };
             } else {
-                await axios.post(`/api/paysheets/${psId}/payslips/${slipId}/adjustments`, {
-                    type: type,
-                    name: adj.name,
-                    amount: adj.amount,
-                    notes: adj.notes || '',
-                    meta: adj.meta || {},
-                });
+                // Slip not found locally — fall back to full reload so totals stay accurate.
+                const { data: full } = await axios.get(`/api/paysheets/${psId}`);
+                if (full?.success) localPaysheet.value = full.data;
             }
-        }
-
-        // Refresh data
-        const { data } = await axios.get(`/api/paysheets/${psId}`);
-        if (data.success) {
-            localPaysheet.value = data.data;
         }
 
         closePopup();
     } catch (e) {
         console.error('Save adjustments error:', e);
-        alert('Lỗi khi lưu điều chỉnh.');
+        alert(e.response?.data?.message || 'Lỗi khi lưu điều chỉnh.');
     }
 }
 
