@@ -267,38 +267,50 @@ class PaysheetController extends Controller
                 $calc['manual_overrides'] = $oldDetails['manual_overrides'];
             }
             $manualOverrides = $calc['manual_overrides'] ?? [];
-            $allowanceOverride = (bool) ($manualOverrides['allowance'] ?? false);
-            $bonusOverride     = (bool) ($manualOverrides['bonus']     ?? false);
-            $deductionOverride = (bool) ($manualOverrides['deduction'] ?? false);
+            $commissionOverride = (bool) ($manualOverrides['commission'] ?? false);
+            $allowanceOverride  = (bool) ($manualOverrides['allowance']  ?? false);
+            $bonusOverride      = (bool) ($manualOverrides['bonus']      ?? false);
+            $deductionOverride  = (bool) ($manualOverrides['deduction']  ?? false);
 
             // Merge manual adjustments (giữ qua recalculate)
             $adjs = $slip->adjustments()->get();
-            $adjBonus = $adjs->where('type', 'bonus')->sum('amount');
-            $adjAllowance = $adjs->where('type', 'allowance')->sum('amount');
-            $adjDeduction = $adjs->where('type', 'deduction')->sum('amount');
-            $adjOt = $adjs->where('type', 'ot')->sum('amount');
+            $adjCommission = $adjs->where('type', 'commission')->sum('amount');
+            $adjBonus      = $adjs->where('type', 'bonus')->sum('amount');
+            $adjAllowance  = $adjs->where('type', 'allowance')->sum('amount');
+            $adjDeduction  = $adjs->where('type', 'deduction')->sum('amount');
+            $adjOt         = $adjs->where('type', 'ot')->sum('amount');
 
             $autoOt = ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0);
             $autoLatePenalty = $calc['late_penalty'] ?? 0;
 
-            // Bonus/Allowance/Deduction: adjustments OR manual override REPLACE auto.
-            // OT: adjustments ADD to auto. Late penalty always from auto.
+            // 24.12C — commission/bonus/allowance/deduction: adjustments OR
+            // manual override REPLACE auto. OT: adjustments ADD to auto.
+            // late_penalty is included only in the no-override deduction path
+            // (a row-based addition); when the user explicitly overrides
+            // deduction, their total is the final number.
+            $totalCommission = ($commissionOverride || $adjs->where('type', 'commission')->count() > 0)
+                ? $adjCommission
+                : ($calc['commission'] ?? 0);
             $totalBonus = ($bonusOverride || $adjs->where('type', 'bonus')->count() > 0)
                 ? $adjBonus
                 : ($calc['bonus'] ?? 0);
             $totalAllowance = ($allowanceOverride || $adjs->where('type', 'allowance')->count() > 0)
                 ? $adjAllowance
                 : ($calc['allowances'] ?? 0);
-            $totalDeduction = ($deductionOverride || $adjs->where('type', 'deduction')->count() > 0)
-                ? ($adjDeduction + $autoLatePenalty)
-                : ($calc['deductions'] ?? 0);
+            if ($deductionOverride) {
+                $totalDeduction = $adjDeduction;
+            } elseif ($adjs->where('type', 'deduction')->count() > 0) {
+                $totalDeduction = $adjDeduction + $autoLatePenalty;
+            } else {
+                $totalDeduction = $calc['deductions'] ?? 0;
+            }
             $totalOt = $autoOt + $adjOt;
-            $totalSalary = max(0, $calc['base'] + $totalBonus + ($calc['commission'] ?? 0) + $totalAllowance + $totalOt - $totalDeduction);
+            $totalSalary = max(0, $calc['base'] + $totalBonus + $totalCommission + $totalAllowance + $totalOt - $totalDeduction);
 
             $slip->update([
                 'base_salary' => $calc['base'],
                 'bonus' => $totalBonus,
-                'commission' => $calc['commission'] ?? 0,
+                'commission' => $totalCommission,
                 'allowances' => $totalAllowance,
                 'deductions' => $totalDeduction,
                 'ot_pay' => $totalOt,
@@ -642,45 +654,60 @@ class PaysheetController extends Controller
     private function recalcSlipWithAdjustments(Payslip $slip): void
     {
         $adjs = $slip->adjustments()->get();
-        $adjBonus = $adjs->where('type', 'bonus')->sum('amount');
-        $adjAllowance = $adjs->where('type', 'allowance')->sum('amount');
-        $adjDeduction = $adjs->where('type', 'deduction')->sum('amount');
-        $adjOt = $adjs->where('type', 'ot')->sum('amount');
+        $adjCommission = $adjs->where('type', 'commission')->sum('amount');
+        $adjBonus      = $adjs->where('type', 'bonus')->sum('amount');
+        $adjAllowance  = $adjs->where('type', 'allowance')->sum('amount');
+        $adjDeduction  = $adjs->where('type', 'deduction')->sum('amount');
+        $adjOt         = $adjs->where('type', 'ot')->sum('amount');
 
         // Lấy giá trị auto từ details (tính bởi SalaryCalculationService)
         $details = $slip->details ?? [];
-        $autoBonus = $details['bonus'] ?? 0;
-        $autoCommission = $details['commission'] ?? 0;
-        $autoAllowance = $details['allowances'] ?? 0;
-        $autoDeduction = $details['deductions'] ?? 0;
+        $autoCommission  = $details['commission'] ?? 0;
+        $autoBonus       = $details['bonus'] ?? 0;
+        $autoAllowance   = $details['allowances'] ?? 0;
+        $autoDeduction   = $details['deductions'] ?? 0;
         $autoLatePenalty = $details['late_penalty'] ?? 0;
-        $autoOt = ($details['ot_pay'] ?? 0) + ($details['holiday_pay'] ?? 0);
+        $autoOt          = ($details['ot_pay'] ?? 0) + ($details['holiday_pay'] ?? 0);
 
-        // HOTFIX 24.12B — Honour `details.manual_overrides` so deleting every
-        // row in the popup (sum=0) does NOT fall back to the auto value. The
-        // override flag is set by bulkSaveAdjustments() and cleared by
-        // resetDefaultAdjustments(). Without it, "xóa hết phụ cấp" silently
-        // restored the auto allowance from the template.
+        // HOTFIX 24.12B/24.12C — Honour `details.manual_overrides` so deleting
+        // every row in the popup (sum=0) does NOT fall back to the auto value.
+        // Set by bulkSaveAdjustments(), cleared by resetDefaultAdjustments().
+        // 24.12C extends to commission and changes the deduction override path
+        // to ignore auto late_penalty (override = user's exact total).
         $manualOverrides = is_array($details['manual_overrides'] ?? null)
             ? $details['manual_overrides']
             : [];
-        $allowanceOverride = (bool) ($manualOverrides['allowance'] ?? false);
-        $bonusOverride     = (bool) ($manualOverrides['bonus']     ?? false);
-        $deductionOverride = (bool) ($manualOverrides['deduction'] ?? false);
+        $commissionOverride = (bool) ($manualOverrides['commission'] ?? false);
+        $allowanceOverride  = (bool) ($manualOverrides['allowance']  ?? false);
+        $bonusOverride      = (bool) ($manualOverrides['bonus']      ?? false);
+        $deductionOverride  = (bool) ($manualOverrides['deduction']  ?? false);
 
+        $slip->commission = ($commissionOverride || $adjs->where('type', 'commission')->count() > 0)
+            ? $adjCommission
+            : $autoCommission;
         $slip->bonus = ($bonusOverride || $adjs->where('type', 'bonus')->count() > 0)
             ? $adjBonus
             : $autoBonus;
         $slip->allowances = ($allowanceOverride || $adjs->where('type', 'allowance')->count() > 0)
             ? $adjAllowance
             : $autoAllowance;
-        $slip->deductions = ($deductionOverride || $adjs->where('type', 'deduction')->count() > 0)
-            ? ($adjDeduction + $autoLatePenalty)
-            : $autoDeduction;
+        // 24.12C — when deduction is overridden, late_penalty is NOT added.
+        // Override mode means "the user's number is the final total"; if they
+        // want late_penalty back they reset to default.
+        if ($deductionOverride) {
+            $slip->deductions = $adjDeduction;
+        } elseif ($adjs->where('type', 'deduction')->count() > 0) {
+            $slip->deductions = $adjDeduction + $autoLatePenalty;
+        } else {
+            $slip->deductions = $autoDeduction;
+        }
         // OT stays additive — autoOt + any manual OT items.
         $slip->ot_pay = $autoOt + $adjOt;
 
-        $slip->total_salary = max(0, $slip->base_salary + $slip->bonus + $autoCommission + $slip->allowances + $slip->ot_pay - $slip->deductions);
+        $slip->total_salary = max(
+            0,
+            $slip->base_salary + $slip->bonus + $slip->commission + $slip->allowances + $slip->ot_pay - $slip->deductions
+        );
         $slip->remaining = max(0, $slip->total_salary - $slip->paid_amount);
         $slip->save();
 
@@ -701,7 +728,8 @@ class PaysheetController extends Controller
      */
     public function bulkSaveAdjustments(Request $request, $id, $slipId, string $type)
     {
-        if (!in_array($type, ['allowance', 'bonus', 'deduction', 'ot'], true)) {
+        // HOTFIX 24.12C — commission is now editable like the other types.
+        if (!in_array($type, ['commission', 'allowance', 'bonus', 'deduction', 'ot'], true)) {
             return response()->json(['success' => false, 'message' => 'Loại không hợp lệ.'], 422);
         }
 
@@ -779,7 +807,8 @@ class PaysheetController extends Controller
      */
     public function resetDefaultAdjustments($id, $slipId, string $type)
     {
-        if (!in_array($type, ['allowance', 'bonus', 'deduction', 'ot'], true)) {
+        // HOTFIX 24.12C — commission is now editable like the other types.
+        if (!in_array($type, ['commission', 'allowance', 'bonus', 'deduction', 'ot'], true)) {
             return response()->json(['success' => false, 'message' => 'Loại không hợp lệ.'], 422);
         }
 

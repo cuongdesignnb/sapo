@@ -185,13 +185,18 @@ class Step2412BPayrollAdjustmentOverrideTest extends TestCase
         $this->assertTrue((bool) ($fresh->details['manual_overrides']['bonus'] ?? false));
     }
 
-    /** TC-05: deduction empty bulk wipes manual rows but preserves auto late_penalty. */
-    public function test_bulk_empty_deduction_preserves_auto_late_penalty(): void
+    /**
+     * TC-05 (updated by HOTFIX 24.12C): when the user empties the deduction
+     * popup, the override total is the final number — auto late_penalty is
+     * NOT silently re-added. (Old 24.12B policy kept late_penalty even under
+     * override; 24.12C spec §C Mode 1 explicitly removes it. Late_penalty
+     * comes back via reset-default.)
+     */
+    public function test_bulk_empty_deduction_wipes_to_zero_including_auto_late_penalty(): void
     {
         $admin = $this->admin();
         $sheet = $this->makePaysheet();
         $emp   = $this->makeEmployee();
-        // recalcSlipWithAdjustments reads scalar `details.late_penalty` — match that shape.
         $slip  = $this->makePayslip($sheet, $emp, [
             'details' => [
                 'standard_work_units' => 26,
@@ -200,17 +205,15 @@ class Step2412BPayrollAdjustmentOverrideTest extends TestCase
         ]);
         $this->makeAdjustment($slip, 'deduction', 200000, 'BHXH');
 
-        $res = $this->actingAs($admin)->putJson(
+        $this->actingAs($admin)->putJson(
             "/api/paysheets/{$sheet->id}/payslips/{$slip->id}/adjustments/deduction/bulk",
             ['items' => []]
-        );
-        $res->assertOk();
+        )->assertOk();
 
         $fresh = $slip->fresh();
         $this->assertSame(0, PayslipAdjustment::where('payslip_id', $slip->id)->where('type', 'deduction')->count());
         $this->assertTrue((bool) ($fresh->details['manual_overrides']['deduction'] ?? false));
-        // Auto late_penalty (50,000) still flows into deductions even when manual list is empty.
-        $this->assertGreaterThanOrEqual(50000, (int) $fresh->deductions);
+        $this->assertSame(0, (int) $fresh->deductions, 'override = 0 must include late_penalty wipe (24.12C policy)');
     }
 
     /** TC-06: OT stays additive — bulk OT does not set override flag, OT auto value still counted. */

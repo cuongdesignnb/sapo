@@ -338,52 +338,91 @@
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
                         <div class="font-semibold">Tổng: {{ fmt(popupTotal) }}</div>
                         <div class="flex gap-2">
+                            <button v-if="!isLocked && popup.type !== 'ot' && isOverridden(popup.type)" @click="resetAdjustments" class="px-4 py-1.5 text-sm border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50">Khôi phục mặc định</button>
                             <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
                             <button v-if="!isLocked" @click="saveAdjustments" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
                         </div>
                     </div>
                 </div>
 
-                <!-- Commission Popup -->
+                <!-- Commission Popup (HOTFIX 24.12C — editable like allowance/bonus/deduction) -->
                 <div v-if="popup.type === 'commission'" class="relative bg-white rounded-lg shadow-xl w-[600px] max-h-[80vh] overflow-hidden z-10">
                     <div class="px-5 py-3 border-b flex justify-between items-center">
                         <h3 class="font-bold text-gray-800">Hoa hồng - {{ popup.slip?.employee?.name }}</h3>
                         <button @click="closePopup" class="text-gray-400 hover:text-gray-600">&times;</button>
                     </div>
                     <div class="p-5 overflow-auto max-h-[60vh]">
+                        <!-- Auto block (read-only, from settings/revenue) -->
+                        <div v-if="commissionItems.length > 0" class="mb-4 border border-gray-200 rounded">
+                            <div class="px-3 py-1.5 bg-gray-50 border-b text-xs font-semibold text-gray-600 flex items-center justify-between">
+                                <span>Hoa hồng tự động từ doanh thu / cài đặt</span>
+                                <span v-if="isOverridden('commission')" class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[10px]">Đang ghi đè</span>
+                            </div>
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50">
+                                    <tr class="text-left text-xs text-gray-500 uppercase">
+                                        <th class="px-3 py-1.5">Loại</th>
+                                        <th class="px-3 py-1.5 text-right">Giá trị</th>
+                                        <th class="px-3 py-1.5 text-center">%</th>
+                                        <th class="px-3 py-1.5 text-right">Thành tiền</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(c, ci) in commissionItems" :key="'auto-' + ci" class="border-t">
+                                        <td class="px-3 py-1.5">{{ c.product_category || c.name || 'Hoa hồng' }}</td>
+                                        <td class="px-3 py-1.5 text-right">{{ c.commission_value }}</td>
+                                        <td class="px-3 py-1.5 text-center">{{ c.is_percentage ? '✓' : '' }}</td>
+                                        <td class="px-3 py-1.5 text-right font-semibold">{{ fmt(c.calculated || 0) }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div v-if="popup.slip?.details?.personal_revenue" class="px-3 py-1.5 bg-gray-50 border-t text-xs text-gray-500">
+                                Doanh thu cá nhân: {{ fmt(popup.slip.details.personal_revenue) }}
+                            </div>
+                        </div>
+
+                        <!-- Editable manual rows -->
+                        <h4 class="text-sm font-semibold text-gray-600 mb-2">Điều chỉnh thủ công</h4>
                         <table class="w-full text-sm">
-                            <thead class="bg-gray-50">
-                                <tr class="text-left text-xs text-gray-500 uppercase">
-                                    <th class="px-3 py-2">Loại</th>
-                                    <th class="px-3 py-2 text-right">Giá trị</th>
-                                    <th class="px-3 py-2 text-center">%</th>
-                                    <th class="px-3 py-2 text-right">Thành tiền</th>
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600">Tên hoa hồng</th>
+                                    <th class="text-left px-2 py-1.5 font-semibold text-gray-600 w-[150px]">Số tiền</th>
+                                    <th class="w-8"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="(c, ci) in commissionItems" :key="ci" class="border-t">
-                                    <td class="px-3 py-2">{{ c.product_category || c.name || 'Hoa hồng' }}</td>
-                                    <td class="px-3 py-2 text-right">{{ c.commission_value }}</td>
-                                    <td class="px-3 py-2 text-center">{{ c.is_percentage ? '✓' : '' }}</td>
-                                    <td class="px-3 py-2 text-right font-semibold">{{ fmt(c.calculated || 0) }}</td>
+                                <tr v-for="(adj, i) in popupAdjustments" :key="adj.id" class="border-t">
+                                    <td class="px-2 py-1">
+                                        <input v-model="adj.name" :disabled="isLocked" type="text"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none"
+                                            placeholder="Hoa hồng bán hàng, KPI doanh số..." />
+                                    </td>
+                                    <td class="px-2 py-1">
+                                        <input v-model.number="adj.amount" :disabled="isLocked" type="number" min="0"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right focus:border-blue-500 outline-none" />
+                                    </td>
+                                    <td class="px-1 py-1 text-center">
+                                        <button v-if="!isLocked" @click="deleteAdjustment(adj)" class="text-red-400 hover:text-red-600">&times;</button>
+                                    </td>
                                 </tr>
-                                <tr v-if="commissionItems.length === 0" class="border-t">
-                                    <td colspan="4" class="px-3 py-4 text-center text-gray-400">Không có hoa hồng</td>
+                                <tr v-if="popupAdjustments.length === 0" class="border-t">
+                                    <td colspan="3" class="px-3 py-3 text-center text-gray-400 text-xs">Chưa có khoản hoa hồng thủ công nào. Nếu Lưu trống, tổng hoa hồng sẽ về 0.</td>
                                 </tr>
                             </tbody>
-                            <tfoot class="bg-gray-50 font-semibold border-t-2">
-                                <tr>
-                                    <td class="px-3 py-2" colspan="3">Tổng hoa hồng</td>
-                                    <td class="px-3 py-2 text-right">{{ fmt(popup.slip?.commission || 0) }}</td>
-                                </tr>
-                            </tfoot>
                         </table>
-                        <div v-if="popup.slip?.details?.personal_revenue" class="mt-3 text-xs text-gray-500">
-                            Doanh thu cá nhân: {{ fmt(popup.slip.details.personal_revenue) }}
-                        </div>
+                        <button v-if="!isLocked" @click="addAdjustmentRow('commission')"
+                            class="text-sm text-blue-600 hover:underline mt-3">+ Thêm hoa hồng</button>
+
+                        <p class="mt-4 text-[11px] text-gray-400 leading-snug">Thao tác này chỉ áp dụng cho bảng lương hiện tại, không thay đổi cài đặt lương gốc của nhân viên hoặc mẫu lương.</p>
                     </div>
-                    <div class="px-5 py-3 border-t flex justify-end bg-gray-50">
-                        <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Đóng</button>
+                    <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
+                        <div class="font-semibold">Tổng: {{ fmt(popupTotal) }}</div>
+                        <div class="flex gap-2">
+                            <button v-if="!isLocked && isOverridden('commission')" @click="resetAdjustments" class="px-4 py-1.5 text-sm border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50">Khôi phục mặc định</button>
+                            <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
+                            <button v-if="!isLocked" @click="saveAdjustments" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
+                        </div>
                     </div>
                 </div>
 
@@ -428,6 +467,7 @@
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
                         <div class="font-semibold">Tổng: {{ fmt(popupTotal) }}</div>
                         <div class="flex gap-2">
+                            <button v-if="!isLocked && popup.type !== 'ot' && isOverridden(popup.type)" @click="resetAdjustments" class="px-4 py-1.5 text-sm border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50">Khôi phục mặc định</button>
                             <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
                             <button v-if="!isLocked" @click="saveAdjustments" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
                         </div>
@@ -475,6 +515,7 @@
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
                         <div class="font-semibold">Tổng: {{ fmt(popupTotal) }}</div>
                         <div class="flex gap-2">
+                            <button v-if="!isLocked && popup.type !== 'ot' && isOverridden(popup.type)" @click="resetAdjustments" class="px-4 py-1.5 text-sm border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50">Khôi phục mặc định</button>
                             <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
                             <button v-if="!isLocked" @click="saveAdjustments" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
                         </div>
@@ -571,6 +612,7 @@
                     <div class="px-5 py-3 border-t flex justify-between items-center bg-gray-50">
                         <div class="font-semibold text-red-600">Tổng giảm trừ: {{ fmt(popupTotal) }}</div>
                         <div class="flex gap-2">
+                            <button v-if="!isLocked && popup.type !== 'ot' && isOverridden(popup.type)" @click="resetAdjustments" class="px-4 py-1.5 text-sm border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50">Khôi phục mặc định</button>
                             <button @click="closePopup" class="px-4 py-1.5 text-sm border rounded-md hover:bg-gray-100">Bỏ qua</button>
                             <button v-if="!isLocked" @click="saveAdjustments" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">Xong</button>
                         </div>
@@ -728,8 +770,6 @@ const popupTotal = computed(() => {
         const autoTotal = otBreakdown.value.reduce((s, o) => s + (o.amount || 0), 0);
         const adjTotal = popupAdjustments.value.reduce((s, a) => s + (a.amount || 0), 0);
         return autoTotal + adjTotal;
-    } else if (type === 'commission') {
-        return popup.slip.commission || 0;
     } else if (type === 'deduction') {
         // Deduction: editable items + auto late penalty
         const adjTotal = popupAdjustments.value.reduce((s, a) => s + (a.amount || 0), 0);
@@ -911,6 +951,41 @@ async function saveAdjustments() {
     } catch (e) {
         console.error('Save adjustments error:', e);
         alert(e.response?.data?.message || 'Lỗi khi lưu điều chỉnh.');
+    }
+}
+
+// HOTFIX 24.12C — popup helpers for "Khôi phục mặc định" + override badge.
+function isOverridden(type) {
+    const slip = popup.slip;
+    if (!slip) return false;
+    return !!(slip.details?.manual_overrides?.[type]);
+}
+
+async function resetAdjustments() {
+    if (!popup.slip) return;
+    const psId = localPaysheet.value.id;
+    const slipId = popup.slip.id;
+    const type = popup.type;
+    if (!['commission', 'allowance', 'bonus', 'deduction', 'ot'].includes(type)) return;
+    try {
+        const { data } = await axios.post(
+            `/api/paysheets/${psId}/payslips/${slipId}/adjustments/${type}/reset-default`
+        );
+        if (data?.success && data.slip) {
+            const slips = localPaysheet.value.payslips || [];
+            const idx = slips.findIndex(s => s.id === data.slip.id);
+            if (idx !== -1) {
+                slips.splice(idx, 1, data.slip);
+                localPaysheet.value = { ...localPaysheet.value, payslips: slips };
+            } else {
+                const { data: full } = await axios.get(`/api/paysheets/${psId}`);
+                if (full?.success) localPaysheet.value = full.data;
+            }
+        }
+        closePopup();
+    } catch (e) {
+        console.error('Reset adjustments error:', e);
+        alert(e.response?.data?.message || 'Lỗi khi khôi phục mặc định.');
     }
 }
 
