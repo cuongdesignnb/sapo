@@ -2,8 +2,9 @@
 import { formatVND as formatCurrency, formatMoneyInput as formatCurrencyInput } from '@/utils/money';
 import { ref, computed, onMounted, watch } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
-import axios from 'axios';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
+import QuickCreateSupplierModal from '@/Components/QuickCreateSupplierModal.vue';
 
 const page = usePage();
 
@@ -24,33 +25,9 @@ const props = defineProps({
 const allProducts = ref([...(props.products || [])]);
 const localSuppliers = ref([...(props.suppliers || [])]);
 
-// Quick Create Supplier
+// STEP 24.13 — quick-create state is now owned by QuickCreateSupplierModal.
+// Page just toggles `showCreateSupplierModal` and consumes the `created` event.
 const showCreateSupplierModal = ref(false);
-const creatingSupplier = ref(false);
-const newSupplier = ref({ name: '', phone: '', email: '', address: '' });
-
-const submitCreateSupplier = async () => {
-    if (!newSupplier.value.name.trim()) return;
-    creatingSupplier.value = true;
-    try {
-        const res = await axios.post('/api/suppliers/quick-store', {
-            name: newSupplier.value.name.trim(),
-            phone: newSupplier.value.phone || null,
-            email: newSupplier.value.email || null,
-            address: newSupplier.value.address || null,
-        });
-        if (res.data.success && res.data.supplier) {
-            localSuppliers.value.push(res.data.supplier);
-            selectedSupplierId.value = res.data.supplier.id;
-            showCreateSupplierModal.value = false;
-            newSupplier.value = { name: '', phone: '', email: '', address: '' };
-        }
-    } catch (e) {
-        alert(e.response?.data?.message || 'Có lỗi khi tạo nhà cung cấp');
-    } finally {
-        creatingSupplier.value = false;
-    }
-};
 
 const searchQuery = ref('');
 const showSuggestions = ref(false);
@@ -264,16 +241,11 @@ const save = () => {
 
 
 
-// Format input hiển thị giá Việt Nam (8.000.000) nhưng lưu số thật
+// STEP 24.13 — currency helpers used by the line-item inputs only.
+// (Product modal owns its own formatting via QuickCreateProductModal.)
 const parseCurrencyInput = (str) => {
     if (!str && str !== 0) return 0;
     return Number(String(str).replace(/\./g, '').replace(/,/g, '')) || 0;
-};
-
-const onCurrencyInput = (obj, field, event) => {
-    const raw = event.target.value;
-    obj[field] = parseCurrencyInput(raw);
-    event.target.value = formatCurrencyInput(obj[field]);
 };
 const onCurrencyFocus = (event) => {
     const val = parseCurrencyInput(event.target.value);
@@ -286,144 +258,13 @@ const onCurrencyBlur = (obj, field, event) => {
     event.target.value = formatCurrencyInput(val);
 };
 
-// === Quick Create Product Modal ===
+// STEP 24.13 — page now just toggles the shared product modal.
 const showCreateProductModal = ref(false);
-const creatingProduct = ref(false);
-const createProductErrors = ref({});
-const newProduct = ref({
-    name: '',
-    sku: '',
-    barcode: '',
-    category_id: '',
-    brand_id: '',
-    cost_price: 0,
-    retail_price: 0,
-    technician_price: 0,
-    has_serial: false,
-});
+const openCreateProductModal = () => { showCreateProductModal.value = true; };
 
-const openCreateProductModal = () => {
-    newProduct.value = {
-        name: '',
-        sku: '',
-        barcode: '',
-        category_id: '',
-        brand_id: '',
-        cost_price: 0,
-        retail_price: 0,
-        technician_price: 0,
-        has_serial: false,
-    };
-    createProductErrors.value = {};
-    showCreateProductModal.value = true;
-};
-
-const closeCreateProductModal = () => {
-    showCreateProductModal.value = false;
-};
-
-const submitCreateProduct = async () => {
-    if (!newProduct.value.name) {
-        createProductErrors.value = { name: 'Tên hàng hóa là bắt buộc' };
-        return;
-    }
-    creatingProduct.value = true;
-    createProductErrors.value = {};
-    try {
-        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-        const res = await axios.post('/products/quick-store', newProduct.value, {
-            headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' }
-        });
-        if (res.data.success && res.data.product) {
-            const created = res.data.product;
-            allProducts.value.push(created);
-            // Auto-add to purchase items
-            selectProduct(created);
-            closeCreateProductModal();
-        }
-    } catch (e) {
-        if (e.response?.status === 422 && e.response.data?.errors) {
-            createProductErrors.value = {};
-            for (const [key, msgs] of Object.entries(e.response.data.errors)) {
-                createProductErrors.value[key] = Array.isArray(msgs) ? msgs[0] : msgs;
-            }
-        } else {
-            alert('Có lỗi xảy ra khi tạo sản phẩm.');
-        }
-    } finally {
-        creatingProduct.value = false;
-    }
-};
-
-// === Quick Create Category / Brand (inline in modal) ===
 const localCategories = ref([...(props.categories || [])]);
 const localBrands = ref([...(props.brands || [])]);
 
-// Flatten tree categories for <select> display
-const flattenTree = (nodes, prefix = '') => {
-    let result = [];
-    for (const node of nodes) {
-        result.push({ id: node.id, name: prefix + node.name, parent_id: node.parent_id });
-        if (node.children && node.children.length) {
-            result = result.concat(flattenTree(node.children, prefix + '── '));
-        }
-    }
-    return result;
-};
-const flatCategories = computed(() => flattenTree(localCategories.value));
-
-const showNewCategory = ref(false);
-const newCategoryName = ref('');
-const newCategoryParentId = ref('');
-const creatingCategory = ref(false);
-const showNewBrand = ref(false);
-const newBrandName = ref('');
-const creatingBrand = ref(false);
-
-const quickCreateCategory = async () => {
-    if (!newCategoryName.value.trim()) return;
-    creatingCategory.value = true;
-    try {
-        const payload = { name: newCategoryName.value.trim() };
-        if (newCategoryParentId.value) payload.parent_id = newCategoryParentId.value;
-        const res = await axios.post('/categories/quick-store', payload);
-        if (res.data.success) {
-            const cat = res.data.category;
-            if (cat.parent_id) {
-                const addChild = (nodes) => {
-                    for (const n of nodes) {
-                        if (n.id === cat.parent_id) { if (!n.children) n.children = []; n.children.push({ ...cat, children: [] }); return true; }
-                        if (n.children && addChild(n.children)) return true;
-                    }
-                    return false;
-                };
-                addChild(localCategories.value);
-            } else {
-                localCategories.value.push({ ...cat, children: [] });
-            }
-            newProduct.value.category_id = cat.id;
-            newCategoryName.value = '';
-            newCategoryParentId.value = '';
-            showNewCategory.value = false;
-        }
-    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo nhóm hàng'); }
-    creatingCategory.value = false;
-};
-
-const quickCreateBrand = async () => {
-    if (!newBrandName.value.trim()) return;
-    creatingBrand.value = true;
-    try {
-        const res = await axios.post('/brands/quick-store', { name: newBrandName.value.trim() });
-        if (res.data.success) {
-            localBrands.value.push(res.data.brand);
-            newProduct.value.brand_id = res.data.brand.id;
-            newBrandName.value = '';
-            showNewBrand.value = false;
-        }
-    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo thương hiệu'); }
-    creatingBrand.value = false;
-};
 
 </script>
 
@@ -755,152 +596,23 @@ const quickCreateBrand = async () => {
             </div>
         </div>
 
-        <!-- Quick Create Product Modal -->
-        <div v-if="showCreateProductModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="closeCreateProductModal">
-            <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                <!-- Modal Header -->
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white z-10">
-                    <h2 class="text-lg font-bold text-gray-800">Tạo hàng hóa mới</h2>
-                    <button @click="closeCreateProductModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                </div>
+        <!-- STEP 24.13 — Shared QuickCreateProductModal (replaces inline modal). -->
+        <QuickCreateProductModal
+            :show="showCreateProductModal"
+            :categories="localCategories"
+            :brands="localBrands"
+            :show-retail-price="showRetailPrice"
+            :show-technician-price="showTechnicianPrice"
+            @close="showCreateProductModal = false"
+            @created="(p) => { allProducts.push(p); selectProduct(p); }"
+        />
 
-                <!-- Modal Body -->
-                <form @submit.prevent="submitCreateProduct" class="p-6">
-                    <div class="grid grid-cols-2 gap-x-6 gap-y-4">
-                        <!-- Tên hàng -->
-                        <div class="col-span-2">
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Tên hàng <span class="text-red-500">*</span></label>
-                            <input type="text" v-model="newProduct.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập tên hàng hóa">
-                            <span v-if="createProductErrors.name" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.name }}</span>
-                        </div>
+        <!-- STEP 24.13 — Shared QuickCreateSupplierModal (replaces inline modal). -->
+        <QuickCreateSupplierModal
+            :show="showCreateSupplierModal"
+            @close="showCreateSupplierModal = false"
+            @created="(s) => { localSuppliers.push(s); selectedSupplierId = s.id; }"
+        />
 
-                        <!-- Mã hàng -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã hàng</label>
-                            <input type="text" v-model="newProduct.sku" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Tự động">
-                            <span v-if="createProductErrors.sku" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.sku }}</span>
-                        </div>
-
-                        <!-- Mã vạch -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã vạch</label>
-                            <input type="text" v-model="newProduct.barcode" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập mã vạch">
-                        </div>
-
-                        <!-- Nhóm hàng -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm hàng</label>
-                            <div class="flex gap-1">
-                                <select v-model="newProduct.category_id" class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
-                                    <option value="">-- Chọn nhóm hàng --</option>
-                                    <option v-for="cat in flatCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                                </select>
-                                <button type="button" @click="showNewCategory = !showNewCategory" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm nhóm hàng">+</button>
-                            </div>
-                            <div v-if="showNewCategory" class="mt-1 space-y-1 bg-blue-50 border border-blue-200 rounded p-2">
-                                <select v-model="newCategoryParentId" class="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white outline-none focus:ring-1 focus:ring-blue-500">
-                                    <option value="">-- Nhóm cha (không chọn = nhóm gốc) --</option>
-                                    <option v-for="cat in flatCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                                </select>
-                                <div class="flex gap-1">
-                                    <input type="text" v-model="newCategoryName" @keyup.enter="quickCreateCategory" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
-                                    <button type="button" @click="quickCreateCategory" :disabled="creatingCategory" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Thương hiệu -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Thương hiệu</label>
-                            <div class="flex gap-1">
-                                <select v-model="newProduct.brand_id" class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
-                                    <option value="">-- Chọn thương hiệu --</option>
-                                    <option v-for="brand in localBrands" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
-                                </select>
-                                <button type="button" @click="showNewBrand = !showNewBrand" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm thương hiệu">+</button>
-                            </div>
-                            <div v-if="showNewBrand" class="mt-1 flex gap-1">
-                                <input type="text" v-model="newBrandName" @keyup.enter="quickCreateBrand" placeholder="Tên thương hiệu mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
-                                <button type="button" @click="quickCreateBrand" :disabled="creatingBrand" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
-                            </div>
-                        </div>
-
-                        <!-- Giá vốn -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn (giá nhập)</label>
-                            <input type="number" v-model.number="newProduct.cost_price" min="0" step="1" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Giá bán -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
-                            <input type="number" v-model.number="newProduct.retail_price" min="0" step="1" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Giá bán lẻ -->
-                        <div v-if="showRetailPrice">
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán lẻ</label>
-                            <input type="number" v-model.number="newProduct.retail_price" min="0" step="1" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Giá bán thợ -->
-                        <div v-if="showTechnicianPrice">
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
-                            <input type="number" v-model.number="newProduct.technician_price" min="0" step="1" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Serial/IMEI -->
-                        <div class="col-span-2">
-                            <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
-                                <input type="checkbox" v-model="newProduct.has_serial" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
-                                Quản lý theo Serial/IMEI
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- Modal Footer -->
-                    <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-                        <button type="button" @click="closeCreateProductModal" class="px-5 py-2.5 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50">Bỏ qua</button>
-                        <button type="submit" :disabled="creatingProduct" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2">
-                            <svg v-if="creatingProduct" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                            {{ creatingProduct ? 'Đang lưu...' : 'Lưu' }}
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-
-        <!-- Quick Create Supplier Modal -->
-        <div v-if="showCreateSupplierModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="showCreateSupplierModal = false">
-            <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                    <h2 class="text-lg font-bold text-gray-800">Thêm nhà cung cấp</h2>
-                    <button @click="showCreateSupplierModal = false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                </div>
-                <form @submit.prevent="submitCreateSupplier" class="p-6 space-y-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Tên nhà cung cấp <span class="text-red-500">*</span></label>
-                        <input type="text" v-model="newSupplier.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Nhập tên nhà cung cấp">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Điện thoại</label>
-                        <input type="text" v-model="newSupplier.phone" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Số điện thoại">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
-                        <input type="email" v-model="newSupplier.email" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Email">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Địa chỉ</label>
-                        <input type="text" v-model="newSupplier.address" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Địa chỉ">
-                    </div>
-                    <div class="flex justify-end gap-3 pt-2">
-                        <button type="button" @click="showCreateSupplierModal = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-medium text-sm">Hủy</button>
-                        <button type="submit" :disabled="creatingSupplier || !newSupplier.name.trim()" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium text-sm disabled:opacity-50">Lưu</button>
-                    </div>
-                </form>
-            </div>
-        </div>
     </div>
 </template>

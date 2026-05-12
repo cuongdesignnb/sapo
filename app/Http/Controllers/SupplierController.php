@@ -117,7 +117,14 @@ class SupplierController extends Controller
         // If the toggle 'is_customer' is false, it means they are only a supplier.
         $validated['is_customer'] = $request->input('is_customer', false);
 
-        Customer::create($validated);
+        $supplier = Customer::create($validated);
+
+        // STEP 24.13 — return JSON when the caller expects it so a quick-create
+        // form can stay in-context (Purchases/Create, PurchaseOrders/Create) and
+        // auto-select the new supplier without a full-page redirect.
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'supplier' => $supplier]);
+        }
 
         return redirect()->route('suppliers.index')->with('success', 'Tạo nhà cung cấp thành công.');
     }
