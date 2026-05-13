@@ -61,6 +61,26 @@ Chạy thật trên MySQL:3319:
 
 ## 6. Manual QA
 
+Hai mức kiểm tra: **automated** (do tôi chạy được, kết quả thực) và **browser** (yêu cầu user verify trên dev/local trước khi chốt deploy production).
+
+### Automated verification (đã chạy thật trên DB MySQL:3319)
+
+| Check | Phương thức | Kết quả |
+|---|---|---|
+| `window.open` trong template Suppliers/Index đã biến mất | `Grep` toàn file — chỉ còn 1 comment + 1 `window.location.assign` trong script scope (module global, không phải template scope) | ✅ |
+| Export tab Lịch sử nhập/trả → CSV hợp lệ, đúng NCC | TC-01 + TC-03 | ✅ |
+| Export tab Công nợ → CSV hợp lệ | TC-02 | ✅ |
+| Cross-supplier data leak (NCC A export không lẫn NCC B) | TC-03 | ✅ |
+| NCC không tồn tại → không 500 | TC-06 (HTTP < 500 cho cả 2 endpoint) | ✅ |
+| Endpoint JSON `/purchase-history` không bị ảnh hưởng | TC-04 | ✅ |
+| Endpoint JSON `/debt-transactions` không bị ảnh hưởng | TC-05 | ✅ |
+| `recordPayment`, `adjustDebt`, `debtOffset`, dual-role debt | `php artisan test --filter=Supplier` — 25 PASS / 103 assertions | ✅ |
+| `Purchase`, `PurchaseReturn`, `CashFlow` regression | 25 + 14 + 12 PASS | ✅ |
+
+### Browser QA (cần user thực hiện sau khi pull `a5dff11` + rebuild)
+
+Code-level confidence cao (`@click.stop` chặn propagation chuẩn Vue idiom; `window.location.assign` ở module scope không thể `undefined`), nhưng tôi **không có browser** nên không tự đánh dấu các mục dưới đây — chờ user verify:
+
 - [ ] `/suppliers` → mở rộng NCC có lịch sử → tab "Lịch sử nhập/trả hàng" → "Xuất file" → CSV tải về, dòng cha vẫn expanded, không có Vue error trong console.
 - [ ] Same NCC → tab "Công nợ" → "Xuất file công nợ" → CSV tải về, dữ liệu đúng NCC.
 - [ ] NCC không có dữ liệu → "Xuất file" → CSV header-only, không 500, không Vue error.
@@ -68,7 +88,15 @@ Chạy thật trên MySQL:3319:
 - [ ] Nút "Thanh toán", "Điều chỉnh", "Cấn bằng công nợ" vẫn hoạt động.
 - [ ] Đổi tab Info ↔ History ↔ Debt vẫn ổn.
 
-Manual QA trên môi trường dev/local sau khi pull commit này — production cần `git pull origin main && rm -rf public/build && npm run build && php artisan optimize:clear` + hard reload trình duyệt.
+**Quy trình deploy production:** chỉ thực hiện sau khi tick xong 6 box trên ở dev/local:
+```bash
+cd /www/wwwroot/kiot.cuongdesign.net
+git pull origin main          # phải thấy a5dff11
+rm -rf public/build
+npm run build
+php artisan optimize:clear
+# Hard reload trình duyệt (Ctrl+Shift+R)
+```
 
 ## 7. Rủi ro còn lại
 
@@ -78,8 +106,22 @@ Manual QA trên môi trường dev/local sau khi pull commit này — production
 - Tồn kho/giá vốn/serial: **không ảnh hưởng**.
 - **Same bug pattern ở Customers/Index.vue:2004** (`window.open` trong template) — out-of-scope HOTFIX 24.14 nhưng nên follow-up bằng hotfix 24.14B nếu user xác nhận lỗi xuất file công nợ KH cũng xảy ra. Người dùng chưa báo lỗi này.
 
-## 8. Kết luận
+## 8. Commit & deployment
 
-- Đã fix lỗi Vue chưa: **Có** — không còn `window.X` trong template Suppliers/Index.
-- Export 2 tab đã hoạt động chưa: **Có** — 6 TC backend + npm build pass, manual QA cần xác nhận trên dev.
-- Có thể deploy không: **Có** — patch hẹp (FE-only + test file), backend không động, regression Supplier/Purchase/PurchaseReturn/CashFlow đều xanh trên DB thật MySQL:3319.
+- **Commit SHA:** `a5dff11d7c28707823725fc7257fb640a0135a7a` — `fix(suppliers): export tab buttons no longer throw on .open`
+- **Push status:** ✅ trên `origin/main` (verified: `git ls-remote origin refs/heads/main` = `a5dff11...`).
+- **Recent main:**
+  ```
+  a5dff11 fix(suppliers): export tab buttons no longer throw on .open
+  3b0b7a6 fix(forms): wire Orders + Purchases quick create to full modals
+  d009f81 fix(payroll): make all salary adjustments editable (HOTFIX 24.12C)
+  1cdc8dd fix(forms): unify quick create product customer supplier flows
+  ff1a52b fix(payroll): persist manual adjustment overrides (HOTFIX 24.12B)
+  ```
+
+## 9. Kết luận
+
+- Đã fix lỗi Vue chưa: **Có** — không còn `window.X` trong template Suppliers/Index (verified bằng grep).
+- Export 2 tab backend hoạt động: **Có** — 6 TC backend pass / 23 assertions trên MySQL:3319 thật.
+- Regression không bị ảnh hưởng: **Có** — Supplier (25) + Purchase (25) + PurchaseReturn (14) + CashFlow (12) đều xanh.
+- **Có thể deploy production chưa: CHƯA chốt** — vẫn còn 6 box browser QA ở §6 mà tôi không tự thực hiện được. Khi user (hoặc tester) tick xong 6 box đó trên dev/local thì đủ điều kiện chạy lệnh deploy ghi ở cuối §6.
