@@ -163,6 +163,25 @@ const debtFilter = ref('all');
 
 const getSupplierTab = (id) => supplierTabs[id] || 'info';
 
+// HOTFIX 24.14 — inline `window.open(...)` in templates fails as
+// "Cannot read properties of undefined (reading 'open')" because Vue 3
+// template expressions resolve identifiers via the component instance
+// scope, and `window` isn't a registered template global. Resolve via a
+// script-defined helper instead so the `window` reference comes from the
+// real module scope.
+const supplierTabExportUrl = (supplier, tab) => {
+    if (!supplier || !supplier.id) return '';
+    if (tab === 'history') return `/api/suppliers/${supplier.id}/export-purchases`;
+    if (tab === 'debt') return `/api/suppliers/${supplier.id}/export-debt`;
+    return '';
+};
+
+const exportSupplierTab = (supplier, tab) => {
+    const url = supplierTabExportUrl(supplier, tab);
+    if (!url) return;
+    window.location.assign(url);
+};
+
 const setSupplierTab = async (id, tab) => {
     supplierTabs[id] = tab;
     if (tab === 'history' && !supplierHistory[id]) {
@@ -902,7 +921,12 @@ const submitActivate = (supplier) => {
                                                     </tbody>
                                                 </table>
                                                 <div class="flex gap-2">
-                                                    <button @click="window.open(`/api/suppliers/${supplier.id}/export-purchases`)" class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13px] font-semibold hover:bg-gray-50 flex items-center gap-1">
+                                                    <button
+                                                        v-if="supplier?.id"
+                                                        type="button"
+                                                        @click.stop="exportSupplierTab(supplier, 'history')"
+                                                        class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13px] font-semibold hover:bg-gray-50 flex items-center gap-1"
+                                                    >
                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                                         Xuất file
                                                     </button>
@@ -950,7 +974,12 @@ const submitActivate = (supplier) => {
                                                 </table>
                                                 <div class="flex items-center justify-between">
                                                     <div class="flex gap-2">
-                                                        <button @click="window.open(`/api/suppliers/${supplier.id}/export-debt`)" class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13px] font-semibold hover:bg-gray-50 flex items-center gap-1">
+                                                        <button
+                                                            v-if="supplier?.id"
+                                                            type="button"
+                                                            @click.stop="exportSupplierTab(supplier, 'debt')"
+                                                            class="text-gray-600 bg-white border border-gray-300 rounded px-3 py-1.5 text-[13px] font-semibold hover:bg-gray-50 flex items-center gap-1"
+                                                        >
                                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                                             Xuất file công nợ
                                                         </button>
