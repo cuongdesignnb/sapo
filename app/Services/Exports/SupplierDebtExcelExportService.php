@@ -330,7 +330,7 @@ class SupplierDebtExcelExportService
         if ($rawId <= 0) return [];
 
         if ($prefix === 'pur') {
-            return PurchaseItem::where('purchase_id', $rawId)->get()
+            $lines = PurchaseItem::where('purchase_id', $rawId)->get()
                 ->map(fn($i) => [
                     'code'       => $i->product_code ?? '',
                     'name'       => $i->product_name ?? '',
@@ -342,6 +342,35 @@ class SupplierDebtExcelExportService
                     'cost'       => $i->price ?? 0,
                     'line_total' => $i->subtotal ?? 0,
                 ])->all();
+
+            // HOTFIX 24.17D — document-level discount lives on
+            // `purchases.discount`. If set, append a synthetic detail
+            // line so the operator sees what the supplier knocked off
+            // the invoice. Strictly informational — supplier_effect on
+            // the doc row already accounts for net debt, so we never
+            // touch Ghi nợ / Ghi có for this row.
+            $purchase = \App\Models\Purchase::query()
+                ->select(['id', 'discount'])
+                ->find($rawId);
+            $docDiscount = (float) ($purchase?->discount ?? 0);
+            if ($docDiscount > 0) {
+                $lines[] = [
+                    'code'       => '',
+                    'name'       => 'Giảm giá hóa đơn',
+                    'unit'       => '',
+                    'quantity'   => '',
+                    'unit_price' => '',
+                    'discount'   => $docDiscount,
+                    'vat'        => '',
+                    'cost'       => '',
+                    // Negative line_total mirrors KiotViet style: visually
+                    // subtracts from the invoice total without re-entering
+                    // the ledger.
+                    'line_total' => -$docDiscount,
+                ];
+            }
+
+            return $lines;
         }
 
         if ($prefix === 'pret') {
