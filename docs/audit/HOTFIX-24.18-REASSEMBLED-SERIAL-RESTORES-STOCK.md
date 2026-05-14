@@ -184,7 +184,8 @@ php artisan tinker
 
 ## 10. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `842954e` — `fix(repairs): restore reassembled serials to stock safely`.
+- **Push status:** ✅ đã push, `origin/main` = `842954e353ca40f8491ce137ed15608009443244`.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
