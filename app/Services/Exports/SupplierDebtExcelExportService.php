@@ -179,14 +179,27 @@ class SupplierDebtExcelExportService
 
     private function writeSupplierAndSummary($sheet, int $row, float $opening, float $debit, float $credit, float $closing): int
     {
+        // HOTFIX 24.17E — keep summary numerics under the same K/L
+        // columns the document body uses (K = "Ghi nợ", L = "Ghi có").
+        // Previously the period row pushed `debit` into column J
+        // ("Thành tiền"), which read as "lệch cột" against the body.
+        // Negative opening/closing balances surface in column L as a
+        // positive number (credit-side), preserving sign without ever
+        // emitting a "-1,234" in the debit column.
+
         $sheet->setCellValue('A' . $row, 'Nhà cung cấp:');
         $sheet->setCellValue('B' . $row, $this->supplier->name ?? '');
         $sheet->getStyle('A' . $row . ':B' . $row)->getFont()->setBold(true);
 
         $sheet->setCellValue('I' . $row, 'Nợ đầu kỳ:');
-        $sheet->setCellValue('K' . $row, $opening);
+        if ($opening >= 0) {
+            $sheet->setCellValue('K' . $row, $opening);
+        } else {
+            $sheet->setCellValue('L' . $row, abs($opening));
+        }
         $sheet->getStyle('I' . $row)->getFont()->setBold(true);
-        $sheet->getStyle('K' . $row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('K' . $row . ':L' . $row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('K' . $row . ':L' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $row++;
 
         $sheet->setCellValue('A' . $row, 'Mã NCC:');
@@ -194,11 +207,11 @@ class SupplierDebtExcelExportService
         $sheet->getStyle('A' . $row)->getFont()->setBold(true);
 
         $sheet->setCellValue('I' . $row, 'Phát sinh trong kỳ:');
-        $sheet->setCellValue('J' . $row, $debit);
-        $sheet->setCellValue('K' . $row, '');
+        $sheet->setCellValue('K' . $row, $debit);
         $sheet->setCellValue('L' . $row, $credit);
         $sheet->getStyle('I' . $row)->getFont()->setBold(true);
-        $sheet->getStyle('J' . $row . ':L' . $row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('K' . $row . ':L' . $row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('K' . $row . ':L' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $row++;
 
         $sheet->setCellValue('A' . $row, 'Điện thoại:');
@@ -206,9 +219,14 @@ class SupplierDebtExcelExportService
         $sheet->getStyle('A' . $row)->getFont()->setBold(true);
 
         $sheet->setCellValue('I' . $row, 'Nợ cuối kỳ:');
-        $sheet->setCellValue('K' . $row, $closing);
+        if ($closing >= 0) {
+            $sheet->setCellValue('K' . $row, $closing);
+        } else {
+            $sheet->setCellValue('L' . $row, abs($closing));
+        }
         $sheet->getStyle('I' . $row)->getFont()->setBold(true);
-        $sheet->getStyle('K' . $row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('K' . $row . ':L' . $row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('K' . $row . ':L' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         return $row + 2;
     }
 
