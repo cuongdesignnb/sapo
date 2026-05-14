@@ -249,6 +249,8 @@ const confirmDebtExport = () => {
     if (!sup || !sup.id) return;
 
     const params = new URLSearchParams();
+    // HOTFIX 24.17B — always request KiotViet-style xlsx from the modal.
+    params.set('format', 'xlsx');
     params.set('date_preset', debtExportForm.date_preset);
     if (debtExportForm.date_preset === 'custom') {
         if (debtExportForm.date_from) params.set('date_from', debtExportForm.date_from);

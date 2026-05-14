@@ -267,7 +267,7 @@ class SupplierController extends Controller
     public function exportDebtHistory($id, Request $request)
     {
         // Nếu không có bất kỳ query nào → fast path legacy format.
-        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns']);
+        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
 
         $data    = $this->debtTransactions($id)->getData(true);
         $entries = $data['entries'] ?? $data;
@@ -294,6 +294,7 @@ class SupplierController extends Controller
             'include_detail' => 'nullable|in:0,1,true,false',
             'columns'        => 'nullable|array',
             'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
+            'format'         => 'nullable|string|in:csv,xlsx',
         ]);
 
         $preset = $validated['date_preset'] ?? 'all';
@@ -305,6 +306,24 @@ class SupplierController extends Controller
 
         $includeDetail = in_array((string) ($validated['include_detail'] ?? '0'), ['1', 'true'], true);
         $selectedCols  = array_values($validated['columns'] ?? []);
+
+        // HOTFIX 24.17B — Excel branch: render KiotViet-style workbook
+        // from the same full ledger. The Excel service computes
+        // opening / debit / credit / closing from supplier_effect on
+        // entries OUTSIDE / INSIDE the window — it never recomputes
+        // debt_remain, so the ledger contract is preserved.
+        if (($validated['format'] ?? '') === 'xlsx') {
+            $supplier = \App\Models\Customer::find($id) ?? new \App\Models\Customer(['name' => 'NCC #' . $id, 'code' => '', 'phone' => '']);
+            $service  = new \App\Services\Exports\SupplierDebtExcelExportService(
+                is_array($entries) ? $entries : collect($entries)->toArray(),
+                $supplier,
+                $from,
+                $to,
+                $includeDetail,
+                $selectedCols
+            );
+            return $service->download("cong_no_ncc_{$id}.xlsx");
+        }
 
         // Filter theo created_at (đã được tính debt_remain ở full ledger).
         $filtered = collect($entries)->filter(function ($t) use ($from, $to) {
