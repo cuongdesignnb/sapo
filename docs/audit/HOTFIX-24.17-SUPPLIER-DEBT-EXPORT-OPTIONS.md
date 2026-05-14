@@ -151,7 +151,16 @@ Quan trọng — `debt_remain` được tính ở **full ledger** (ascending sor
 
 ## 10. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `d417360` — `fix(suppliers): add date and column options to debt export`
+- **Push status:** ✅ đã push, `origin/main` = `d41736004ba775fec795938b85de0834ab79514a` (verified `git ls-remote`).
+- **`git log --oneline -5`:**
+  ```
+  d417360 fix(suppliers): add date and column options to debt export
+  fab3f25 docs(audit): confirm HOTFIX 24.16C pushed to origin/main
+  df79d23 docs(audit): record HOTFIX 24.16C commit SHAs and deploy step
+  d18a0e2 fix(repairs): expand serialImei API payload for stock-state guards (HOTFIX 24.16C)
+  dc8e07d fix(repairs): badge dismantled serials in Repair/Tasks UI (HOTFIX 24.16C)
+  ```
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
