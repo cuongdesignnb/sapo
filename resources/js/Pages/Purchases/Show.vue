@@ -4,6 +4,7 @@ import { ref, computed } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     purchase: Object,
@@ -470,13 +471,13 @@ const paymentMethodLabel = (method) => {
                     <!-- Giảm giá -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giảm giá</label>
-                        <input type="number" v-model.number="editForm.discount" min="0" class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+                        <MoneyInput v-model="editForm.discount" :min="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
                     </div>
 
                     <!-- Tiền trả NCC -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Tiền trả NCC</label>
-                        <input type="number" v-model.number="editForm.paid_amount" min="0" class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none font-bold text-blue-600" />
+                        <MoneyInput v-model="editForm.paid_amount" :min="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none font-bold text-blue-600" />
                         <div class="flex justify-between mt-1 text-[12px]">
                             <span class="text-gray-500">Cần trả: {{ formatCurrency(editPayAmount) }}</span>
                             <span class="text-red-500" v-if="editDebt > 0">Còn nợ: {{ formatCurrency(editDebt) }}</span>

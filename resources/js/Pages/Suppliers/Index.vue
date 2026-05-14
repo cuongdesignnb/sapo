@@ -7,6 +7,7 @@ import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
 import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
@@ -1796,7 +1797,7 @@ const submitActivate = (supplier) => {
                             <span class="text-red-500">*</span>
                         </label>
                         <div class="relative">
-                            <input v-model.number="debtAmount" type="number" :min="debtActionType === 'adjustment' ? undefined : 0" class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold focus:border-blue-500 outline-none" :placeholder="debtActionType === 'adjustment' ? 'Nhập giá trị nợ cuối (VD: 0)' : '0'" />
+                            <MoneyInput v-model="debtAmount" input-class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right font-semibold focus:border-blue-500 outline-none" :placeholder="debtActionType === 'adjustment' ? 'Nhập giá trị nợ cuối (VD: 0)' : '0'" />
                             <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₫</span>
                         </div>
                         <p v-if="debtActionType === 'adjustment'" class="text-xs text-gray-400 mt-1">Nhập giá trị nợ cuối mong muốn. VD: nhập 0 để xóa nợ.</p>
@@ -2002,9 +2003,8 @@ const submitActivate = (supplier) => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền cấn bằng</label>
-                        <input v-model.number="offsetForm.amount" type="number" min="1" :max="offsetModal.maxOffset"
-                            class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-purple-500 focus:border-purple-500"
-                            placeholder="Nhập số tiền cấn bằng"/>
+                        <MoneyInput v-model="offsetForm.amount" placeholder="Nhập số tiền cấn bằng"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-purple-500 focus:border-purple-500" />
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>

@@ -65,3 +65,84 @@ export function parseVND(value) {
  * Cùng output với formatVND.
  */
 export const fmtVND = formatVND;
+
+/* ─────────────────────────────────────────────────────────────────────
+ * HOTFIX 24.20 — realtime money-input helpers.
+ *
+ * Khác với `formatMoneyInput` / `parseVND` ở trên (vẫn giữ cho backward
+ * compatibility với screens đang xài):
+ *
+ *   - Empty / null / undefined / "" → KHÔNG fall về "0". Trả về "" hoặc 0
+ *     đúng theo intent người dùng. Tránh chuyện ô tiền mặc định hiện "0"
+ *     làm user phải xoá trước khi gõ.
+ *   - `formatVndInput("1.000.000")` chấp nhận chuỗi đã format và normalise
+ *     dấu chấm — dùng được trong `@input` handler để format realtime.
+ *   - `parseVndInput` strip mọi non-digit (kể cả `,`, ` `, `.`) → number.
+ * ─────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Lấy chỉ digits từ chuỗi nhập vào. Strip dot/comma/space/đ/non-digit.
+ *
+ * onlyDigits('1.000.000')   → '1000000'
+ * onlyDigits('1,000,000')   → '1000000'
+ * onlyDigits('1 000 000 đ') → '1000000'
+ * onlyDigits(null)          → ''
+ *
+ * @param {string|number|null|undefined} value
+ * @returns {string}
+ */
+export const onlyDigits = (value) => {
+    return String(value ?? '').replace(/[^\d]/g, '');
+};
+
+/**
+ * Format chuỗi/ số tiền VNĐ với dấu chấm phân tách hàng nghìn.
+ * Realtime-safe — nhận cả string đã format và normalise lại.
+ *
+ * formatVndInput('1000')       → '1.000'
+ * formatVndInput('1000000')    → '1.000.000'
+ * formatVndInput('1.000.000')  → '1.000.000'
+ * formatVndInput('1,000,000')  → '1.000.000'
+ * formatVndInput('1 000 000')  → '1.000.000'
+ * formatVndInput('')           → ''
+ * formatVndInput(null)         → ''
+ *
+ * @param {string|number|null|undefined} value
+ * @returns {string}
+ */
+export const formatVndInput = (value) => {
+    const digits = onlyDigits(value);
+    if (!digits) return '';
+    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+};
+
+/**
+ * Parse chuỗi đã format về number. Đảm bảo payload gửi backend luôn
+ * là number — không phải "1.000.000".
+ *
+ * parseVndInput('1.000.000') → 1000000
+ * parseVndInput('1,000,000') → 1000000
+ * parseVndInput('1 000 000') → 1000000
+ * parseVndInput('')          → 0
+ * parseVndInput(null)        → 0
+ *
+ * @param {string|number|null|undefined} value
+ * @returns {number}
+ */
+export const parseVndInput = (value) => {
+    const digits = onlyDigits(value);
+    if (!digits) return 0;
+    return Number(digits);
+};
+
+/**
+ * Phân biệt input "trống" với input "= 0". Dùng để giữ placeholder
+ * khi field rỗng (thay vì lúc nào cũng hiện "0").
+ *
+ * @param {string|number|null|undefined} value
+ * @returns {boolean}
+ */
+export const isMoneyInputEmpty = (value) => {
+    return value === null || value === undefined || String(value).trim() === '';
+};

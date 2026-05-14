@@ -7,6 +7,7 @@ import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import DateTimePicker from "@/Components/DateTimePicker.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
 import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
@@ -1044,12 +1045,10 @@ const printFlow = (flow) => {
                             >Số tiền <span class="text-red-500">*</span></label
                         >
                         <div class="relative">
-                            <input
-                                type="number"
+                            <MoneyInput
                                 v-model="form.amount"
-                                required
-                                class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-right pr-6 font-bold text-lg text-gray-800 placeholder-gray-400"
                                 placeholder="0"
+                                input-class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-right pr-6 font-bold text-lg text-gray-800 placeholder-gray-400"
                             />
                         </div>
                     </div>
