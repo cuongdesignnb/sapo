@@ -195,7 +195,38 @@ const getItemTotal = (item) => {
 
 const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
 const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value) + totalOtherCosts.value));
-const debtAmount = computed(() => Math.max(0, totalPayment.value - Number(paidAmount.value)));
+
+// HOTFIX 24.21 — surface supplier balance + overpayment instead of clamping at 0.
+// `currentPurchaseBalance` is `cần trả − đã trả`:
+//   > 0 → operator still owes the supplier (Còn nợ)
+//   < 0 → operator overpaid; |balance| is the change the supplier should refund
+//          (Tiền thừa). The legacy `debtAmount` computed clamps to 0 so the UI
+//          previously had no signal for the overpaid branch.
+const currentPurchaseBalance = computed(
+    () => Number(totalPayment.value || 0) - Number(paidAmount.value || 0)
+);
+const currentPurchaseDebt = computed(() => Math.max(0, currentPurchaseBalance.value));
+const purchaseOverpaidAmount = computed(() => Math.max(0, -currentPurchaseBalance.value));
+
+const oldSupplierBalance = computed(
+    () => Number(selectedSupplierObj.value?.supplier_debt_amount || 0)
+);
+const oldSupplierDebt = computed(() => Math.max(0, oldSupplierBalance.value));
+const oldSupplierCredit = computed(() => Math.max(0, -oldSupplierBalance.value));
+
+// Sau khi lưu phiếu này, công nợ NCC sẽ thay đổi bằng đúng
+// `currentPurchaseBalance` (backend cộng debt_amount = pay − paid vào
+// supplier_debt_amount). Hiển thị dự kiến để operator không phải tự nhẩm.
+const projectedSupplierBalance = computed(
+    () => oldSupplierBalance.value + currentPurchaseBalance.value
+);
+const projectedSupplierDebt = computed(() => Math.max(0, projectedSupplierBalance.value));
+const projectedSupplierCredit = computed(() => Math.max(0, -projectedSupplierBalance.value));
+
+// Backward-compat: nhiều chỗ trong template đang đọc `debtAmount` — giữ alias
+// nhưng map sang `currentPurchaseDebt` để vẫn clamp ≥ 0 (đúng với label
+// "Tính vào công nợ" cũ).
+const debtAmount = currentPurchaseDebt;
 
 const save = () => {
     if (items.value.length === 0) {
@@ -549,9 +580,45 @@ const localBrands = ref([...(props.brands || [])]);
                                 <input type="text" :value="formatCurrencyInput(paidAmount)" @focus="onCurrencyFocus" @blur="(e) => { paidAmount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(paidAmount); }" class="w-[150px] border-b border-gray-400 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50 font-bold text-blue-600">
                             </div>
 
-                            <div class="flex justify-between items-center text-[13px]">
+                            <!-- HOTFIX 24.21 — show overpayment when the operator paid
+                                 more than the invoice asks for; previously the surplus
+                                 silently disappeared. -->
+                            <div v-if="currentPurchaseDebt > 0" class="flex justify-between items-center text-[13px]">
+                                <label class="text-gray-700 font-medium">Còn nợ phiếu này</label>
+                                <div class="w-[150px] text-right font-bold text-red-500 tracking-wide">{{ formatCurrency(currentPurchaseDebt) }}</div>
+                            </div>
+                            <div v-else-if="purchaseOverpaidAmount > 0" class="flex justify-between items-center text-[13px]">
+                                <label class="text-gray-700 font-medium">Tiền thừa</label>
+                                <div class="w-[150px] text-right font-bold text-green-600 tracking-wide">{{ formatCurrency(purchaseOverpaidAmount) }}</div>
+                            </div>
+                            <div v-else class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium text-gray-500">Tính vào công nợ</label>
-                                 <div class="w-[150px] text-right font-bold text-gray-500 tracking-wide">{{ formatCurrency(debtAmount) }}</div>
+                                <div class="w-[150px] text-right font-bold text-gray-500 tracking-wide">{{ formatCurrency(debtAmount) }}</div>
+                            </div>
+
+                            <!-- HOTFIX 24.21 — old supplier balance + projected balance after this purchase. -->
+                            <div v-if="selectedSupplierObj" class="mt-1 pt-2 border-t border-dashed border-gray-200 space-y-1">
+                                <div class="flex justify-between items-center text-[12px]">
+                                    <label class="text-gray-500">
+                                        <template v-if="oldSupplierCredit > 0">Số dư cũ NCC</template>
+                                        <template v-else>Nợ cũ NCC</template>
+                                    </label>
+                                    <div class="w-[150px] text-right font-semibold tracking-wide"
+                                         :class="oldSupplierCredit > 0 ? 'text-green-600' : oldSupplierDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                        {{ formatCurrency(oldSupplierCredit > 0 ? oldSupplierCredit : oldSupplierDebt) }}
+                                    </div>
+                                </div>
+                                <div class="flex justify-between items-center text-[12px]">
+                                    <label class="text-gray-500">
+                                        <template v-if="projectedSupplierCredit > 0">Dự kiến NCC còn dư sau phiếu này</template>
+                                        <template v-else-if="projectedSupplierDebt > 0">Dự kiến còn nợ NCC sau phiếu này</template>
+                                        <template v-else>Dự kiến công nợ NCC sau phiếu này</template>
+                                    </label>
+                                    <div class="w-[150px] text-right font-bold tracking-wide"
+                                         :class="projectedSupplierCredit > 0 ? 'text-green-600' : projectedSupplierDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                        {{ formatCurrency(projectedSupplierCredit > 0 ? projectedSupplierCredit : projectedSupplierDebt) }}
+                                    </div>
+                                </div>
                             </div>
 
                             <!-- Payment Method -->

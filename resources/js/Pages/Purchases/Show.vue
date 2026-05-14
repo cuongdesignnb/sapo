@@ -59,7 +59,34 @@ const editForm = ref({
 });
 
 const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0) + otherCostsTotal);
-const editDebt = computed(() => Math.max(0, editPayAmount.value - (Number(editForm.value.paid_amount) || 0)));
+// HOTFIX 24.21 — split into raw balance + clamped debt/overpaid so the modal
+// can show "Tiền thừa" when the operator increases paid_amount past the
+// invoice total.
+const editPurchaseBalance = computed(
+    () => Number(editPayAmount.value || 0) - Number(editForm.value.paid_amount || 0)
+);
+const editDebt = computed(() => Math.max(0, editPurchaseBalance.value));
+const editOverpaid = computed(() => Math.max(0, -editPurchaseBalance.value));
+
+// Original purchase debt as stored on the row — used to back out this
+// purchase from the supplier's current balance, so the projected balance
+// after save reflects only the NEW value, not double-counted.
+const originalPurchaseDebt = computed(() => Number(props.purchase?.debt_amount || 0));
+
+const supplierCurrentBalance = computed(
+    () => Number(props.purchase?.supplier?.supplier_debt_amount || 0)
+);
+const supplierBalanceBeforeThisPurchase = computed(
+    () => supplierCurrentBalance.value - originalPurchaseDebt.value
+);
+const projectedSupplierBalance = computed(
+    () => supplierBalanceBeforeThisPurchase.value + editPurchaseBalance.value
+);
+const projectedSupplierDebt = computed(() => Math.max(0, projectedSupplierBalance.value));
+const projectedSupplierCredit = computed(() => Math.max(0, -projectedSupplierBalance.value));
+const supplierCurrentDebt = computed(() => Math.max(0, supplierCurrentBalance.value));
+const supplierCurrentCredit = computed(() => Math.max(0, -supplierCurrentBalance.value));
+
 const isSubmitting = ref(false);
 
 const openUpdateModal = () => {
@@ -481,6 +508,35 @@ const paymentMethodLabel = (method) => {
                         <div class="flex justify-between mt-1 text-[12px]">
                             <span class="text-gray-500">Cần trả: {{ formatCurrency(editPayAmount) }}</span>
                             <span class="text-red-500" v-if="editDebt > 0">Còn nợ: {{ formatCurrency(editDebt) }}</span>
+                            <span class="text-green-600" v-else-if="editOverpaid > 0">Tiền thừa: {{ formatCurrency(editOverpaid) }}</span>
+                        </div>
+                        <!-- HOTFIX 24.21 — NCC balance breakdown (current / this purchase / projected). -->
+                        <div v-if="props.purchase?.supplier" class="mt-2 pt-2 border-t border-dashed border-gray-200 space-y-1 text-[12px]">
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">
+                                    <template v-if="supplierCurrentCredit > 0">Số dư hiện tại NCC đang dư</template>
+                                    <template v-else>Nợ hiện tại NCC</template>
+                                </span>
+                                <span class="font-semibold"
+                                      :class="supplierCurrentCredit > 0 ? 'text-green-600' : supplierCurrentDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                    {{ formatCurrency(supplierCurrentCredit > 0 ? supplierCurrentCredit : supplierCurrentDebt) }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Nợ phiếu này trước khi sửa</span>
+                                <span class="font-semibold text-gray-700">{{ formatCurrency(originalPurchaseDebt) }}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">
+                                    <template v-if="projectedSupplierCredit > 0">Dự kiến NCC còn dư sau cập nhật</template>
+                                    <template v-else-if="projectedSupplierDebt > 0">Dự kiến còn nợ NCC sau cập nhật</template>
+                                    <template v-else>Dự kiến công nợ NCC sau cập nhật</template>
+                                </span>
+                                <span class="font-bold"
+                                      :class="projectedSupplierCredit > 0 ? 'text-green-600' : projectedSupplierDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                    {{ formatCurrency(projectedSupplierCredit > 0 ? projectedSupplierCredit : projectedSupplierDebt) }}
+                                </span>
+                            </div>
                         </div>
                     </div>
 
