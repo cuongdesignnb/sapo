@@ -201,6 +201,40 @@ class SupplierController extends Controller
         return back()->with('success', 'Đã kích hoạt lại nhà cung cấp.');
     }
 
+    /**
+     * HOTFIX 24.19 — live supplier search for the Nhập hàng selectors.
+     *
+     * Returns active suppliers only (status='active' or legacy NULL).
+     * Deactivated suppliers stay on the admin /suppliers page where
+     * "Hoạt động lại" lives — they must never appear in the create /
+     * edit forms here, otherwise operators could keep opening fresh
+     * debt against a stopped vendor.
+     */
+    public function search(Request $request)
+    {
+        $q = trim((string) $request->input('search', $request->input('q', '')));
+
+        $query = Customer::where('is_supplier', true)
+            ->where(function ($w) {
+                $w->where('status', 'active')->orWhereNull('status');
+            });
+
+        if ($q !== '') {
+            $query->where(function ($w) use ($q) {
+                $like = '%' . $q . '%';
+                $w->where('name', 'like', $like)
+                  ->orWhere('code', 'like', $like)
+                  ->orWhere('phone', 'like', $like)
+                  ->orWhere('phone2', 'like', $like);
+            });
+        }
+
+        return response()->json(
+            $query->orderBy('name')->limit(20)
+                ->get(['id', 'code', 'name', 'phone', 'supplier_debt_amount'])
+        );
+    }
+
     public function quickStore(Request $request)
     {
         $validated = $request->validate([

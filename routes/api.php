@@ -119,6 +119,10 @@ Route::prefix('employee-salary-settings')->group(function () {
     Route::post('/{employeeId}', [\App\Http\Controllers\Api\EmployeeSalarySettingController::class, 'upsert']);
 });
 
+// HOTFIX 24.19 — live search for the Nhập hàng supplier selector.
+// Returns active suppliers only; deactivated rows stay visible on the
+// /suppliers admin page but must NOT show up here.
+Route::get('/suppliers/search', [\App\Http\Controllers\SupplierController::class, 'search']);
 Route::post('/suppliers/quick-store', [\App\Http\Controllers\SupplierController::class, 'quickStore']);
 Route::prefix('suppliers/{id}')->group(function () {
     Route::get('/purchase-history', [\App\Http\Controllers\SupplierController::class, 'purchaseHistory']);

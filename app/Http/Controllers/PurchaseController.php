@@ -119,7 +119,18 @@ class PurchaseController extends Controller
 
     public function create(Request $request)
     {
-        $suppliers = Customer::where('is_supplier', true)->get();
+        // HOTFIX 24.19 — only active suppliers may be picked when
+        // creating a purchase. Deactivated rows stay on /suppliers
+        // (admin view) but the Nhập hàng selector must hide them so
+        // operators can't open new debt against a stopped vendor.
+        // Customer.status defaults to 'active' (migration
+        // 2026_02_28_063352_add_supplier_fields_to_customers_table);
+        // we also accept NULL to be tolerant of any pre-default rows.
+        $suppliers = Customer::where('is_supplier', true)
+            ->where(function ($q) {
+                $q->where('status', 'active')->orWhereNull('status');
+            })
+            ->get();
         $products = Product::where('is_active', true)->get();
 
         $purchaseOrderInfo = null;
