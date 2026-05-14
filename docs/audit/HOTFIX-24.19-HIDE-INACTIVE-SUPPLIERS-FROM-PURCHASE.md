@@ -95,7 +95,8 @@ Brief yêu cầu:
 
 ## 8. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `c6324b8` — `fix(purchases): hide deactivated suppliers from Nhập hàng selectors`.
+- **Push status:** ✅ đã push, `origin/main` = `c6324b8b7242bcae09a79bfd3f5a65e600596502`.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
