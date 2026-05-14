@@ -195,7 +195,8 @@ Không truyền tên user vào service (giữ stateless). Operator điền tên 
 
 ## 11. Commit & deployment
 
-(Sẽ điền sau khi commit + push.)
+- **Commit SHA:** `f356613` — `fix(suppliers): reconcile debt Excel details and add footer`.
+- **Push status:** ✅ đã push, `origin/main` = `f3566132972a7ba854a0c49b71eafbcbbf190783`.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
