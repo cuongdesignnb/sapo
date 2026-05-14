@@ -372,6 +372,10 @@ Route::get('/reports/serial-cost-history', [ReportController::class, 'serialCost
 Route::get('/reports/stock-card', [ReportController::class, 'stockCard'])
     ->name('reports.stock-card')->middleware('permission:reports.view');
 
+// HOTFIX 24.22 — Employee performance report (sales / profit / items by seller).
+Route::get('/reports/employees', [App\Http\Controllers\EmployeeReportController::class, 'index'])
+    ->name('reports.employees')->middleware('permission:reports.view');
+
 Route::get('/employees/attendance', function () {
     return inertia('Employees/Attendance');
 })->name('employees.attendance')->middleware('permission:attendance.view');
