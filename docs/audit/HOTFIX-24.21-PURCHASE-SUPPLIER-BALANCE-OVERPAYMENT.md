@@ -171,8 +171,8 @@ Chỉ thêm computed FE + UI markup. Zero side-effect lên data hiện có.
 
 ## 11. Commit & deployment
 
-- **Commit SHA:** (điền sau commit + push).
-- **Push status:** (điền sau push).
+- **Commit SHA:** `8967905` — `fix(purchases): show supplier balance and overpayment in purchase form`.
+- **Push status:** ✅ đã push, `origin/main` = `896790546297ce773d1b7711f2b45655561dbfeb`.
 
 ```bash
 cd /www/wwwroot/kiot.cuongdesign.net
