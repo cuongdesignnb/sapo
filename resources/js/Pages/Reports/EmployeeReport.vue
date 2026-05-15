@@ -164,7 +164,7 @@ const summary = computed(() => props.summary || { count: 0, totalRevenue: 0, tot
                     <label class="text-xs text-gray-500 font-medium mb-1.5 block">Người bán</label>
                     <select v-model="employeeId" class="w-full text-sm border border-gray-300 rounded px-2 py-1.5">
                         <option value="">Chọn người bán</option>
-                        <option v-for="e in employees" :key="e.id" :value="e.id">{{ e.name }}</option>
+                        <option v-for="e in employees" :key="e.key" :value="e.key">{{ e.display_name || e.name }}</option>
                     </select>
                 </div>
                 <div class="mb-4">

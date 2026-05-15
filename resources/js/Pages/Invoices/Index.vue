@@ -73,12 +73,12 @@ const sidebarConfig = computed(() => [
         zone: "main",
     },
     {
-        key: "employee_id",
+        key: "seller_key",
         type: "select",
         label: "Người bán",
-        options: (props.filterOptions?.employees || []).map((e) => ({
-            value: e.id,
-            label: e.name,
+        options: (props.filterOptions?.sellers || []).map((s) => ({
+            value: s.key,
+            label: s.display_name || s.name,
         })),
         placeholder: "-- Tất cả --",
         zone: "main",

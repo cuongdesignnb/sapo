@@ -15,6 +15,7 @@ use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
+use App\Support\Reports\SellerResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -44,7 +45,7 @@ class InvoiceController extends Controller
         $this->creatorColumn = \Illuminate\Support\Facades\Schema::hasColumn('invoices', 'created_by')
             ? 'created_by' : null;
         $this->scalarFilters = [
-            'branch_id', 'customer_id', 'employee_id',
+            'branch_id', 'customer_id',
             'is_delivery', 'delivery_partner',
             'payment_method', 'sales_channel',
             'order_id', 'promotion_id', 'price_table_id',
@@ -67,6 +68,13 @@ class InvoiceController extends Controller
             });
 
         $this->applyFilters($query, $request);
+
+        // HOTFIX 24.27 — seller_key filter using SellerResolver (replaces employee_id scalar)
+        $sellerKey = $request->input('seller_key') ?? $request->input('employee_id');
+        if ($sellerKey) {
+            $sellers = new SellerResolver();
+            $query = $sellers->filterBySeller($query, $sellerKey);
+        }
 
         $invoices = $query->paginate(15)->withQueryString();
 
@@ -105,6 +113,12 @@ class InvoiceController extends Controller
 
         $filters = $this->currentFilters($request);
         $filters['has_debt'] = $request->input('has_debt', '');
+        // HOTFIX 24.27 — pass seller_key back to frontend
+        $filters['seller_key'] = $sellerKey ?? '';
+
+        // HOTFIX 24.27 — Use SellerResolver for seller dropdown (aligned with reports)
+        $sellerResolver = new SellerResolver();
+        $sellerOptions = $sellerResolver->buildSellerFilterOptions();
 
         return Inertia::render('Invoices/Index', [
             'invoices' => $invoices,
@@ -112,6 +126,7 @@ class InvoiceController extends Controller
             'filterOptions' => [
                 'branches' => \App\Models\Branch::select('id', 'name')->get(),
                 'statuses' => InvoiceStatus::options(),
+                'sellers' => $sellerOptions,
                 'employees' => \App\Models\Employee::select('id', 'name')->where('is_active', true)->orderBy('name')->get(),
                 'creators' => \App\Models\User::select('id', 'name')->orderBy('name')->get(),
                 'paymentMethods' => PaymentMethod::options(),

@@ -122,7 +122,7 @@ class EmployeeReportController extends Controller
         $labels = [];
         $data   = [];
         foreach ($top as $key => $net) {
-            $labels[] = $sellerMeta[$key]['name'] ?? $key;
+            $labels[] = $sellerMeta[$key]['display_name'] ?? $sellerMeta[$key]['name'] ?? $key;
             $data[]   = $net;
         }
 
@@ -148,13 +148,16 @@ class EmployeeReportController extends Controller
             $rev  = $empRevenue[$key] ?? 0;
             $ret  = $empReturns[$key] ?? 0;
             $rows[] = [
-                'id'          => $key,
-                'code'        => $meta['code'] ?? 'UNK',
-                'name'        => $meta['name'] ?? $key,
-                'seller_type' => $meta['type'] ?? 'unknown',
-                'revenue'     => $rev,
-                'returns'     => $ret,
-                'net'         => $rev - $ret,
+                'id'           => $key,
+                'seller_key'   => $key,
+                'code'         => $meta['code'] ?? 'UNK',
+                'name'         => $meta['display_name'] ?? $meta['name'] ?? $key,
+                'seller_type'  => $meta['type'] ?? 'unknown',
+                'seller_code'  => $meta['code'] ?? 'UNK',
+                'seller_name'  => $meta['name'] ?? $key,
+                'revenue'      => $rev,
+                'returns'      => $ret,
+                'net'          => $rev - $ret,
             ];
         }
         usort($rows, fn ($a, $b) => $b['net'] <=> $a['net']);
@@ -174,7 +177,7 @@ class EmployeeReportController extends Controller
         $labels = [];
         $data   = [];
         foreach ($top as $row) {
-            $labels[] = $row['name'];
+            $labels[] = $row['name']; // already display_name from buildProfitReportRows
             $data[]   = $row['gross_profit'];
         }
 
@@ -217,9 +220,12 @@ class EmployeeReportController extends Controller
 
             $rows[] = [
                 'id'                     => $key,
+                'seller_key'             => $key,
                 'code'                   => $meta['code'] ?? 'UNK',
-                'name'                   => $meta['name'] ?? $key,
+                'name'                   => $meta['display_name'] ?? $meta['name'] ?? $key,
                 'seller_type'            => $meta['type'] ?? 'unknown',
+                'seller_code'            => $meta['code'] ?? 'UNK',
+                'seller_name'            => $meta['name'] ?? $key,
                 // 8-field KiotViet profit row
                 'gross_revenue'          => $grossRevenue,
                 'invoice_discount'       => $invoiceDiscount,
@@ -251,7 +257,7 @@ class EmployeeReportController extends Controller
         $labels = [];
         $data   = [];
         foreach ($top as $key => $qty) {
-            $labels[] = $sellerMeta[$key]['name'] ?? $key;
+            $labels[] = $sellerMeta[$key]['display_name'] ?? $sellerMeta[$key]['name'] ?? $key;
             $data[]   = (int) $qty;
         }
 
@@ -275,13 +281,16 @@ class EmployeeReportController extends Controller
         foreach ($allKeys as $key) {
             $meta = $sellerMeta[$key] ?? null;
             $rows[] = [
-                'id'          => $key,
-                'code'        => $meta['code'] ?? 'UNK',
-                'name'        => $meta['name'] ?? $key,
-                'seller_type' => $meta['type'] ?? 'unknown',
-                'revenue'     => (float) ($valueByKey[$key] ?? 0),
-                'returns'     => (int) ($qtyByKey[$key] ?? 0),
-                'net'         => (float) ($valueByKey[$key] ?? 0),
+                'id'           => $key,
+                'seller_key'   => $key,
+                'code'         => $meta['code'] ?? 'UNK',
+                'name'         => $meta['display_name'] ?? $meta['name'] ?? $key,
+                'seller_type'  => $meta['type'] ?? 'unknown',
+                'seller_code'  => $meta['code'] ?? 'UNK',
+                'seller_name'  => $meta['name'] ?? $key,
+                'revenue'      => (float) ($valueByKey[$key] ?? 0),
+                'returns'      => (int) ($qtyByKey[$key] ?? 0),
+                'net'          => (float) ($valueByKey[$key] ?? 0),
             ];
         }
         usort($rows, fn ($a, $b) => $b['returns'] <=> $a['returns']);
