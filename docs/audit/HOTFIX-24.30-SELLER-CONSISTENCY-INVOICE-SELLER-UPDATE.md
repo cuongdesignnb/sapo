@@ -161,4 +161,5 @@ Snapshot/unknown bucket vẫn được giữ riêng (không merge bừa sang use
 - Báo cáo & invoice filter đồng bộ sau đổi seller: ✅
 - Không migration / backfill / update hàng loạt: ✅
 - Có thể deploy: ✅
-- Commit SHA: pending (sẽ điền sau khi commit ngay sau audit doc này)
+- Commit SHA: `c215508` — `fix(invoices): align seller display and allow seller updates`
+- Push status: chưa push (chờ user xác nhận push to origin/main).
