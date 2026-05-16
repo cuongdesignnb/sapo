@@ -303,6 +303,7 @@ const serialStatusLabel = (status) => {
         returning: "Đang trả",
         warranty: "Bảo hành",
         defective: "Lỗi",
+        dismantled: "Đã bóc tách",
     };
     return map[status] || status;
 };
@@ -1373,6 +1374,11 @@ const formatDate = (val) => {
                                                                 🔧 Đang sửa/Chờ xử lý
                                                             </option>
                                                             <option
+                                                                value="dismantled"
+                                                            >
+                                                                ⚠ Đã bóc tách
+                                                            </option>
+                                                            <option
                                                                 value="sold"
                                                             >
                                                                 Đã bán
@@ -1403,21 +1409,20 @@ const formatDate = (val) => {
                                                         v-for="s in product.serialsData"
                                                         :key="s.id"
                                                         class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 text-[13px]"
-                                                        :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'bg-yellow-50/50' : ''"
+                                                        :class="s.status === 'dismantled' ? 'bg-red-50/40' : (s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'bg-yellow-50/50' : '')"
                                                     >
                                                         <div class="flex items-center justify-between w-full">
                                                             <div class="flex flex-col gap-1 w-2/3">
                                                                 <div class="flex items-center gap-2">
                                                                     <span
                                                                         class="font-medium"
-                                                                        :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'text-orange-700' : 'text-gray-800'"
+                                                                        :class="s.status === 'dismantled' ? 'text-red-700' : (s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'text-orange-700' : 'text-gray-800')"
                                                                     >{{ s.serial_number }}</span>
-                                                                    <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
+                                                                    <!-- HOTFIX 24.34 — `status=dismantled` is the physical truth and
+                                                                         always wins over any repair_status, including repairing/not_started. -->
+                                                                    <span v-if="s.status === 'dismantled'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold">⚠ Đã bóc tách</span>
+                                                                    <span v-else-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
                                                                     <span v-else-if="s.repair_status === 'not_started'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold">⏳ Chờ sửa</span>
-                                                                    <!-- HOTFIX 24.16 — "Sẵn bán" badge requires the serial to actually be in stock.
-                                                                         A dismantled serial with repair_status=ready means the repair task ended but
-                                                                         the body is still missing — render the physical status badge separately. -->
-                                                                    <span v-else-if="s.repair_status === 'ready' && s.status === 'dismantled'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold">⚠ Đã bóc tách</span>
                                                                     <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓ Sẵn bán</span>
                                                                 </div>
                                                                 <div class="text-[12px] text-gray-500 font-medium" v-if="canViewCostPrice">
@@ -1428,7 +1433,11 @@ const formatDate = (val) => {
                                                                 <span
                                                                     :class="[
                                                                         'text-[12px] font-medium text-right',
-                                                                        s.status === 'in_stock' ? 'text-green-600' : s.status === 'sold' ? 'text-gray-400' : s.status === 'warranty' ? 'text-orange-500' : 'text-red-500',
+                                                                        s.status === 'dismantled' ? 'text-red-600 font-semibold' :
+                                                                            s.status === 'in_stock' ? 'text-green-600' :
+                                                                            s.status === 'sold' ? 'text-gray-400' :
+                                                                            s.status === 'warranty' ? 'text-orange-500' :
+                                                                            'text-red-500',
                                                                     ]"
                                                                 >{{ serialStatusLabel(s.status) }}</span>
                                                             </div>
@@ -1524,9 +1533,9 @@ const formatDate = (val) => {
                                                                 <td class="p-2.5">
                                                                     <div class="flex items-center gap-2">
                                                                         <span class="font-medium text-gray-800">{{ s.serial_number }}</span>
-                                                                        <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧</span>
-                                                                        <!-- HOTFIX 24.16 — see longer version above. -->
-                                                                        <span v-else-if="s.repair_status === 'ready' && s.status === 'dismantled'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold" title="Đã bóc tách">⚠</span>
+                                                                        <!-- HOTFIX 24.34 — physical dismantled wins over any repair_status. -->
+                                                                        <span v-if="s.status === 'dismantled'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold" title="Đã bóc tách">⚠</span>
+                                                                        <span v-else-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧</span>
                                                                         <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓</span>
                                                                     </div>
                                                                 </td>
@@ -1534,7 +1543,11 @@ const formatDate = (val) => {
                                                                     <span
                                                                         :class="[
                                                                             'text-[11px] px-2 py-0.5 rounded-full font-bold',
-                                                                            s.status === 'in_stock' ? 'bg-green-100 text-green-700' : s.status === 'sold' ? 'bg-gray-100 text-gray-500' : s.status === 'warranty' ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600',
+                                                                            s.status === 'dismantled' ? 'bg-red-100 text-red-700' :
+                                                                                s.status === 'in_stock' ? 'bg-green-100 text-green-700' :
+                                                                                s.status === 'sold' ? 'bg-gray-100 text-gray-500' :
+                                                                                s.status === 'warranty' ? 'bg-orange-100 text-orange-600' :
+                                                                                'bg-red-100 text-red-600',
                                                                         ]"
                                                                     >{{ serialStatusLabel(s.status) }}</span>
                                                                 </td>

@@ -173,6 +173,10 @@ class ProductController extends Controller
                 $product->repairing_count = (clone $inStockSerials)
                     ->whereIn('repair_status', ['not_started', 'repairing'])
                     ->count();
+                // HOTFIX 24.34 — Đã bóc tách = physical status = dismantled.
+                // Phải tách khỏi repairing để UI không gộp vào "Đang sửa".
+                $product->dismantled_count = $product->serialImeis()
+                    ->where('status', 'dismantled')->count();
                 // Tổng serial (bao gồm đã bán, để tham khảo)
                 $product->total_serial_count = $product->serialImeis()->count();
                 // Giá vốn BQ cuối = trung bình cost_price của serial in_stock
@@ -755,8 +759,31 @@ class ProductController extends Controller
     {
         $query = $product->serials();
 
-        if ($request->filled('status') && $request->status !== 'all') {
-            $query->where('status', $request->status);
+        // HOTFIX 24.34 — semantic status filter. The UI exposes
+        //   ready       → in_stock AND not in a repair flow
+        //   repairing   → in_stock AND repair_status in (not_started, repairing)
+        //   dismantled  → physical status = dismantled (NEVER bundled with repairing)
+        // Other values fall through as raw status equality.
+        $status = $request->input('status');
+        if ($status && $status !== 'all') {
+            switch ($status) {
+                case 'ready':
+                    $query->where('status', 'in_stock')
+                          ->where(function ($q) {
+                              $q->whereNull('repair_status')
+                                ->orWhereNotIn('repair_status', ['not_started', 'repairing']);
+                          });
+                    break;
+                case 'repairing':
+                    $query->where('status', 'in_stock')
+                          ->whereIn('repair_status', ['not_started', 'repairing']);
+                    break;
+                case 'dismantled':
+                    $query->where('status', 'dismantled');
+                    break;
+                default:
+                    $query->where('status', $status);
+            }
         }
 
         if ($request->filled('search')) {
