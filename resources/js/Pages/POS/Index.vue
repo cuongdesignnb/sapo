@@ -303,6 +303,7 @@ const selectSerialForItem = (item, serialObj) => {
     if (!item.serials.find(s => s.id === serialObj.id)) {
         item.serials.push(serialObj);
         item.quantity = item.serials.length;
+        normalizeExchangeLineDiscount(item);
     }
     item.serialInput = '';
     item.showSerialDropdown = false;
@@ -325,6 +326,7 @@ const addSerialToItem = (item) => {
 const removeSerialFromItem = (item, idx) => {
     item.serials.splice(idx, 1);
     item.quantity = item.serials.length;
+    normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
 };
 
@@ -336,6 +338,7 @@ const selectAllSerialsForItem = (item) => {
         }
     });
     item.quantity = item.serials.length;
+    normalizeExchangeLineDiscount(item);
     item.serialInput = '';
     item.showSerialDropdown = false;
     searchSerialsForItem(item);
@@ -344,6 +347,7 @@ const selectAllSerialsForItem = (item) => {
 const deselectAllSerialsForItem = (item) => {
     item.serials = [];
     item.quantity = 0;
+    normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
 };
 
@@ -827,10 +831,51 @@ const exchangeAvailableQty = (productOrLine) => {
     return Math.max(0, Number(raw) || 0);
 };
 
-const exchangeLineAmount = (item) => Math.max(
+const resolveExchangeDefaultPrice = (product) => {
+    const candidates = [
+        product?.retail_price,
+        product?.selling_price,
+        product?.sale_price,
+        product?.price,
+        product?.unit_price,
+    ];
+
+    for (const value of candidates) {
+        const n = Number(value);
+        if (Number.isFinite(n) && n > 0) return n;
+    }
+
+    return 0;
+};
+
+const exchangeLineGross = (item) => Math.max(
     0,
-    (Number(item?.price) || 0) * (Number(item?.quantity) || 0) - (Number(item?.discount) || 0),
+    (Number(item?.price) || 0) * (Number(item?.quantity) || 0),
 );
+
+const normalizeExchangeLineDiscount = (item) => {
+    if (!item) return;
+    const gross = exchangeLineGross(item);
+    let discount = Number(item.discount) || 0;
+
+    if (discount < 0) discount = 0;
+    if (discount > gross) discount = gross;
+    if ((Number(item.price) || 0) <= 0) discount = 0;
+
+    item.discount = discount;
+};
+
+const normalizeAllExchangeLines = (tab) => {
+    for (const item of tab?.returnState?.exchangeItems || []) {
+        normalizeExchangeLineDiscount(item);
+    }
+};
+
+const exchangeLineAmount = (item) => {
+    const gross = exchangeLineGross(item);
+    const discount = Math.min(Math.max(0, Number(item?.discount) || 0), gross);
+    return Math.max(0, gross - discount);
+};
 
 const validateExchangeLineQty = (line) => {
     if (!line) return false;
@@ -853,6 +898,7 @@ const setExchangeQty = (line, value) => {
     if (available <= 0) {
         line.quantity = 0;
         line.stockWarning = 'Hết tồn kho';
+        normalizeExchangeLineDiscount(line);
         return;
     }
     if (next > available) {
@@ -862,6 +908,7 @@ const setExchangeQty = (line, value) => {
         line.stockWarning = '';
     }
     line.quantity = next;
+    normalizeExchangeLineDiscount(line);
 };
 
 const focusExchangeSerialOverlay = (item) => {
@@ -919,7 +966,7 @@ const addExchangeItem = async (tab, product) => {
         const line = {
             product,
             quantity: product.has_serial ? 0 : 1,
-            price: Number(product.retail_price) || 0,
+            price: resolveExchangeDefaultPrice(product),
             discount: 0,
             is_serial_product: !!product.has_serial,
             serials: [],
@@ -949,6 +996,7 @@ const removeExchangeItem = (tab, idx) => {
 const updateExchangeQty = (line, delta) => {
     if (!line || line.is_serial_product) return;
     setExchangeQty(line, (Number(line.quantity) || 1) + delta);
+    normalizeExchangeLineDiscount(line);
 };
 
 // Subtotal/total/canSubmit are computed against the active return tab.
@@ -1019,7 +1067,13 @@ const activeExchangeValidationMessage = computed(() => {
     for (const item of tab.returnState.exchangeItems || []) {
         const available = exchangeAvailableQty(item);
         const qty = Number(item.quantity) || 0;
+        const price = Number(item.price) || 0;
+        const gross = price * qty;
+        const discount = Number(item.discount) || 0;
         if (available <= 0) return `${item.product.name} đã hết tồn kho.`;
+        if (price <= 0) return `Hàng đổi "${item.product.name}" đang có đơn giá 0đ, vui lòng nhập đơn giá.`;
+        if (discount < 0) return `Giảm giá hàng đổi "${item.product.name}" không được âm.`;
+        if (discount > gross) return `Giảm giá hàng đổi "${item.product.name}" không được vượt thành tiền dòng.`;
         if (!item.is_serial_product && qty > available) return `${item.product.name} chỉ còn ${available} trong kho.`;
         if (item.is_serial_product && item.serials.length === 0) return `${item.product.name} cần chọn Serial/IMEI hàng đổi.`;
         if (item.is_serial_product && item.serials.length > available) return `${item.product.name} vượt số serial sẵn bán (${available}).`;
@@ -1085,6 +1139,7 @@ const submitReturnTab = async (tab) => {
     if (!tab || tab.type !== 'return') return;
     const rs = tab.returnState;
     if (!rs?.sourceInvoice) return;
+    normalizeAllExchangeLines(tab);
     if (!canSubmitActiveExchange.value && tab.id === activeTab.value?.id) return;
 
     rs.error = '';
@@ -1911,10 +1966,20 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                                     </template>
                                 </div>
                                 <div class="col-span-2">
-                                    <MoneyInput v-model="item.price" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right" />
+                                    <MoneyInput
+                                        v-model="item.price"
+                                        :min="0"
+                                        @update:model-value="() => normalizeExchangeLineDiscount(item)"
+                                        input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right"
+                                    />
                                 </div>
                                 <div class="col-span-2">
-                                    <MoneyInput v-model="item.discount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right" />
+                                    <MoneyInput
+                                        v-model="item.discount"
+                                        :min="0"
+                                        @update:model-value="() => normalizeExchangeLineDiscount(item)"
+                                        input-class="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right"
+                                    />
                                 </div>
                                 <div class="col-span-2 text-right text-xs font-bold text-gray-800">{{ formatCurrency(exchangeLineAmount(item)) }}</div>
                                 <button @click="removeExchangeItem(activeTab, idx)" class="col-span-1 text-gray-400 hover:text-red-600 px-1 text-right" title="Xóa">&times;</button>
@@ -2062,12 +2127,19 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         </div>
                     </div>
                     <div class="flex items-center justify-between border-t pt-2 mt-2">
-                        <span class="font-semibold text-gray-700">Cần trả khách</span>
-                        <span class="font-bold text-blue-600 text-base tabular-nums">{{ formatCurrency(activeReturnTotal || 0) }}</span>
+                        <span class="font-semibold text-gray-700">
+                            {{ activeTab.returnState.exchangeItems.length ? 'Giá trị hàng trả' : 'Cần trả khách' }}
+                        </span>
+                        <span
+                            class="font-bold text-base tabular-nums"
+                            :class="activeTab.returnState.exchangeItems.length ? 'text-gray-900' : 'text-blue-600'"
+                        >
+                            {{ formatCurrency(activeReturnTotal || 0) }}
+                        </span>
                     </div>
                     <div v-if="activeTab.returnState.exchangeItems.length" class="border-t pt-2 mt-2 space-y-2">
                         <div class="flex items-center justify-between">
-                            <span class="text-gray-500">Tổng tiền hàng đổi</span>
+                            <span class="text-gray-500">Tiền hàng đổi</span>
                             <span class="font-medium tabular-nums">{{ formatCurrency(activeExchangeSubtotal || 0) }}</span>
                         </div>
                         <div class="flex items-center justify-between gap-2">
@@ -2075,16 +2147,38 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             <MoneyInput v-model="activeTab.returnState.exchangeDiscount" :min="0" input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
                         </div>
                         <div class="flex items-center justify-between">
-                            <span class="font-semibold text-gray-700">Sau đổi hàng</span>
+                            <span class="font-semibold text-gray-700">Tổng tiền hàng đổi</span>
                             <span class="font-bold text-gray-900 tabular-nums">{{ formatCurrency(activeExchangeTotal || 0) }}</span>
                         </div>
-                        <div class="flex items-center justify-between">
-                            <span class="font-semibold" :class="activeCustomerPays > 0 ? 'text-blue-700' : 'text-red-700'">
-                                {{ activeCustomerPays > 0 ? 'Khách trả thêm' : 'Trả khách' }}
-                            </span>
-                            <span class="font-bold tabular-nums" :class="activeCustomerPays > 0 ? 'text-blue-700' : 'text-red-700'">
-                                {{ formatCurrency(activeCustomerPays > 0 ? activeCustomerPays : activeRefundToCustomer) }}
-                            </span>
+                        <div
+                            v-if="activeCustomerPays > 0"
+                            class="rounded-lg border border-blue-300 bg-blue-50 px-3 py-3"
+                        >
+                            <div class="text-xs font-semibold uppercase text-blue-700">Chênh lệch sau đổi</div>
+                            <div class="mt-1 flex items-center justify-between">
+                                <span class="font-bold text-blue-800">Khách cần trả thêm</span>
+                                <span class="text-xl font-extrabold tabular-nums text-blue-800">{{ formatCurrency(activeCustomerPays) }}</span>
+                            </div>
+                        </div>
+                        <div
+                            v-else-if="activeRefundToCustomer > 0"
+                            class="rounded-lg border border-red-300 bg-red-50 px-3 py-3"
+                        >
+                            <div class="text-xs font-semibold uppercase text-red-700">Chênh lệch sau đổi</div>
+                            <div class="mt-1 flex items-center justify-between">
+                                <span class="font-bold text-red-800">Cần trả khách</span>
+                                <span class="text-xl font-extrabold tabular-nums text-red-800">{{ formatCurrency(activeRefundToCustomer) }}</span>
+                            </div>
+                        </div>
+                        <div
+                            v-else
+                            class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-3"
+                        >
+                            <div class="text-xs font-semibold uppercase text-emerald-700">Chênh lệch sau đổi</div>
+                            <div class="mt-1 flex items-center justify-between">
+                                <span class="font-bold text-emerald-800">Không phát sinh thu/trả</span>
+                                <span class="text-xl font-extrabold tabular-nums text-emerald-800">0đ</span>
+                            </div>
                         </div>
                         <div class="flex items-center gap-4 text-xs">
                             <label class="flex items-center gap-1.5 cursor-pointer">
@@ -2107,28 +2201,15 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             </option>
                         </select>
                     </div>
-                    <div class="flex items-center justify-between gap-2">
-                        <span class="text-gray-500">
-                            {{ activeTab.returnState.exchangeItems.length ? 'Tiền trả khách sau đổi' : 'Tiền trả khách (paid_to_customer)' }}
-                        </span>
+                    <div v-if="!activeTab.returnState.exchangeItems.length" class="flex items-center justify-between gap-2">
+                        <span class="text-gray-500">Tiền trả khách (paid_to_customer)</span>
                         <MoneyInput
-                            v-if="activeTab.returnState.exchangeItems.length"
-                            :model-value="activeRefundToCustomer"
-                            :min="0"
-                            input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums bg-gray-50 text-gray-600"
-                            disabled
-                        />
-                        <MoneyInput
-                            v-else
                             v-model="activeTab.returnState.paidToCustomer"
                             :min="0"
                             input-class="w-44 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
                             @update:model-value="activeTab.returnState.paidToCustomerTouched = true"
                         />
                     </div>
-                    <p v-if="activeTab.returnState.exchangeItems.length" class="text-[11px] text-gray-400 text-right">
-                        Đã tính net sau hàng đổi; không nhập tay ở luồng đổi hàng.
-                    </p>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Ghi chú</label>
                         <textarea v-model="activeTab.returnState.note" rows="2" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Ghi chú trả hàng"></textarea>

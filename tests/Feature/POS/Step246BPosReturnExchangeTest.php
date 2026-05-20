@@ -201,7 +201,33 @@ class Step246BPosReturnExchangeTest extends TestCase
         $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
     }
 
-    public function test_return_exchange_rejects_stale_paid_to_customer_amount(): void
+    public function test_return_exchange_rejects_exchange_item_zero_price(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 4550000);
+        $productB = $this->product(false, 5, 100000, 4550000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 4550000, 4550000);
+        $payload = $this->exchangePayload($invoice, $productA, $productB, 4550000, 0);
+        $returnsBefore = OrderReturn::count();
+        $invoicesBefore = Invoice::count();
+        $cashBefore = CashFlow::count();
+        $stockBeforeA = (int) $productA->fresh()->stock_quantity;
+        $stockBeforeB = (int) $productB->fresh()->stock_quantity;
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('exchange.items');
+
+        $this->assertSame($returnsBefore, OrderReturn::count());
+        $this->assertSame($invoicesBefore, Invoice::count());
+        $this->assertSame($cashBefore, CashFlow::count());
+        $this->assertSame($stockBeforeA, (int) $productA->fresh()->stock_quantity);
+        $this->assertSame($stockBeforeB, (int) $productB->fresh()->stock_quantity);
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+    }
+
+    public function test_return_exchange_rejects_exchange_discount_greater_than_line_gross(): void
     {
         $admin = $this->adminUser();
         $customer = $this->customer();
@@ -209,9 +235,57 @@ class Step246BPosReturnExchangeTest extends TestCase
         $productB = $this->product(false, 5, 100000, 100000);
         $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
         $payload = $this->exchangePayload($invoice, $productA, $productB, 100000, 100000);
-        $payload['return']['paid_to_customer'] = 100000;
+        $payload['exchange']['items'][0]['discount'] = 150000;
         $returnsBefore = OrderReturn::count();
         $invoicesBefore = Invoice::count();
+        $cashBefore = CashFlow::count();
+        $stockBeforeA = (int) $productA->fresh()->stock_quantity;
+        $stockBeforeB = (int) $productB->fresh()->stock_quantity;
+
+        $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('exchange.items');
+
+        $this->assertSame($returnsBefore, OrderReturn::count());
+        $this->assertSame($invoicesBefore, Invoice::count());
+        $this->assertSame($cashBefore, CashFlow::count());
+        $this->assertSame($stockBeforeA, (int) $productA->fresh()->stock_quantity);
+        $this->assertSame($stockBeforeB, (int) $productB->fresh()->stock_quantity);
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+    }
+
+    public function test_return_exchange_equal_value_has_zero_refund_and_zero_customer_pays(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 4550000);
+        $productB = $this->product(false, 5, 100000, 4550000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 4550000, 4550000);
+        $cashBefore = CashFlow::count();
+
+        $res = $this->actingAs($admin)->postJson('/api/pos/return-exchange',
+            $this->exchangePayload($invoice, $productA, $productB, 4550000, 4550000)
+        );
+
+        $res->assertOk()
+            ->assertJsonPath('settlement.refund_to_customer', 0)
+            ->assertJsonPath('settlement.customer_pays', 0);
+        $this->assertSame($cashBefore, CashFlow::count());
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+    }
+
+    public function test_return_exchange_rejects_stale_paid_to_customer_when_net_zero(): void
+    {
+        $admin = $this->adminUser();
+        $customer = $this->customer();
+        $productA = $this->product(false, 5, 100000, 4550000);
+        $productB = $this->product(false, 5, 100000, 4550000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 4550000, 4550000);
+        $payload = $this->exchangePayload($invoice, $productA, $productB, 4550000, 4550000);
+        $payload['return']['paid_to_customer'] = 4550000;
+        $returnsBefore = OrderReturn::count();
+        $invoicesBefore = Invoice::count();
+        $cashBefore = CashFlow::count();
 
         $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
             ->assertStatus(422)
@@ -219,19 +293,21 @@ class Step246BPosReturnExchangeTest extends TestCase
 
         $this->assertSame($returnsBefore, OrderReturn::count());
         $this->assertSame($invoicesBefore, Invoice::count());
+        $this->assertSame($cashBefore, CashFlow::count());
     }
 
-    public function test_return_exchange_rejects_stale_customer_paid_amount(): void
+    public function test_return_exchange_rejects_stale_customer_paid_when_net_zero(): void
     {
         $admin = $this->adminUser();
         $customer = $this->customer();
-        $productA = $this->product(false, 5, 100000, 100000);
-        $productB = $this->product(false, 5, 100000, 100000);
-        $invoice = $this->sell($admin, $customer, $productA, 1, 100000, 100000);
-        $payload = $this->exchangePayload($invoice, $productA, $productB, 100000, 100000);
+        $productA = $this->product(false, 5, 100000, 4550000);
+        $productB = $this->product(false, 5, 100000, 4550000);
+        $invoice = $this->sell($admin, $customer, $productA, 1, 4550000, 4550000);
+        $payload = $this->exchangePayload($invoice, $productA, $productB, 4550000, 4550000);
         $payload['exchange']['customer_paid'] = 100000;
         $returnsBefore = OrderReturn::count();
         $invoicesBefore = Invoice::count();
+        $cashBefore = CashFlow::count();
 
         $this->actingAs($admin)->postJson('/api/pos/return-exchange', $payload)
             ->assertStatus(422)
@@ -239,6 +315,7 @@ class Step246BPosReturnExchangeTest extends TestCase
 
         $this->assertSame($returnsBefore, OrderReturn::count());
         $this->assertSame($invoicesBefore, Invoice::count());
+        $this->assertSame($cashBefore, CashFlow::count());
     }
 
     public function test_return_exchange_serial_product_restores_return_serial_and_sells_exchange_serial(): void

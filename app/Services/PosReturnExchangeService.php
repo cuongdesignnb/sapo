@@ -43,13 +43,13 @@ class PosReturnExchangeService
             $providedRefund = data_get($payload, 'return.paid_to_customer');
             if ($providedRefund !== null && abs((float) $providedRefund - $refundToCustomer) > 0.5) {
                 throw ValidationException::withMessages([
-                    'return.paid_to_customer' => 'Tien tra khach khong khop voi so tien net sau doi hang.',
+                    'return.paid_to_customer' => 'Số tiền trả khách không khớp với chênh lệch sau đổi hàng. Vui lòng tải lại màn hình.',
                 ]);
             }
             $providedCustomerPays = data_get($payload, 'exchange.customer_paid');
             if ($providedCustomerPays !== null && abs((float) $providedCustomerPays - $customerPays) > 0.5) {
                 throw ValidationException::withMessages([
-                    'exchange.customer_paid' => 'Tien khach tra them khong khop voi so tien net sau doi hang.',
+                    'exchange.customer_paid' => 'Số tiền khách trả thêm không khớp với chênh lệch sau đổi hàng. Vui lòng tải lại màn hình.',
                 ]);
             }
 
@@ -153,6 +153,22 @@ class PosReturnExchangeService
                     'exchange.items' => 'So luong hang doi phai lon hon 0.',
                 ]);
             }
+            if ($price <= 0) {
+                throw ValidationException::withMessages([
+                    'exchange.items' => "Đơn giá hàng đổi '{$product->name}' phải lớn hơn 0.",
+                ]);
+            }
+            $gross = $qty * $price;
+            if ($discount < 0) {
+                throw ValidationException::withMessages([
+                    'exchange.items' => "Giảm giá hàng đổi '{$product->name}' không được âm.",
+                ]);
+            }
+            if ($discount > $gross) {
+                throw ValidationException::withMessages([
+                    'exchange.items' => "Giảm giá hàng đổi '{$product->name}' không được vượt thành tiền dòng.",
+                ]);
+            }
             $serialIds = array_values(array_filter(array_map('intval', (array) ($item['serial_ids'] ?? []))));
             if (count($serialIds) !== count(array_unique($serialIds))) {
                 throw ValidationException::withMessages([
@@ -176,7 +192,7 @@ class PosReturnExchangeService
                     'exchange.items' => "San pham '{$product->name}' khong du ton kho hang doi (con {$product->stock_quantity}).",
                 ]);
             }
-            $subtotal += max(0.0, $qty * $price - $discount);
+            $subtotal += $gross - $discount;
             $normalizedItems[] = [
                 'product_id' => (int) $item['product_id'],
                 'quantity' => $qty,
