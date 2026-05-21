@@ -1,6 +1,6 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 
@@ -25,6 +25,74 @@ const selectedBranch = ref(props.defaultBranchId || '');
 
 const filteredProducts = ref([]);
 const isSearchingProduct = ref(false);
+
+const toNumber = (value) => Number(value) || 0;
+const toInt = (value) => parseInt(value, 10) || 0;
+const lineTotal = (item) => Math.max(0, toInt(item.qty)) * toNumber(item.cost_price);
+const isSerialProduct = (item) => Boolean(item?.has_serial);
+
+const loadSerialsForItem = async (item) => {
+    if (!item || !item.product_id || !item.has_serial || item.serial_loading) {
+        return;
+    }
+
+    item.serial_loading = true;
+    item.serial_error = '';
+
+    try {
+        const response = await axios.get(`/api/products/${item.product_id}/serials`);
+        item.serials = Array.isArray(response.data) ? response.data : [];
+    } catch (error) {
+        console.error('Lỗi tải serial/IMEI khả dụng:', error);
+        item.serial_error = 'Không tải được danh sách serial/IMEI khả dụng.';
+        item.serials = [];
+    } finally {
+        item.serial_loading = false;
+    }
+};
+
+const normalizeQty = (item) => {
+    if (!item) return;
+
+    if (item.has_serial) {
+        const selectedCount = Array.isArray(item.serial_ids) ? item.serial_ids.length : 0;
+        if (selectedCount > 0) {
+            item.qty = selectedCount;
+            return;
+        }
+    }
+
+    const stock = Math.max(0, toInt(item.stock_quantity));
+    let qty = toInt(item.qty);
+
+    if (qty < 1) qty = 1;
+    if (stock > 0 && qty > stock) qty = stock;
+
+    item.qty = qty;
+};
+
+const isSerialSelected = (item, serial) => {
+    return Array.isArray(item?.serial_ids) && item.serial_ids.includes(serial.id);
+};
+
+const toggleSerial = (item, serial) => {
+    if (!item || !serial) return;
+
+    if (!Array.isArray(item.serial_ids)) {
+        item.serial_ids = [];
+    }
+
+    const index = item.serial_ids.indexOf(serial.id);
+    if (index >= 0) {
+        item.serial_ids.splice(index, 1);
+    } else {
+        item.serial_ids.push(serial.id);
+    }
+
+    item.qty = item.serial_ids.length || 1;
+};
+
+const serialLabel = (serial) => serial.serial_number || serial.imei || serial.code || `#${serial.id}`;
 
 let searchTimeout = null;
 watch(searchQuery, (val) => {
@@ -53,16 +121,32 @@ watch(searchQuery, (val) => {
 const selectProduct = (product) => {
     const existing = items.value.find(i => i.product_id === product.id);
     if (!existing) {
-        items.value.unshift({ 
+        const item = {
             product_id: product.id,
             sku: product.sku,
             name: product.name,
             qty: 1,
             cost_price: product.cost_price || 0,
             stock_quantity: product.stock_quantity || 0,
-        });
+            has_serial: Boolean(product.has_serial),
+            serial_ids: [],
+            serials: [],
+            serial_loading: false,
+            serial_error: '',
+        };
+
+        items.value.unshift(item);
+
+        if (item.has_serial) {
+            loadSerialsForItem(item);
+        }
     } else {
-        existing.qty++;
+        if (existing.has_serial) {
+            loadSerialsForItem(existing);
+        } else {
+            existing.qty++;
+            normalizeQty(existing);
+        }
     }
     searchQuery.value = '';
     showSuggestions.value = false;
@@ -80,43 +164,82 @@ const removeItem = (index) => {
 
 const itemsComputed = computed(() => {
     return items.value.map(item => {
-        const qty = parseInt(item.qty) || 0;
+        const qty = toInt(item.qty);
         return {
             ...item,
-            total_value: qty * item.cost_price
+            total_value: lineTotal(item)
         };
     });
 });
 
-const totalQty = computed(() => itemsComputed.value.reduce((sum, item) => sum + (parseInt(item.qty) || 0), 0));
+const totalQty = computed(() => itemsComputed.value.reduce((sum, item) => sum + toInt(item.qty), 0));
 const totalValue = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.total_value, 0));
 
-const save = async (status) => {
+const validateBeforeSave = (status) => {
     if (items.value.length === 0) {
-        alert("Vui lòng chọn ít nhất 1 hàng hóa để xuất hủy.");
-        return;
+        return 'Vui lòng chọn ít nhất 1 hàng hóa để xuất hủy.';
     }
 
     if (!selectedBranch.value) {
-        alert("Vui lòng chọn chi nhánh xuất hủy.");
+        return 'Vui lòng chọn chi nhánh xuất hủy.';
+    }
+
+    for (const item of items.value) {
+        normalizeQty(item);
+
+        const qty = toInt(item.qty);
+        const stock = toInt(item.stock_quantity);
+
+        if (qty <= 0) {
+            return `Số lượng hủy của "${item.name}" phải lớn hơn 0.`;
+        }
+
+        if (qty > stock) {
+            return `Số lượng hủy của "${item.name}" vượt tồn kho hiện tại.`;
+        }
+
+        if (status === 'completed' && item.has_serial) {
+            const selectedCount = Array.isArray(item.serial_ids) ? item.serial_ids.length : 0;
+            if (selectedCount !== qty) {
+                return `Hàng "${item.name}" cần chọn đúng ${qty} serial/IMEI trước khi hoàn thành.`;
+            }
+        }
+    }
+
+    return '';
+};
+
+const save = (status) => {
+    const validationMessage = validateBeforeSave(status);
+    if (validationMessage) {
+        alert(validationMessage);
         return;
     }
 
     submitRef.value = true;
-    
-    try {
-        await router.post('/damages', {
+
+    router.post('/damages', {
             code: props.damageCode,
             status: status, // 'draft' | 'completed'
             branch_id: selectedBranch.value,
             action_date: transactionDate.value,
             note: note.value,
-            items: itemsComputed.value
-        });
-    } catch (e) {
-        alert("Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.");
-        submitRef.value = false;
-    }
+            items: items.value.map((item) => ({
+                product_id: item.product_id,
+                qty: toInt(item.qty),
+                serial_ids: Array.isArray(item.serial_ids) ? item.serial_ids : [],
+            })),
+        },
+        {
+            onError: (errors) => {
+                const first = Object.values(errors || {}).flat()[0];
+                alert(first || 'Có lỗi xảy ra, vui lòng kiểm tra lại dữ liệu.');
+            },
+            onFinish: () => {
+                submitRef.value = false;
+            },
+        }
+    );
 };
 
 
@@ -193,7 +316,7 @@ const save = async (status) => {
                             </tr>
                         </thead>
                         <tbody v-if="items.length > 0">
-                            <tr v-for="(item, index) in itemsComputed" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f0f9ff]/40 transition-colors">
+                            <tr v-for="(item, index) in items" :key="item.product_id" class="border-b border-gray-100 hover:bg-[#f0f9ff]/40 transition-colors align-top">
                                 <td class="p-3 text-center text-gray-500 group relative w-12">
                                     <span class="group-hover:hidden">{{ index + 1 }}</span>
                                     <button @click="removeItem(index)" class="hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full mx-auto" title="Xóa">
@@ -201,7 +324,59 @@ const save = async (status) => {
                                     </button>
                                 </td>
                                 <td class="p-3 text-blue-600 w-[120px] break-all">{{ item.sku }}</td>
-                                <td class="p-3 font-medium text-gray-800">{{ item.name }}</td>
+                                <td class="p-3 font-medium text-gray-800">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div>{{ item.name }}</div>
+                                            <div
+                                                v-if="isSerialProduct(item)"
+                                                class="mt-1 inline-flex items-center rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700"
+                                            >
+                                                Serial/IMEI
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        v-if="isSerialProduct(item)"
+                                        class="mt-3 rounded border border-gray-200 bg-gray-50 p-3"
+                                    >
+                                        <div class="mb-2 flex items-center justify-between gap-2 text-[12px]">
+                                            <span class="font-semibold text-gray-700">Chọn serial/IMEI hủy</span>
+                                            <span class="text-gray-500">
+                                                Đã chọn {{ item.serial_ids?.length || 0 }}/{{ item.qty || 0 }}
+                                            </span>
+                                        </div>
+
+                                        <div v-if="item.serial_loading" class="text-[12px] text-gray-500">
+                                            Đang tải serial/IMEI khả dụng...
+                                        </div>
+                                        <div v-else-if="item.serial_error" class="text-[12px] text-red-600">
+                                            {{ item.serial_error }}
+                                        </div>
+                                        <div v-else-if="!item.serials || item.serials.length === 0" class="text-[12px] text-red-600">
+                                            Không có serial/IMEI khả dụng để xuất hủy.
+                                        </div>
+                                        <div v-else class="flex max-h-32 flex-wrap gap-2 overflow-auto">
+                                            <button
+                                                v-for="serial in item.serials"
+                                                :key="serial.id"
+                                                type="button"
+                                                class="rounded border px-2 py-1 text-[12px] font-medium transition-colors"
+                                                :class="isSerialSelected(item, serial)
+                                                    ? 'border-blue-500 bg-blue-600 text-white'
+                                                    : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-700'"
+                                                @click="toggleSerial(item, serial)"
+                                            >
+                                                {{ serialLabel(serial) }}
+                                            </button>
+                                        </div>
+
+                                        <div class="mt-2 text-[11px] text-gray-500">
+                                            Phiếu hoàn thành yêu cầu số serial/IMEI được chọn đúng bằng số lượng hủy.
+                                        </div>
+                                    </div>
+                                </td>
                                 <td class="p-3 text-center w-[100px]">Cái</td>
                                 <td class="p-3 text-center w-[100px]" :class="item.stock_quantity <= 0 ? 'text-red-500 font-bold' : item.stock_quantity < item.qty ? 'text-orange-500 font-semibold' : 'text-gray-500'">
                                     {{ item.stock_quantity }}
@@ -209,10 +384,20 @@ const save = async (status) => {
                                     <div v-else-if="item.stock_quantity < item.qty" class="text-[10px]">Không đủ!</div>
                                 </td>
                                 <td class="p-3 text-center w-[120px]">
-                                    <input type="number" v-model="item.qty" min="1" class="w-20 border border-gray-300 rounded-sm py-1.5 px-2 text-right outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block font-semibold shadow-inner bg-blue-50/30">
+                                    <input
+                                        type="number"
+                                        v-model="item.qty"
+                                        min="1"
+                                        :readonly="isSerialProduct(item)"
+                                        :title="isSerialProduct(item) ? 'Số lượng hàng serial được tính theo serial/IMEI đã chọn' : ''"
+                                        class="w-20 border border-gray-300 rounded-sm py-1.5 px-2 text-right outline-none focus:border-blue-500 text-[13px] transition-colors mx-auto block font-semibold shadow-inner"
+                                        :class="isSerialProduct(item) ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-blue-50/30'"
+                                        @change="normalizeQty(item)"
+                                        @blur="normalizeQty(item)"
+                                    >
                                 </td>
                                 <td class="p-3 font-bold text-gray-600 text-right w-32">{{ formatCurrency(item.cost_price) }}</td>
-                                <td class="p-3 font-bold text-blue-700 text-right w-[140px] pr-6">{{ formatCurrency(item.total_value) }}</td>
+                                <td class="p-3 font-bold text-blue-700 text-right w-[140px] pr-6">{{ formatCurrency(lineTotal(item)) }}</td>
                             </tr>
                         </tbody>
                     </table>

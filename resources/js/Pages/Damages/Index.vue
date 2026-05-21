@@ -782,7 +782,10 @@ const cancelDamage = (damage) => {
                                                         Hủy phiếu
                                                     </button>
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        type="button"
+                                                        disabled
+                                                        title="Chức năng sao chép phiếu xuất hủy sẽ bổ sung sau."
+                                                        class="bg-gray-50 border border-gray-200 px-4 py-1.5 rounded text-gray-400 font-medium flex items-center gap-2 shadow-sm cursor-not-allowed"
                                                     >
                                                         <svg
                                                             class="w-4 h-4"
@@ -800,7 +803,10 @@ const cancelDamage = (damage) => {
                                                         Sao chép
                                                     </button>
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        type="button"
+                                                        disabled
+                                                        title="Xuất file từng phiếu sẽ bổ sung sau. Có thể dùng nút Xuất file ở danh sách."
+                                                        class="bg-gray-50 border border-gray-200 px-4 py-1.5 rounded text-gray-400 font-medium flex items-center gap-2 shadow-sm cursor-not-allowed"
                                                     >
                                                         <svg
                                                             class="w-4 h-4"
@@ -820,7 +826,10 @@ const cancelDamage = (damage) => {
                                                 </div>
                                                 <div class="flex gap-2">
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        type="button"
+                                                        disabled
+                                                        title="Phiếu xuất hủy không hỗ trợ lưu chỉnh sửa tại màn chi tiết trong hotfix này."
+                                                        class="bg-gray-50 border border-gray-200 px-4 py-1.5 rounded text-gray-400 font-medium flex items-center gap-2 shadow-sm cursor-not-allowed"
                                                     >
                                                         <svg
                                                             class="w-4 h-4 text-gray-500"
