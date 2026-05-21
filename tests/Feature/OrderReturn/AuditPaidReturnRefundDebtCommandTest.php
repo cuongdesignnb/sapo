@@ -118,4 +118,16 @@ class AuditPaidReturnRefundDebtCommandTest extends TestCase
         $this->assertSame($debtBefore, (float) $customer->fresh()->debt_amount);
         $this->assertSame($rowsBefore, CustomerDebt::count());
     }
+
+    public function test_dry_run_ignores_cancelled_paid_return(): void
+    {
+        $customer = $this->customer();
+        $return = $this->paidReturn($customer, 'TH-CANCELLED-MISSING');
+        $return->update(['status' => 'cancelled']);
+        $this->addReturnLedger($return, $customer);
+
+        $this->artisan('returns:audit-paid-refund-debt --dry-run')
+            ->expectsOutput('No paid returns with missing refund debt settlement were found.')
+            ->assertExitCode(0);
+    }
 }

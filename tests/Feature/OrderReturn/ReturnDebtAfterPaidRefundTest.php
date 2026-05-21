@@ -205,4 +205,92 @@ class ReturnDebtAfterPaidRefundTest extends TestCase
         $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
         $this->assertSame(-19200000.0, (float) CustomerDebt::where('ref_code', $return->code)->where('type', 'adjustment')->where('amount', '<', 0)->sum('amount'));
     }
+
+    public function test_cancel_old_paid_return_without_settlement_does_not_leave_negative_debt(): void
+    {
+        $admin = $this->admin();
+        $customer = $this->customer();
+        $invoice = $this->paidInvoice($admin, $customer, $this->product());
+        $return = $this->createReturn($admin, $customer, $invoice, 19200000, 19200000);
+
+        CustomerDebt::where('ref_code', $return->code)
+            ->where('type', 'adjustment')
+            ->where('amount', '>', 0)
+            ->delete();
+        $customer->forceFill(['debt_amount' => -19200000])->save();
+
+        $this->actingAs($admin)->post(route('returns.cancel', $return->id), [
+            'reason' => 'Cancel legacy paid return',
+        ])->assertRedirect();
+
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+        $this->assertSame(0.0, (float) CustomerDebt::where('ref_code', $return->code)
+            ->where('type', 'adjustment')
+            ->where('amount', '<', 0)
+            ->sum('amount'));
+    }
+
+    public function test_cancel_new_paid_return_with_settlement_reverses_existing_settlement_once(): void
+    {
+        $admin = $this->admin();
+        $customer = $this->customer();
+        $invoice = $this->paidInvoice($admin, $customer, $this->product());
+        $return = $this->createReturn($admin, $customer, $invoice, 19200000, 19200000);
+
+        $this->actingAs($admin)->post(route('returns.cancel', $return->id), [
+            'reason' => 'Cancel new paid return',
+        ])->assertRedirect();
+
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+        $this->assertSame(-19200000.0, (float) CustomerDebt::where('ref_code', $return->code)
+            ->where('type', 'adjustment')
+            ->where('amount', '<', 0)
+            ->sum('amount'));
+        $this->assertSame(1, CustomerDebt::where('ref_code', $return->code)
+            ->where('type', 'adjustment')
+            ->where('amount', '<', 0)
+            ->count());
+    }
+
+    public function test_cancel_partially_refunded_return_reverses_only_existing_settlement_amount(): void
+    {
+        $admin = $this->admin();
+        $customer = $this->customer();
+        $invoice = $this->paidInvoice($admin, $customer, $this->product());
+        $return = $this->createReturn($admin, $customer, $invoice, 19200000, 5000000);
+
+        $this->assertSame(-14200000.0, (float) $customer->fresh()->debt_amount);
+
+        $this->actingAs($admin)->post(route('returns.cancel', $return->id), [
+            'reason' => 'Cancel partial refund return',
+        ])->assertRedirect();
+
+        $this->assertSame(0.0, (float) $customer->fresh()->debt_amount);
+        $this->assertSame(-5000000.0, (float) CustomerDebt::where('ref_code', $return->code)
+            ->where('type', 'adjustment')
+            ->where('amount', '<', 0)
+            ->sum('amount'));
+    }
+
+    public function test_cancel_return_blocks_second_cancel_without_extra_ledger(): void
+    {
+        $admin = $this->admin();
+        $customer = $this->customer();
+        $invoice = $this->paidInvoice($admin, $customer, $this->product());
+        $return = $this->createReturn($admin, $customer, $invoice, 19200000, 19200000);
+
+        $this->actingAs($admin)->post(route('returns.cancel', $return->id), [
+            'reason' => 'First cancel',
+        ])->assertRedirect();
+
+        $ledgerCountAfterFirstCancel = CustomerDebt::where('ref_code', $return->code)->count();
+        $debtAfterFirstCancel = (float) $customer->fresh()->debt_amount;
+
+        $this->actingAs($admin)->post(route('returns.cancel', $return->id), [
+            'reason' => 'Second cancel',
+        ])->assertRedirect();
+
+        $this->assertSame($ledgerCountAfterFirstCancel, CustomerDebt::where('ref_code', $return->code)->count());
+        $this->assertSame($debtAfterFirstCancel, (float) $customer->fresh()->debt_amount);
+    }
 }

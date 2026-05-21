@@ -559,6 +559,10 @@ class OrderReturnController extends Controller
      */
     public function cancel(OrderReturn $return)
     {
+        if (in_array(trim((string) $return->status), [ReturnStatus::CANCELLED, 'cancelled', 'canceled', 'void', 'deleted'], true)) {
+            return back()->with('error', 'Phieu tra hang da huy truoc do.');
+        }
+
         if ($return->status === 'Đã hủy') {
             return back()->with('error', 'Phiếu trả hàng đã bị hủy trước đó.');
         }
@@ -619,16 +623,25 @@ class OrderReturnController extends Controller
             if ($return->customer_id) {
                 $customer = \App\Models\Customer::find($return->customer_id);
                 if ($customer) {
+                    $preCancelSettledAmount = (float) \App\Models\CustomerDebt::query()
+                        ->where(function ($q) use ($return) {
+                            $q->where('order_return_id', $return->id)
+                                ->orWhere('ref_code', $return->code);
+                        })
+                        ->where('type', 'adjustment')
+                        ->where('amount', '>', 0)
+                        ->sum('amount');
+
                     app(CustomerDebtService::class)->recordAdjustment(
                         $customer->id,
                         (float) $return->total, // dương = khôi phục nợ
                         "Khôi phục công nợ do hủy phiếu trả hàng {$return->code}",
                         ['order_return_id' => $return->id, 'ref_code' => $return->code]
                     );
-                    if ((float) $return->paid_to_customer > 0) {
+                    if ($preCancelSettledAmount > 0) {
                         app(CustomerDebtService::class)->recordAdjustment(
                             $customer->id,
-                            -(float) $return->paid_to_customer,
+                            -$preCancelSettledAmount,
                             "Dao tat toan tien da tra khach do huy phieu tra {$return->code}",
                             ['order_return_id' => $return->id, 'ref_code' => $return->code]
                         );
