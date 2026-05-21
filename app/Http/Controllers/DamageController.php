@@ -10,13 +10,16 @@ use App\Models\Product;
 use App\Models\Branch;
 use App\Models\Employee;
 use App\Models\SerialImei;
+use App\Models\User;
 use App\Enums\DamageStatus;
 use App\Services\MovingAvgCostingService;
+use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use App\Support\Filters\DateRangePresets;
 use App\Support\Filters\FilterableIndex;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class DamageController extends Controller
 {
@@ -123,10 +126,20 @@ class DamageController extends Controller
                 ->where('is_active', true)
                 ->first(['id', 'name', 'code'])
             : null;
+        $damageActorOptions = $this->damageActorOptions();
+        $currentDamageActorKey = null;
+
+        if ($currentEmployee) {
+            $currentDamageActorKey = 'employee:' . $currentEmployee->id;
+        } elseif ($currentUser && $currentUser->isActive() && $currentUser->isAdmin()) {
+            $currentDamageActorKey = 'admin_user:' . $currentUser->id;
+        }
 
         return Inertia::render('Damages/Create', [
             'products' => $products,
             'branches' => $branches,
+            'damageActorOptions' => $damageActorOptions,
+            'currentDamageActorKey' => $currentDamageActorKey,
             'employees' => Employee::where('is_active', true)
                 ->orderBy('name')
                 ->get(['id', 'name', 'code', 'user_id']),
@@ -151,6 +164,7 @@ class DamageController extends Controller
             'status' => 'required|in:draft,completed',
             'branch_id' => 'required|exists:branches,id',
             'employee_id' => 'nullable|exists:employees,id',
+            'damage_actor_key' => 'nullable|string',
             'note' => 'nullable|string'
         ]);
 
@@ -210,12 +224,8 @@ class DamageController extends Controller
                         "items.{$idx}.serial_ids" => 'Số lượng serial phải bằng số lượng xuất hủy (sản phẩm “' . $product->name . '”).',
                     ])->withInput();
                 }
-                $valid = SerialImei::whereIn('id', $serialIds)
-                    ->where('product_id', $product->id)
-                    ->where('status', 'in_stock')
-                    ->pluck('id')
-                    ->all();
-                if (count($valid) !== count($serialIds)) {
+                $validCount = app(SerialAvailabilityService::class)->countSellable($serialIds, $product->id);
+                if ($validCount !== count($serialIds)) {
                     return back()->withErrors([
                         "items.{$idx}.serial_ids" => 'Serial không hợp lệ: phải thuộc sản phẩm “' . $product->name . '” và đang ở trạng thái in_stock.',
                     ])->withInput();
@@ -241,12 +251,10 @@ class DamageController extends Controller
         try {
             DB::beginTransaction();
 
-            $selectedEmployee = $request->filled('employee_id')
-                ? Employee::find($request->employee_id)
-                : null;
-            $currentUser = auth()->user();
-            $employeeName = $selectedEmployee?->name
-                ?: ($currentUser?->employee?->name ?: $currentUser?->name ?: 'Chưa có');
+            $employeeName = $this->resolveDamageActorName(
+                $request->input('damage_actor_key'),
+                $request->filled('employee_id') ? (int) $request->employee_id : null
+            );
 
             $damage = Damage::create([
                 'code' => $request->code ?? 'XH' . time(),
@@ -328,6 +336,9 @@ class DamageController extends Controller
             );
 
             return redirect()->route('damages.index')->with('success', 'Tạo phiếu xuất hủy thành công.');
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
             return back()->withErrors(['error' => 'Lỗi: ' . $e->getMessage()]);
@@ -338,6 +349,118 @@ class DamageController extends Controller
      * RR-09: Hủy phiếu xuất hủy — đảo nghiệp vụ (cộng tồn lại, ghi adjust_in,
      * khôi phục serial về in_stock). Idempotent.
      */
+    public function productSerials(Product $product, SerialAvailabilityService $availability)
+    {
+        if (! $product->has_serial) {
+            return response()->json([]);
+        }
+
+        $serials = $availability->querySellableForProduct($product->id)
+            ->orderBy('serial_number')
+            ->orderBy('created_at')
+            ->get();
+
+        return response()->json(
+            $serials->map(fn ($serial) => $availability->normalizeForResponse($serial))->values()
+        );
+    }
+
+    private function damageActorOptions(): array
+    {
+        $employees = Employee::where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'user_id']);
+
+        $linkedUserIds = $employees
+            ->pluck('user_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+        $linkedUserSet = array_flip($linkedUserIds);
+
+        $options = $employees->map(fn (Employee $employee) => [
+            'value' => 'employee:' . $employee->id,
+            'label' => $employee->name,
+            'code' => $employee->code,
+            'type' => 'employee',
+            'raw_id' => $employee->id,
+            'user_id' => $employee->user_id,
+        ])->all();
+
+        $admins = User::with('role')
+            ->where('status', 'active')
+            ->get(['id', 'name', 'role_id', 'status'])
+            ->filter(fn (User $user) => $user->isAdmin() && !isset($linkedUserSet[(int) $user->id]));
+
+        foreach ($admins as $admin) {
+            $options[] = [
+                'value' => 'admin_user:' . $admin->id,
+                'label' => $admin->name . ' (Admin)',
+                'code' => 'ADMIN',
+                'type' => 'admin_user',
+                'raw_id' => $admin->id,
+                'user_id' => $admin->id,
+            ];
+        }
+
+        return collect($options)
+            ->sortBy(fn ($option) => mb_strtolower((string) $option['label']))
+            ->values()
+            ->all();
+    }
+
+    private function resolveDamageActorName(?string $actorKey, ?int $legacyEmployeeId = null): string
+    {
+        if ($actorKey) {
+            if (preg_match('/^employee:(\d+)$/', $actorKey, $matches)) {
+                $employee = Employee::where('is_active', true)->find((int) $matches[1]);
+
+                if (! $employee) {
+                    throw ValidationException::withMessages([
+                        'damage_actor_key' => 'Nhân viên xuất hủy không hợp lệ hoặc đã ngừng hoạt động.',
+                    ]);
+                }
+
+                return $employee->name;
+            }
+
+            if (preg_match('/^admin_user:(\d+)$/', $actorKey, $matches)) {
+                $user = User::with('role')
+                    ->where('status', 'active')
+                    ->find((int) $matches[1]);
+
+                if (! $user || ! $user->isAdmin()) {
+                    throw ValidationException::withMessages([
+                        'damage_actor_key' => 'Admin xuất hủy không hợp lệ hoặc đã bị khóa.',
+                    ]);
+                }
+
+                return $user->name;
+            }
+
+            throw ValidationException::withMessages([
+                'damage_actor_key' => 'Người xuất hủy không hợp lệ.',
+            ]);
+        }
+
+        if ($legacyEmployeeId) {
+            $employee = Employee::where('is_active', true)->find($legacyEmployeeId);
+
+            if ($employee) {
+                return $employee->name;
+            }
+        }
+
+        $currentUser = auth()->user();
+        $currentEmployee = $currentUser
+            ? Employee::where('user_id', $currentUser->id)
+                ->where('is_active', true)
+                ->first(['id', 'name'])
+            : null;
+
+        return $currentEmployee?->name ?: ($currentUser?->name ?: 'Chưa có');
+    }
+
     public function cancel(Damage $damage)
     {
         if ($damage->status === DamageStatus::CANCELLED) {

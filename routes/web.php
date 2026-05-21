@@ -170,6 +170,7 @@ Route::get('/stock-takes/{stockTake}', [StockTakeController::class, 'show'])->na
 Route::get('/damages', [DamageController::class, 'index'])->name('damages.index')->middleware('permission:damages.view');
 Route::middleware('permission:damages.create')->group(function () {
     Route::get('/damages/create', [DamageController::class, 'create'])->name('damages.create');
+    Route::get('/damages/products/{product}/serials', [DamageController::class, 'productSerials'])->name('damages.products.serials');
     Route::post('/damages', [DamageController::class, 'store'])->name('damages.store');
 });
 // Step 24.0B: tách quyền hủy phiếu xuất hủy.

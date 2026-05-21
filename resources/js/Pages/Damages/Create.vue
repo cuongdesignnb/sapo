@@ -2,13 +2,14 @@
 import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
-import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const props = defineProps({
     products: Array,
     branches: Array,
     employees: Array,
     currentDamageActor: Object,
+    damageActorOptions: Array,
+    currentDamageActorKey: String,
     defaultBranchId: Number,
     damageCode: String
 });
@@ -24,10 +25,7 @@ const items = ref([]);
 const note = ref('');
 const submitRef = ref(false);
 const selectedBranch = ref(props.defaultBranchId || '');
-const selectedEmployeeKey = ref(props.currentDamageActor?.employee_id
-    ? String(props.currentDamageActor.employee_id)
-    : (props.currentDamageActor ? 'current_user' : '')
-);
+const selectedActorKey = ref(props.currentDamageActorKey || '');
 
 const filteredProducts = ref([]);
 const isSearchingProduct = ref(false);
@@ -67,26 +65,19 @@ const loadSerialsForItem = async (item, force = false) => {
 
         try {
             const response = await withTimeout(
-                axios.get(`/products/${item.product_id}/serials`, {
-                    params: { status: 'ready' },
-                }),
+                axios.get(`/damages/products/${item.product_id}/serials`),
                 8000,
-                'Tải serial từ Product API quá thời gian.'
+                'Tải serial từ Damage API quá thời gian.'
             );
             serials = serialsFromResponse(response);
         } catch (primaryError) {
-            const fallback = await withTimeout(
-                axios.get(`/api/products/${item.product_id}/serials`),
-                8000,
-                'Tải serial từ POS API quá thời gian.'
-            );
-            serials = serialsFromResponse(fallback);
+            throw primaryError;
         }
 
         item.serials = serials;
     } catch (error) {
         console.error('Lỗi tải serial/IMEI khả dụng:', error);
-        item.serial_error = 'Không tải được danh sách serial/IMEI khả dụng. Bấm tải lại hoặc kiểm tra serial còn trong kho.';
+        item.serial_error = 'Không tải được serial/IMEI. Vui lòng kiểm tra quyền hoặc dữ liệu serial còn trong kho.';
         item.serials = [];
     } finally {
         item.serial_loading = false;
@@ -136,33 +127,45 @@ const toggleSerial = (item, serial) => {
 
 const serialLabel = (serial) => serial.serial_number || serial.imei || serial.code || `#${serial.id}`;
 
-const employeeOptions = computed(() => {
-    const options = (props.employees || []).map((employee) => ({
-        value: String(employee.id),
-        label: employee.name,
-        code: employee.code,
-        is_current_user: props.currentDamageActor?.employee_id === employee.id,
-    }));
-
-    if (props.currentDamageActor && !props.currentDamageActor.employee_id) {
-        options.unshift({
-            value: 'current_user',
-            label: props.currentDamageActor.name,
-            code: props.currentDamageActor.code,
-            is_current_user: true,
-        });
+const actorOptions = computed(() => {
+    if (Array.isArray(props.damageActorOptions) && props.damageActorOptions.length > 0) {
+        return props.damageActorOptions.map((actor) => ({
+            ...actor,
+            is_current_user: actor.value === props.currentDamageActorKey,
+        }));
     }
 
-    return options;
+    return (props.employees || []).map((employee) => ({
+        value: `employee:${employee.id}`,
+        label: employee.name,
+        code: employee.code,
+        type: 'employee',
+        is_current_user: props.currentDamageActor?.employee_id === employee.id,
+    }));
 });
 
-const selectedEmployee = computed(() => {
-    return employeeOptions.value.find((employee) => employee.value === selectedEmployeeKey.value) || null;
+const selectedActor = computed(() => {
+    return actorOptions.value.find((actor) => actor.value === selectedActorKey.value) || null;
 });
 
-const selectedEmployeeId = () => selectedEmployeeKey.value === 'current_user'
-    ? null
-    : (selectedEmployeeKey.value || null);
+const transactionDateDay = computed({
+    get: () => String(transactionDate.value || '').slice(0, 10),
+    set: (value) => {
+        const time = transactionDateTime.value || '00:00';
+        transactionDate.value = value ? `${value}T${time}` : '';
+    },
+});
+
+const transactionDateTime = computed({
+    get: () => {
+        const raw = String(transactionDate.value || '');
+        return raw.includes('T') ? raw.split('T')[1].slice(0, 5) : '';
+    },
+    set: (value) => {
+        const day = transactionDateDay.value || `${nowInit.getFullYear()}-${pad(nowInit.getMonth()+1)}-${pad(nowInit.getDate())}`;
+        transactionDate.value = `${day}T${value || '00:00'}`;
+    },
+});
 
 let searchTimeout = null;
 watch(searchQuery, (val) => {
@@ -254,8 +257,8 @@ const validateBeforeSave = (status) => {
         return 'Vui lòng chọn chi nhánh xuất hủy.';
     }
 
-    if (!selectedEmployee.value) {
-        return 'Vui lòng chọn nhân viên xuất hủy.';
+    if (!selectedActor.value) {
+        return 'Vui lòng chọn người xuất hủy.';
     }
 
     for (const item of items.value) {
@@ -296,7 +299,7 @@ const save = (status) => {
             code: props.damageCode,
             status: status, // 'draft' | 'completed'
             branch_id: selectedBranch.value,
-            employee_id: selectedEmployeeId(),
+            damage_actor_key: selectedActorKey.value,
             action_date: transactionDate.value,
             note: note.value,
             items: items.value.map((item) => ({
@@ -523,26 +526,34 @@ const save = (status) => {
                                 <svg class="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
                             </div>
                             <select
-                                v-model="selectedEmployeeKey"
+                                v-model="selectedActorKey"
                                 class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[13px] text-gray-800 shadow-sm hover:border-blue-400 focus:border-blue-500 focus:outline-none"
                             >
-                                <option value="">Chọn nhân viên</option>
+                                <option value="">Chọn người xuất hủy</option>
                                 <option
-                                    v-for="employee in employeeOptions"
-                                    :key="employee.value"
-                                    :value="employee.value"
+                                    v-for="actor in actorOptions"
+                                    :key="actor.value"
+                                    :value="actor.value"
                                 >
-                                    {{ employee.label }}{{ employee.is_current_user ? ' (hiện tại)' : '' }}
+                                    {{ actor.label }}{{ actor.is_current_user ? ' (hiện tại)' : '' }}
                                 </option>
                             </select>
                         </div>
-                        <DateTimePicker
-                            v-model="transactionDate"
-                            naked
-                            compact
-                            placeholder="dd/MM/yyyy HH:mm"
-                            input-class="text-gray-600 text-[12px] bg-white px-2 py-1.5 rounded border border-gray-300 outline-none focus:border-blue-500 hover:border-blue-400 w-[150px] shadow-sm"
-                        />
+                        <div class="grid w-[170px] grid-cols-[1fr_64px] gap-1">
+                            <input
+                                v-model="transactionDateDay"
+                                type="date"
+                                class="rounded border border-gray-300 bg-white px-2 py-1.5 text-[12px] text-gray-700 shadow-sm outline-none hover:border-blue-400 focus:border-blue-500"
+                                title="Ngày xuất hủy"
+                            />
+                            <input
+                                v-model="transactionDateTime"
+                                type="time"
+                                step="60"
+                                class="rounded border border-gray-300 bg-white px-2 py-1.5 text-[12px] text-gray-700 shadow-sm outline-none hover:border-blue-400 focus:border-blue-500"
+                                title="Giờ xuất hủy"
+                            />
+                        </div>
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200 flex-1">
