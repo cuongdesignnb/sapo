@@ -152,7 +152,7 @@ class CashFlowController extends Controller
     {
         $request->validate([
             'time' => 'nullable|date',
-            'category' => 'nullable|string',
+            'category' => 'nullable|string|max:255',
             'target_type' => 'nullable|string',
             'target_name' => 'nullable|string',
             'amount' => 'required|numeric|min:0',
@@ -161,6 +161,11 @@ class CashFlowController extends Controller
             'payment_method' => 'nullable|in:cash,bank,ewallet',
             'bank_account_id' => 'nullable|exists:bank_accounts,id',
         ]);
+
+        $txDate = $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time;
+        app(LockPeriodService::class)->assertNotLocked($txDate, 'cashflow_update');
+
+        $oldCategory = $cashFlow->category;
 
         $cashFlow->update([
             'time' => $request->time ? \Carbon\Carbon::parse($request->time) : $cashFlow->time,
@@ -173,6 +178,14 @@ class CashFlowController extends Controller
             'payment_method' => $request->payment_method ?? $cashFlow->payment_method,
             'bank_account_id' => ($request->payment_method ?? $cashFlow->payment_method) !== 'cash' ? $request->bank_account_id : null,
         ]);
+
+        if ($oldCategory !== $cashFlow->category) {
+            ActivityLog::log(
+                'cashflow_update_category',
+                "Cập nhật loại thu/chi phiếu {$cashFlow->code}: {$oldCategory} -> {$cashFlow->category}",
+                $cashFlow
+            );
+        }
 
         return redirect()->back()->with('success', 'Cập nhật phiếu thành công');
     }

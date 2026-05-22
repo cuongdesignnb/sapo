@@ -105,6 +105,9 @@ const getSelectedFlow = () => selectedFlowObj.value;
 
 const receiptCategories = ref(mergeUnique(defaultReceiptCategories, props.savedReceiptCategories));
 const paymentCategories = ref(mergeUnique(defaultPaymentCategories, props.savedPaymentCategories));
+const currentCategoryOptions = computed(() =>
+    form.type === "receipt" ? receiptCategories.value : paymentCategories.value
+);
 const adKeywords = [
     "fb ads",
     "facebook",
@@ -173,20 +176,46 @@ const expandedRow = ref(null);
 
 const isCategoryModalOpen = ref(false);
 const newCategoryName = ref("");
+const categoryDropdownOpen = ref(false);
+const categorySearch = ref("");
 
-const openCategoryModal = () => {
-    newCategoryName.value = "";
+const filteredCategoryOptions = computed(() => {
+    const q = String(categorySearch.value || "").trim().toLowerCase();
+    return currentCategoryOptions.value.filter((cat) =>
+        String(cat).toLowerCase().includes(q)
+    );
+});
+
+const selectCategory = (cat) => {
+    form.category = cat;
+    categoryDropdownOpen.value = false;
+    categorySearch.value = "";
+};
+
+const openCategoryModal = (name = "") => {
+    newCategoryName.value = name;
     isCategoryModalOpen.value = true;
 };
 
+const openInlineCreateCategory = () => {
+    categoryDropdownOpen.value = false;
+    openCategoryModal(categorySearch.value || "");
+};
+
 const submitCategory = () => {
-    if (!newCategoryName.value) return;
-    if (modalType.value === "receipt") {
-        receiptCategories.value.push(newCategoryName.value);
+    const name = String(newCategoryName.value || "").trim();
+    if (!name) return;
+
+    const activeType = form.type || modalType.value;
+
+    if (activeType === "receipt") {
+        receiptCategories.value = mergeUnique(receiptCategories.value, [name]);
     } else {
-        paymentCategories.value.push(newCategoryName.value);
+        paymentCategories.value = mergeUnique(paymentCategories.value, [name]);
     }
-    form.category = newCategoryName.value;
+
+    form.category = name;
+    categorySearch.value = "";
     isCategoryModalOpen.value = false;
 };
 
@@ -231,6 +260,7 @@ const openModal = (type, flow = null) => {
 
     if (flow) {
         selectedFlowObj.value = flow;
+        modalType.value = flow.type;
         form.id = flow.id;
         form.type = flow.type;
         form.time = flow.time
@@ -245,7 +275,10 @@ const openModal = (type, flow = null) => {
             flow.accounting_result === 1 || flow.accounting_result === true;
         form.payment_method = flow.payment_method || "cash";
         form.bank_account_id = flow.bank_account_id || null;
+        categoryDropdownOpen.value = false;
+        categorySearch.value = "";
     } else {
+        modalType.value = type;
         form.id = null;
         form.type = type;
         form.time = new Date().toISOString().slice(0, 16);
@@ -257,6 +290,8 @@ const openModal = (type, flow = null) => {
         form.accounting_result = true;
         form.payment_method = "cash";
         form.bank_account_id = null;
+        categoryDropdownOpen.value = false;
+        categorySearch.value = "";
     }
 
     isModalOpen.value = true;
@@ -1317,6 +1352,67 @@ const printFlow = (flow) => {
                                     placeholder="dd/MM/yyyy HH:mm"
                                     input-class="flex-1 border border-gray-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-blue-500 text-[13px]"
                                 />
+                            </div>
+                            <div class="flex items-start">
+                                <span class="w-32 text-gray-700 font-medium text-[13px] pt-2">
+                                    Loại {{ form.type === "receipt" ? "thu" : "chi" }}:
+                                </span>
+
+                                <div class="relative flex-1">
+                                    <button
+                                        type="button"
+                                        class="w-full rounded border border-gray-300 bg-white px-2.5 py-1.5 text-left text-[13px] text-gray-800 hover:border-blue-400 focus:border-blue-500"
+                                        @click="categoryDropdownOpen = !categoryDropdownOpen"
+                                    >
+                                        <span v-if="form.category">{{ form.category }}</span>
+                                        <span v-else class="text-gray-400">
+                                            Chọn loại {{ form.type === "receipt" ? "thu" : "chi" }}
+                                        </span>
+                                    </button>
+
+                                    <div
+                                        v-if="categoryDropdownOpen"
+                                        class="absolute z-[120] mt-1 w-full rounded border border-gray-200 bg-white shadow-xl"
+                                    >
+                                        <div class="p-2 border-b border-gray-100">
+                                            <input
+                                                v-model="categorySearch"
+                                                type="text"
+                                                class="w-full rounded border border-gray-300 px-2 py-1.5 text-[13px] outline-none focus:border-blue-500"
+                                                placeholder="Tìm kiếm"
+                                            />
+                                        </div>
+
+                                        <div class="max-h-56 overflow-auto py-1">
+                                            <button
+                                                v-for="cat in filteredCategoryOptions"
+                                                :key="cat"
+                                                type="button"
+                                                class="flex w-full items-center justify-between px-3 py-2 text-left text-[13px] hover:bg-blue-50"
+                                                :class="form.category === cat ? 'text-blue-600 font-semibold' : 'text-gray-700'"
+                                                @click="selectCategory(cat)"
+                                            >
+                                                <span>{{ cat }}</span>
+                                                <span v-if="form.category === cat">✓</span>
+                                            </button>
+
+                                            <div
+                                                v-if="filteredCategoryOptions.length === 0"
+                                                class="px-3 py-2 text-[13px] text-gray-400"
+                                            >
+                                                Không tìm thấy loại phù hợp
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            class="w-full border-t border-gray-100 px-3 py-2 text-left text-[13px] font-semibold text-blue-600 hover:bg-blue-50"
+                                            @click="openInlineCreateCategory"
+                                        >
+                                            + Tạo mới
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                             <div class="flex items-center">
                                 <span
