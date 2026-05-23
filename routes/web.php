@@ -58,6 +58,8 @@ Route::middleware('permission:products.create')->group(function () {
 Route::middleware('permission:products.edit')->group(function () {
     Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
     Route::post('/products/bulk-update-category', [ProductController::class, 'bulkUpdateCategory'])->name('products.bulk-update-category');
+    Route::post('/products/{product}/deactivate', [ProductController::class, 'deactivate'])->name('products.deactivate');
+    Route::post('/products/{product}/activate', [ProductController::class, 'activate'])->name('products.activate');
 });
 Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy')->middleware('permission:products.delete');
 Route::middleware('permission:serials.create')->group(function () {

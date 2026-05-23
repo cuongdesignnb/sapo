@@ -20,7 +20,7 @@ const sortBy = ref(props.filters?.sort_by || "");
 const sortDirection = ref(props.filters?.sort_direction || "");
 const categoryFilter = ref(props.filters?.category_id || "");
 const brandFilter = ref(props.filters?.brand_id || "");
-const statusFilter = ref(props.filters?.status || "");
+const statusFilter = ref(props.filters?.status || "active");
 const stockFilter = ref(props.filters?.stock_filter || "");
 const typeFilter = ref(props.filters?.type || "");
 
@@ -131,8 +131,34 @@ const submitTransfer = async () => {
 
 // Delete single product
 const deleteProduct = (product) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa hàng hóa "${product.name}" (${product.sku})?`)) return;
+    if (!confirm('Xóa hàng hóa là thao tác khác với Ngừng kinh doanh và có thể ảnh hưởng dữ liệu liên quan. Bạn có chắc muốn xóa?')) return;
     router.delete(`/products/${product.id}`, { preserveScroll: true });
+};
+
+const deactivateProduct = (product) => {
+    if (!product?.id) return;
+
+    if (!confirm(`Ngừng kinh doanh hàng hóa "${product.name}"? Hàng sẽ không hiển thị ở danh sách mặc định, nhưng lịch sử chứng từ và tồn kho vẫn được giữ.`)) {
+        return;
+    }
+
+    router.post(`/products/${product.id}/deactivate`, {}, {
+        preserveScroll: true,
+        preserveState: false,
+    });
+};
+
+const activateProduct = (product) => {
+    if (!product?.id) return;
+
+    if (!confirm(`Kinh doanh lại hàng hóa "${product.name}"?`)) {
+        return;
+    }
+
+    router.post(`/products/${product.id}/activate`, {}, {
+        preserveScroll: true,
+        preserveState: false,
+    });
 };
 
 // Bulk delete
@@ -438,7 +464,7 @@ const formatDate = (val) => {
                         v-model="statusFilter"
                         class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
                     >
-                        <option value="">Đang kinh doanh</option>
+                        <option value="active">Đang kinh doanh</option>
                         <option value="inactive">Ngừng kinh doanh</option>
                         <option value="all">Tất cả</option>
                     </select>
@@ -457,9 +483,9 @@ const formatDate = (val) => {
                     </select>
                 </div>
                 <!-- Nút xóa bộ lọc -->
-                <div v-if="categoryFilter || brandFilter || statusFilter || stockFilter || typeFilter">
+                <div v-if="categoryFilter || brandFilter || (statusFilter && statusFilter !== 'active') || stockFilter || typeFilter">
                     <button
-                        @click="categoryFilter = ''; brandFilter = ''; statusFilter = ''; stockFilter = ''; typeFilter = '';"
+                        @click="categoryFilter = ''; brandFilter = ''; statusFilter = 'active'; stockFilter = ''; typeFilter = '';"
                         class="w-full text-center text-sm text-blue-600 hover:text-blue-800 font-medium py-2 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
                     >
                         ✕ Xóa bộ lọc
@@ -657,7 +683,15 @@ const formatDate = (val) => {
                                     {{ product.sku }}
                                 </td>
                                 <td class="p-3 font-medium text-gray-800">
-                                    {{ product.name }}
+                                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                                        <span>{{ product.name }}</span>
+                                        <span
+                                            class="inline-flex rounded px-2 py-0.5 text-[11px] font-semibold"
+                                            :class="product.is_active === false ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'"
+                                        >
+                                            {{ product.is_active === false ? 'Ngừng kinh doanh' : 'Đang kinh doanh' }}
+                                        </span>
+                                    </div>
                                     <!-- Khi user search theo serial/IMEI → hiển thị nhãn trạng thái serial khớp -->
                                     <div v-if="product.matched_serials && product.matched_serials.length > 0" class="flex flex-wrap gap-1 mt-1">
                                         <span v-for="s in product.matched_serials" :key="s.id"
@@ -962,6 +996,22 @@ const formatDate = (val) => {
                                                     <i class="fas fa-edit"></i>
                                                     Cập nhật
                                                 </Link>
+                                                <button
+                                                    v-if="product.is_active !== false"
+                                                    type="button"
+                                                    @click.stop="deactivateProduct(product)"
+                                                    class="px-5 py-2 rounded border border-orange-300 bg-orange-50 text-orange-700 font-bold flex items-center gap-2 transition-all shadow-sm hover:bg-orange-100 animate-fade-in"
+                                                >
+                                                    Ngừng kinh doanh
+                                                </button>
+                                                <button
+                                                    v-if="product.is_active === false"
+                                                    type="button"
+                                                    @click.stop="activateProduct(product)"
+                                                    class="px-5 py-2 rounded border border-green-300 bg-green-50 text-green-700 font-bold flex items-center gap-2 transition-all shadow-sm hover:bg-green-100 animate-fade-in"
+                                                >
+                                                    Kinh doanh lại
+                                                </button>
                                                 <button
                                                     @click.stop="deleteProduct(product)"
                                                     class="bg-white hover:bg-red-50 text-red-600 border border-red-200 px-5 py-2 rounded text-sm font-bold flex items-center gap-2 transition-all shadow-sm"

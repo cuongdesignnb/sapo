@@ -111,12 +111,11 @@ class ProductController extends Controller
         }
 
         // Lọc theo trạng thái
-        if ($request->filled('status')) {
-            if ($request->input('status') === 'inactive') {
-                $query->where('is_active', false);
-            } elseif ($request->input('status') === 'all') {
-                // Không lọc - hiển thị tất cả
-            }
+        $status = $request->input('status', 'active');
+        if ($status === 'inactive') {
+            $query->where('is_active', false);
+        } elseif ($status === 'all') {
+            // Không lọc - hiển thị tất cả
         } else {
             // Mặc định: chỉ hiển thị đang kinh doanh
             $query->where(function ($q) {
@@ -197,7 +196,10 @@ class ProductController extends Controller
             'products' => $products,
             'categories' => Category::with('children')->whereNull('parent_id')->orderBy('name')->get(),
             'brands' => Brand::all(),
-            'filters' => $request->only('search', 'category_id', 'brand_id', 'type', 'status', 'stock_filter', 'sort_by', 'sort_direction'),
+            'filters' => array_merge(
+                ['status' => 'active'],
+                $request->only('search', 'category_id', 'brand_id', 'type', 'status', 'stock_filter', 'sort_by', 'sort_direction')
+            ),
             'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
         ]);
     }
@@ -1326,5 +1328,43 @@ class ProductController extends Controller
             'success' => true,
             'message' => "Đã chuyển {$count} sản phẩm sang nhóm \"{$category->name}\".",
         ]);
+    }
+
+    public function deactivate(Product $product)
+    {
+        if ($product->is_active === false) {
+            return back()->with('success', 'Hàng hóa đã ngừng kinh doanh.');
+        }
+
+        $product->update(['is_active' => false]);
+
+        if (class_exists(\App\Models\ActivityLog::class)) {
+            \App\Models\ActivityLog::log(
+                'product_update',
+                "Ngừng kinh doanh hàng hóa {$product->sku} - {$product->name}",
+                $product
+            );
+        }
+
+        return back()->with('success', 'Đã ngừng kinh doanh hàng hóa.');
+    }
+
+    public function activate(Product $product)
+    {
+        if ($product->is_active === true) {
+            return back()->with('success', 'Hàng hóa đang kinh doanh.');
+        }
+
+        $product->update(['is_active' => true]);
+
+        if (class_exists(\App\Models\ActivityLog::class)) {
+            \App\Models\ActivityLog::log(
+                'product_update',
+                "Kinh doanh lại hàng hóa {$product->sku} - {$product->name}",
+                $product
+            );
+        }
+
+        return back()->with('success', 'Đã bật kinh doanh lại hàng hóa.');
     }
 }
