@@ -524,6 +524,21 @@ class CustomerController extends Controller
             'adjustment'     => 'Điều chỉnh',
         ];
 
+        $isInvoiceCancelDebt = static function ($debt): bool {
+            $type = (string) $debt->type;
+            $refCode = (string) ($debt->ref_code ?? '');
+            $note = mb_strtolower((string) ($debt->note ?? ''));
+
+            return $type === 'adjustment'
+                && (
+                    str_starts_with($refCode, 'HD')
+                    || str_contains($note, 'hủy hóa đơn')
+                    || str_contains($note, 'huy hoa don')
+                    || str_contains($note, 'đảo công nợ')
+                    || str_contains($note, 'dao cong no')
+                );
+        };
+
         // ─── 1) LEDGER entries (customer_debts) ─────────────────────────
         $debts = \App\Models\CustomerDebt::where('customer_id', $customer->id)
             ->orderByDesc('recorded_at')
@@ -598,16 +613,25 @@ class CustomerController extends Controller
 
         $matchedSettlementIds = array_values(array_unique($matchedSettlementIds));
 
-        $mapLedgerEntry = function ($d, array $settlementMetaByDebtId = []) use ($typeLabels) {
+        $mapLedgerEntry = function ($d, array $settlementMetaByDebtId = []) use ($typeLabels, $isInvoiceCancelDebt) {
             $amount = (float) $d->amount;
             $settlementMeta = $settlementMetaByDebtId[$d->id] ?? null;
             $balance = $settlementMeta['display_balance'] ?? (float) $d->debt_total;
             $recordedAt = $d->recorded_at ?? $d->created_at;
+
+            $label = $isInvoiceCancelDebt($d)
+                ? 'Hủy hóa đơn'
+                : ($typeLabels[$d->type] ?? $d->type);
+
+            $typeRaw = $isInvoiceCancelDebt($d)
+                ? 'invoice_cancel_reversal'
+                : $d->type;
+
             $entry = [
                 'id'              => 'ldg-' . $d->id,
                 'code'            => $d->ref_code,
-                'type'            => $typeLabels[$d->type] ?? $d->type,
-                'type_raw'        => $d->type,
+                'type'            => $label,
+                'type_raw'        => $typeRaw,
                 'amount'          => $amount,
                 'customer_effect' => $amount,
                 'debt_total'      => $balance,
@@ -639,9 +663,13 @@ class CustomerController extends Controller
 
         $invoices = Invoice::where('customer_id', $customer->id)
             ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
+            ->get(['id', 'code', 'total', 'customer_paid', 'status', 'created_at']);
 
         foreach ($invoices as $inv) {
+            if ($inv->status === 'Đã hủy') {
+                continue;
+            }
+
             $legacyEntries->push([
                 'id' => 'inv-' . $inv->id,
                 'code' => $inv->code,
@@ -805,6 +833,19 @@ class CustomerController extends Controller
                 'note' => 'nullable|string|max:500',
                 'date' => 'nullable|date',
             ]);
+
+            // Guard: Check if all allocated invoices are cancelled
+            $requestedInvoiceIds = collect($validated['allocations'])->pluck('invoice_id')->toArray();
+            $cancelledCount = Invoice::whereIn('id', $requestedInvoiceIds)
+                ->where('status', 'Đã hủy')
+                ->count();
+            if ($cancelledCount > 0 && $cancelledCount === count($requestedInvoiceIds)) {
+                $msg = 'Không thể thu nợ cho hóa đơn đã hủy.';
+                return $request->wantsJson()
+                    ? response()->json(['success' => false, 'message' => $msg], 422)
+                    : back()->with('error', $msg);
+            }
+
             $paidAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
 
             $totalAmount = 0;
@@ -813,6 +854,7 @@ class CustomerController extends Controller
             foreach ($validated['allocations'] as $alloc) {
                 $invoice = Invoice::where('id', $alloc['invoice_id'])
                     ->where('customer_id', $customer->id)
+                    ->where('status', '!=', 'Đã hủy')
                     ->first();
 
                 if (!$invoice) continue;
@@ -872,6 +914,7 @@ class CustomerController extends Controller
 
             // Get invoices with outstanding balance, oldest first
             $invoices = Invoice::where('customer_id', $customer->id)
+                ->where('status', '!=', 'Đã hủy')
                 ->whereRaw('total > customer_paid')
                 ->orderBy('created_at', 'asc')
                 ->get();
@@ -931,6 +974,7 @@ class CustomerController extends Controller
     public function outstandingInvoices(Customer $customer)
     {
         $invoices = Invoice::where('customer_id', $customer->id)
+            ->where('status', '!=', 'Đã hủy')
             ->whereRaw('total > customer_paid')
             ->orderBy('created_at', 'asc')
             ->get(['id', 'code', 'total', 'customer_paid', 'created_at'])

@@ -428,8 +428,9 @@ class InvoiceController extends Controller
             }
 
             // RR-01: Đổi status CashFlow sang cancelled (không xóa) — đồng bộ với CashFlowController@cancel
-            CashFlow::where('reference_type', 'Invoice')
+            $cancelledCashFlowCount = CashFlow::where('reference_type', 'Invoice')
                 ->where('reference_code', $invoice->code)
+                ->where('status', '!=', 'cancelled')
                 ->update(['status' => 'cancelled']);
 
             // RR-01: Đổi trạng thái hóa đơn — KHÔNG xóa vật lý (giữ items cho audit trail)
@@ -483,32 +484,55 @@ class InvoiceController extends Controller
 
     public function paymentHistory(Invoice $invoice)
     {
-        $payments = \App\Models\CashFlow::where('target_type', 'Hóa đơn')
-            ->where('target_id', $invoice->id)
-            ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'created_at', 'amount', 'note', 'payment_method']);
+        $payments = \App\Models\CashFlow::withTrashed()
+            ->where('reference_type', 'Invoice')
+            ->where('reference_code', $invoice->code)
+            ->where('type', 'receipt')
+            ->orderBy('time', 'asc')
+            ->orderBy('created_at', 'asc')
+            ->get();
 
-        // If no CashFlow records, construct from the invoice itself
-        if ($payments->isEmpty() && $invoice->customer_paid > 0) {
+        // If no CashFlow records, construct from the invoice itself (legacy compatibility, but only if not cancelled)
+        if ($payments->isEmpty() && $invoice->customer_paid > 0 && $invoice->status !== 'Đã hủy') {
             $payments = collect([[
                 'id' => $invoice->id,
                 'code' => $invoice->code,
                 'created_at' => $invoice->created_at,
-                'amount' => $invoice->customer_paid,
+                'time' => $invoice->created_at,
+                'amount' => (float) $invoice->customer_paid,
                 'method' => 'Tiền mặt',
+                'payment_method' => 'Tiền mặt',
+                'status' => 'completed',
+                'is_cancelled' => false,
                 'note' => 'Thanh toán khi tạo hóa đơn',
+                'description' => 'Thanh toán khi tạo hóa đơn',
             ]]);
-            return response()->json(['payments' => $payments]);
+        } else {
+            $payments = $payments->map(fn($cf) => [
+                'id' => $cf->id,
+                'code' => $cf->code,
+                'created_at' => $cf->created_at,
+                'time' => $cf->time,
+                'amount' => (float) $cf->amount,
+                'method' => $cf->payment_method ?: 'Tiền mặt',
+                'payment_method' => $cf->payment_method ?: 'Tiền mặt',
+                'status' => $cf->status,
+                'is_cancelled' => $cf->status === 'cancelled',
+                'note' => $cf->description,
+                'description' => $cf->description,
+            ])->values();
         }
 
-        return response()->json(['payments' => $payments->map(fn($p) => [
-            'id' => $p->id,
-            'code' => $p->code,
-            'created_at' => $p->created_at,
-            'amount' => $p->amount,
-            'method' => $p->payment_method ?? 'Tiền mặt',
-            'note' => $p->note,
-        ])]);
+        return response()->json([
+            'invoice' => [
+                'id' => $invoice->id,
+                'code' => $invoice->code,
+                'status' => $invoice->status,
+                'customer_paid_snapshot' => (float) $invoice->customer_paid,
+                'effective_paid' => $invoice->status === 'Đã hủy' ? 0.0 : (float) $invoice->customer_paid,
+            ],
+            'payments' => $payments,
+        ]);
     }
 
     public function export(Request $request)

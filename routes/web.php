@@ -264,6 +264,7 @@ Route::get('/api/customers/search', [CustomerController::class, 'apiSearch'])
 // Customer debt management
 Route::post('/customers/{customer}/debt-payment', [CustomerController::class, 'debtPayment'])->middleware('permission:customers.debt_payment');
 Route::post('/customers/{customer}/debt-adjust', [CustomerController::class, 'debtAdjust'])->middleware('permission:customers.debt_adjust');
+Route::get('/customers/{customer}/outstanding-invoices', [CustomerController::class, 'outstandingInvoices'])->middleware('permission:customers.debt_payment');
 
 // Print & show routes
 Route::get('/invoices/{invoice}/print', [InvoiceController::class, 'print'])->name('invoices.print')->middleware('permission:invoices.print');

@@ -118,6 +118,11 @@ const paymentHistoryData = reactive({});
 const paymentLoading = reactive({});
 
 const getInvoiceTab = (id) => invoiceTabs[id] || "info";
+const isInvoiceCancelled = (invoice) => invoice?.status === 'Đã hủy';
+const effectiveCustomerPaid = (invoice) => {
+    if (isInvoiceCancelled(invoice)) return 0;
+    return Number(invoice?.customer_paid || 0);
+};
 const setInvoiceTab = (id, tab) => {
     invoiceTabs[id] = tab;
     if (tab === "payment" && !paymentHistoryData[id]) loadPaymentHistory(id);
@@ -1066,6 +1071,12 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                     "
                                                 >
                                                     <div
+                                                        v-if="invoice.status === 'Đã hủy' && Number(invoice.customer_paid || 0) > 0"
+                                                        class="mb-3 text-xs text-yellow-600 bg-yellow-50 p-2.5 border border-yellow-200 rounded font-medium"
+                                                    >
+                                                        Hóa đơn đã hủy. Khoản đã trả trước hủy chỉ còn là snapshot, không còn hiệu lực trong sổ quỹ.
+                                                    </div>
+                                                    <div
                                                         v-if="
                                                             !paymentHistoryData[
                                                                 invoice.id
@@ -1121,9 +1132,16 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                 :key="p.id"
                                                             >
                                                                 <td
-                                                                    class="px-3 py-2 text-blue-600"
+                                                                    class="px-3 py-2 text-blue-600 font-medium"
+                                                                    :class="{ 'text-gray-400 line-through': p.is_cancelled || p.status === 'cancelled' }"
                                                                 >
                                                                     {{ p.code }}
+                                                                    <span
+                                                                        v-if="p.status === 'cancelled' || p.is_cancelled"
+                                                                        class="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-600 inline-block"
+                                                                    >
+                                                                        Đã hủy
+                                                                    </span>
                                                                 </td>
                                                                 <td
                                                                     class="px-3 py-2 text-gray-500"
@@ -1146,6 +1164,7 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                 </td>
                                                                 <td
                                                                     class="px-3 py-2 text-right font-medium"
+                                                                    :class="p.is_cancelled || p.status === 'cancelled' ? 'text-gray-400 line-through' : 'text-gray-800'"
                                                                 >
                                                                     {{
                                                                         formatCurrency(
