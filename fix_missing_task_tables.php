@@ -11,6 +11,23 @@ try {
         echo "This script is designed for the MySQL server database.\n";
     }
 
+    echo "Checking conflicting foreign key constraints in database:\n";
+    $constraints = DB::select("
+        SELECT CONSTRAINT_NAME, TABLE_NAME 
+        FROM information_schema.TABLE_CONSTRAINTS 
+        WHERE CONSTRAINT_SCHEMA = DATABASE() 
+          AND CONSTRAINT_NAME LIKE '%device_repairs%'
+    ");
+
+    if (empty($constraints)) {
+        echo "No conflicting constraints containing 'device_repairs' found.\n";
+    } else {
+        echo "Found conflicting constraints:\n";
+        foreach ($constraints as $c) {
+            echo " - Constraint: {$c->CONSTRAINT_NAME} on Table: {$c->TABLE_NAME}\n";
+        }
+    }
+
     $migrationsToDelete = [
         '2026_03_11_000002_create_device_repairs_table',
         '2026_03_11_000003_create_device_repair_parts_table',
@@ -25,7 +42,7 @@ try {
         '2026_03_19_221000_add_direction_to_task_parts_table'
     ];
 
-    echo "Checking migration records to delete:\n";
+    echo "\nChecking migration records to delete:\n";
     $found = DB::table('migrations')
         ->whereIn('migration', $migrationsToDelete)
         ->pluck('migration')
@@ -34,12 +51,7 @@ try {
     if (empty($found)) {
         echo "No matching migration records found in the 'migrations' table.\n";
     } else {
-        echo "Found the following records: \n";
-        foreach ($found as $m) {
-            echo " - {$m}\n";
-        }
-        
-        echo "\nDeleting these records from 'migrations' table...\n";
+        echo "Deleting these records from 'migrations' table...\n";
         $deleted = DB::table('migrations')
             ->whereIn('migration', $migrationsToDelete)
             ->delete();
