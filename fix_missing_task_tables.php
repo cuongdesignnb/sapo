@@ -21,7 +21,8 @@ try {
         '2026_03_15_000004_upgrade_device_repairs_to_tasks',
         '2026_03_15_000005_create_task_assignments_table',
         '2026_03_15_000006_create_task_comments_table',
-        '2026_03_15_000007_seed_task_module_setting'
+        '2026_03_15_000007_seed_task_module_setting',
+        '2026_03_19_221000_add_direction_to_task_parts_table'
     ];
 
     echo "Checking migration records to delete:\n";
