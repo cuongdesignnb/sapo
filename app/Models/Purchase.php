@@ -13,6 +13,8 @@ class Purchase extends Model
         'employee_id',
         'total_amount',
         'discount',
+        'other_costs',
+        'other_costs_total',
         'paid_amount',
         'debt_amount',
         'note',
@@ -20,10 +22,13 @@ class Purchase extends Model
         'purchase_date',
         'payment_method',
         'bank_account_info',
+        'purchase_order_id',
     ];
 
     protected $casts = [
         'purchase_date' => 'datetime',
+        'other_costs' => 'array',
+        'other_costs_total' => 'decimal:2',
     ];
 
     public function items()
@@ -44,5 +49,10 @@ class Purchase extends Model
     public function employee()
     {
         return $this->belongsTo(Employee::class);
+    }
+
+    public function purchaseOrder()
+    {
+        return $this->belongsTo(PurchaseOrder::class);
     }
 }

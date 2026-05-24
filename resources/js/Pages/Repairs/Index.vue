@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -116,8 +117,6 @@ const goPage = (page) => {
     loadRepairs();
 };
 
-const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
-
 const statusBadge = (status) => {
     const map = {
         pending: { label: "Chờ xử lý", cls: "bg-yellow-100 text-yellow-700" },
@@ -127,7 +126,13 @@ const statusBadge = (status) => {
     return map[status] || { label: status, cls: "bg-gray-100 text-gray-600" };
 };
 
-const repairStatusBadge = (rs) => {
+// HOTFIX 24.16C — see Repairs/Show.vue for rationale.
+const repairStatusBadge = (serialOrRs) => {
+    const rs = typeof serialOrRs === "string" ? serialOrRs : serialOrRs?.repair_status;
+    const status = typeof serialOrRs === "object" ? serialOrRs?.status : null;
+    if (rs === "ready" && status === "dismantled") {
+        return { label: "⚠ Đã bóc tách", cls: "bg-red-100 text-red-700" };
+    }
     const map = {
         not_started: { label: "Chưa làm", cls: "bg-red-100 text-red-600" },
         repairing: { label: "Đang xử lý", cls: "bg-yellow-100 text-yellow-600" },
@@ -218,10 +223,10 @@ loadRepairs();
                             <td class="px-4 py-3 text-center">
                                 <span
                                     v-if="r.serial_imei?.repair_status"
-                                    :class="repairStatusBadge(r.serial_imei.repair_status).cls"
+                                    :class="repairStatusBadge(r.serial_imei).cls"
                                     class="px-2 py-0.5 rounded-full text-xs font-semibold"
                                 >
-                                    {{ repairStatusBadge(r.serial_imei.repair_status).label }}
+                                    {{ repairStatusBadge(r.serial_imei).label }}
                                 </span>
                             </td>
                             <td class="px-4 py-3 text-center">
@@ -285,7 +290,7 @@ loadRepairs();
                             </div>
                         </div>
                         <div v-if="selectedSerial" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                            <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}đ
+                            <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}
                         </div>
                     </div>
 

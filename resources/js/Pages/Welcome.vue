@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "../Layouts/AppLayout.vue";
@@ -19,7 +20,7 @@ const sortBy = ref(props.filters?.sort_by || "");
 const sortDirection = ref(props.filters?.sort_direction || "");
 const categoryFilter = ref(props.filters?.category_id || "");
 const brandFilter = ref(props.filters?.brand_id || "");
-const statusFilter = ref(props.filters?.status || "");
+const statusFilter = ref(props.filters?.status || "active");
 const stockFilter = ref(props.filters?.stock_filter || "");
 const typeFilter = ref(props.filters?.type || "");
 
@@ -130,8 +131,34 @@ const submitTransfer = async () => {
 
 // Delete single product
 const deleteProduct = (product) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa hàng hóa "${product.name}" (${product.sku})?`)) return;
+    if (!confirm('Xóa hàng hóa là thao tác khác với Ngừng kinh doanh và có thể ảnh hưởng dữ liệu liên quan. Bạn có chắc muốn xóa?')) return;
     router.delete(`/products/${product.id}`, { preserveScroll: true });
+};
+
+const deactivateProduct = (product) => {
+    if (!product?.id) return;
+
+    if (!confirm(`Ngừng kinh doanh hàng hóa "${product.name}"? Hàng sẽ không hiển thị ở danh sách mặc định, nhưng lịch sử chứng từ và tồn kho vẫn được giữ.`)) {
+        return;
+    }
+
+    router.post(`/products/${product.id}/deactivate`, {}, {
+        preserveScroll: true,
+        preserveState: false,
+    });
+};
+
+const activateProduct = (product) => {
+    if (!product?.id) return;
+
+    if (!confirm(`Kinh doanh lại hàng hóa "${product.name}"?`)) {
+        return;
+    }
+
+    router.post(`/products/${product.id}/activate`, {}, {
+        preserveScroll: true,
+        preserveState: false,
+    });
 };
 
 // Bulk delete
@@ -196,11 +223,17 @@ const closeDropdown = () => {
 const showDocPopup = ref(false);
 const docLoading = ref(false);
 const docDetail = ref(null);
+const openDocSerialIndex = ref(null);
+
+const toggleDocItemSerials = (idx) => {
+    openDocSerialIndex.value = openDocSerialIndex.value === idx ? null : idx;
+};
 
 const openDocPopup = async (docType, docId) => {
     showDocPopup.value = true;
     docLoading.value = true;
     docDetail.value = null;
+    openDocSerialIndex.value = null;
     try {
         const res = await axios.get("/products/document-detail", {
             params: { type: docType, id: docId },
@@ -216,6 +249,7 @@ const openDocPopup = async (docType, docId) => {
 const closeDocPopup = () => {
     showDocPopup.value = false;
     docDetail.value = null;
+    openDocSerialIndex.value = null;
 };
 
 const toggleExpand = async (product) => {
@@ -302,11 +336,60 @@ const serialStatusLabel = (status) => {
         returning: "Đang trả",
         warranty: "Bảo hành",
         defective: "Lỗi",
+        dismantled: "Đã bóc tách",
     };
     return map[status] || status;
 };
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString();
+const blockedRepairStatuses = ["not_started", "repairing"];
+
+const isSerialInRepairFlow = (serial) =>
+    serial?.status === "in_stock" &&
+    blockedRepairStatuses.includes(serial?.repair_status);
+
+const isSerialReadyForSale = (serial) =>
+    serial?.status === "in_stock" &&
+    !blockedRepairStatuses.includes(serial?.repair_status);
+
+const serialRowBadge = (serial) => {
+    if (!serial) return null;
+
+    if (serial.status === "dismantled") {
+        return {
+            label: "Đã bóc tách",
+            icon: "⚠",
+            class: "bg-red-100 text-red-700",
+        };
+    }
+
+    if (serial.status !== "in_stock") {
+        return null;
+    }
+
+    if (serial.repair_status === "repairing") {
+        return {
+            label: "Đang sửa",
+            icon: "🔧",
+            class: "bg-yellow-100 text-yellow-700",
+        };
+    }
+
+    if (serial.repair_status === "not_started") {
+        return {
+            label: "Chờ sửa",
+            icon: "⏳",
+            class: "bg-red-100 text-red-600",
+        };
+    }
+
+    return {
+        label: "Sẵn bán",
+        icon: "✓",
+        class: "bg-green-100 text-green-600",
+    };
+};
+
+
 const formatDate = (val) => {
     if (!val) return "";
     return new Date(val).toLocaleString("vi-VN");
@@ -381,7 +464,7 @@ const formatDate = (val) => {
                         v-model="statusFilter"
                         class="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none bg-white"
                     >
-                        <option value="">Đang kinh doanh</option>
+                        <option value="active">Đang kinh doanh</option>
                         <option value="inactive">Ngừng kinh doanh</option>
                         <option value="all">Tất cả</option>
                     </select>
@@ -400,9 +483,9 @@ const formatDate = (val) => {
                     </select>
                 </div>
                 <!-- Nút xóa bộ lọc -->
-                <div v-if="categoryFilter || brandFilter || statusFilter || stockFilter || typeFilter">
+                <div v-if="categoryFilter || brandFilter || (statusFilter && statusFilter !== 'active') || stockFilter || typeFilter">
                     <button
-                        @click="categoryFilter = ''; brandFilter = ''; statusFilter = ''; stockFilter = ''; typeFilter = '';"
+                        @click="categoryFilter = ''; brandFilter = ''; statusFilter = 'active'; stockFilter = ''; typeFilter = '';"
                         class="w-full text-center text-sm text-blue-600 hover:text-blue-800 font-medium py-2 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
                     >
                         ✕ Xóa bộ lọc
@@ -554,6 +637,7 @@ const formatDate = (val) => {
                             <th class="p-3">Nhóm hàng</th>
                             <SortableHeader label="Giá bán" field="retail_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                             <SortableHeader v-if="canViewCostPrice" label="Giá vốn (BQ)" field="cost_price" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
+                            <th v-if="canViewCostPrice" class="p-3 text-right text-xs">Giá vốn BQ cuối</th>
                             <SortableHeader label="Tồn kho" field="stock_quantity" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
@@ -599,36 +683,72 @@ const formatDate = (val) => {
                                     {{ product.sku }}
                                 </td>
                                 <td class="p-3 font-medium text-gray-800">
-                                    {{ product.name }}
+                                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                                        <span>{{ product.name }}</span>
+                                        <span
+                                            class="inline-flex rounded px-2 py-0.5 text-[11px] font-semibold"
+                                            :class="product.is_active === false ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'"
+                                        >
+                                            {{ product.is_active === false ? 'Ngừng kinh doanh' : 'Đang kinh doanh' }}
+                                        </span>
+                                    </div>
+                                    <!-- Khi user search theo serial/IMEI → hiển thị nhãn trạng thái serial khớp -->
+                                    <div v-if="product.matched_serials && product.matched_serials.length > 0" class="flex flex-wrap gap-1 mt-1">
+                                        <span v-for="s in product.matched_serials" :key="s.id"
+                                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border"
+                                            :class="{
+                                                'bg-green-50 text-green-700 border-green-200': s.status === 'in_stock' && !['not_started','repairing'].includes(s.repair_status),
+                                                'bg-orange-50 text-orange-700 border-orange-200': s.status === 'in_stock' && ['not_started','repairing'].includes(s.repair_status),
+                                                'bg-gray-100 text-gray-500 border-gray-200': s.status === 'sold',
+                                                'bg-yellow-50 text-yellow-700 border-yellow-200': s.status === 'returning' || s.status === 'returned',
+                                                'bg-blue-50 text-blue-700 border-blue-200': s.status === 'warranty',
+                                                'bg-red-50 text-red-700 border-red-200': s.status === 'defective',
+                                            }">
+                                            <span class="font-mono">{{ s.serial_number }}</span>
+                                            <span>·</span>
+                                            <span>{{
+                                                s.status === 'in_stock' && ['not_started','repairing'].includes(s.repair_status) ? 'Đang sửa chữa' :
+                                                s.status === 'in_stock' ? 'Sẵn hàng' :
+                                                s.status === 'sold' ? 'Đã bán' :
+                                                s.status === 'returning' ? 'Đang trả' :
+                                                s.status === 'returned' ? 'Đã trả' :
+                                                s.status === 'warranty' ? 'Bảo hành' :
+                                                s.status === 'defective' ? 'Lỗi' : s.status
+                                            }}</span>
+                                        </span>
+                                    </div>
                                 </td>
                                 <td class="p-3 text-gray-600 text-sm">
                                     {{ product.category?.name || '---' }}
                                 </td>
                                 <td class="p-3 text-right">
-                                    {{
-                                        Number(
-                                            product.retail_price || 0,
-                                        ).toLocaleString()
-                                    }}
+                                    {{ formatCurrency(product.retail_price || 0) }}
                                 </td>
                                 <td v-if="canViewCostPrice" class="p-3 text-right text-gray-500">
-                                    {{
-                                        Number(
-                                            product.cost_price || 0,
-                                        ).toLocaleString()
-                                    }}
+                                    {{ formatCurrency(product.cost_price || 0) }}
+                                </td>
+                                <td v-if="canViewCostPrice" class="p-3 text-right">
+                                    <template v-if="product.has_serial && product.avg_final_cost">
+                                        <span class="font-semibold text-indigo-600">{{ formatCurrency(product.avg_final_cost || 0) }}</span>
+                                    </template>
+                                    <template v-else>
+                                        <span class="text-gray-400">---</span>
+                                    </template>
                                 </td>
                                 <td class="p-3 text-right">
                                     <!-- Sản phẩm có Serial -->
                                     <template v-if="product.has_serial">
-                                        <div class="text-[13px] font-bold text-gray-800">{{ product.total_serial_count || 0 }} serial</div>
+                                        <div class="text-[13px] font-bold text-gray-800">{{ product.in_stock_count || 0 }} <span class="text-gray-400 font-normal">tồn kho</span></div>
                                         <div class="flex flex-col items-end gap-0.5 mt-1">
-                                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold inline-flex items-center gap-0.5">
+                                            <span v-if="product.ready_count > 0" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold inline-flex items-center gap-0.5">
                                                 <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
-                                                Sẵn bán: {{ product.ready_count || 0 }}
+                                                Sẵn bán: {{ product.ready_count }}
                                             </span>
                                             <span v-if="product.repairing_count > 0" class="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold inline-flex items-center gap-0.5">
-                                                🔧 Chờ xử lý: {{ product.repairing_count }}
+                                                🔧 Đang sửa chữa: {{ product.repairing_count }}
+                                            </span>
+                                            <span v-if="(product.in_stock_count || 0) === 0" class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-bold">
+                                                Hết hàng
                                             </span>
                                         </div>
                                     </template>
@@ -642,7 +762,7 @@ const formatDate = (val) => {
                                 v-if="product.expanded"
                                 class="group transition-colors bg-gray-50/30"
                             >
-                                <td :colspan="canViewCostPrice ? 8 : 7" class="p-0">
+                                <td :colspan="canViewCostPrice ? 9 : 7" class="p-0">
                                     <div
                                         class="px-6 py-4 bg-[#f8fbff] shadow-inner border-y border-blue-100"
                                     >
@@ -876,6 +996,22 @@ const formatDate = (val) => {
                                                     <i class="fas fa-edit"></i>
                                                     Cập nhật
                                                 </Link>
+                                                <button
+                                                    v-if="product.is_active !== false"
+                                                    type="button"
+                                                    @click.stop="deactivateProduct(product)"
+                                                    class="px-5 py-2 rounded border border-orange-300 bg-orange-50 text-orange-700 font-bold flex items-center gap-2 transition-all shadow-sm hover:bg-orange-100 animate-fade-in"
+                                                >
+                                                    Ngừng kinh doanh
+                                                </button>
+                                                <button
+                                                    v-if="product.is_active === false"
+                                                    type="button"
+                                                    @click.stop="activateProduct(product)"
+                                                    class="px-5 py-2 rounded border border-green-300 bg-green-50 text-green-700 font-bold flex items-center gap-2 transition-all shadow-sm hover:bg-green-100 animate-fade-in"
+                                                >
+                                                    Kinh doanh lại
+                                                </button>
                                                 <button
                                                     @click.stop="deleteProduct(product)"
                                                     class="bg-white hover:bg-red-50 text-red-600 border border-red-200 px-5 py-2 rounded text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
@@ -1343,6 +1479,11 @@ const formatDate = (val) => {
                                                                 🔧 Đang sửa/Chờ xử lý
                                                             </option>
                                                             <option
+                                                                value="dismantled"
+                                                            >
+                                                                ⚠ Đã bóc tách
+                                                            </option>
+                                                            <option
                                                                 value="sold"
                                                             >
                                                                 Đã bán
@@ -1373,18 +1514,21 @@ const formatDate = (val) => {
                                                         v-for="s in product.serialsData"
                                                         :key="s.id"
                                                         class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 text-[13px]"
-                                                        :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'bg-yellow-50/50' : ''"
+                                                        :class="s.status === 'dismantled' ? 'bg-red-50/40' : (isSerialInRepairFlow(s) ? 'bg-yellow-50/50' : '')"
                                                     >
                                                         <div class="flex items-center justify-between w-full">
                                                             <div class="flex flex-col gap-1 w-2/3">
                                                                 <div class="flex items-center gap-2">
                                                                     <span
                                                                         class="font-medium"
-                                                                        :class="s.repair_status === 'repairing' || s.repair_status === 'not_started' ? 'text-orange-700' : 'text-gray-800'"
+                                                                        :class="s.status === 'dismantled' ? 'text-red-700' : (isSerialInRepairFlow(s) ? 'text-orange-700' : 'text-gray-800')"
                                                                     >{{ s.serial_number }}</span>
-                                                                    <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧 Đang sửa</span>
-                                                                    <span v-else-if="s.repair_status === 'not_started'" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold">⏳ Chờ sửa</span>
-                                                                    <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓ Sẵn bán</span>
+                                                                    <!-- HOTFIX 24.6H: physical status wins over repair_status for sale badges. -->
+                                                                    <span
+                                                                        v-if="serialRowBadge(s)"
+                                                                        class="text-[10px] px-1.5 py-0.5 rounded font-bold"
+                                                                        :class="serialRowBadge(s).class"
+                                                                    >{{ serialRowBadge(s).icon }} {{ serialRowBadge(s).label }}</span>
                                                                 </div>
                                                                 <div class="text-[12px] text-gray-500 font-medium" v-if="canViewCostPrice">
                                                                     Giá vốn: <span class="text-gray-700 font-semibold">{{ formatCurrency(s.cost_price || 0) }}</span>
@@ -1394,7 +1538,11 @@ const formatDate = (val) => {
                                                                 <span
                                                                     :class="[
                                                                         'text-[12px] font-medium text-right',
-                                                                        s.status === 'in_stock' ? 'text-green-600' : s.status === 'sold' ? 'text-gray-400' : s.status === 'warranty' ? 'text-orange-500' : 'text-red-500',
+                                                                        s.status === 'dismantled' ? 'text-red-600 font-semibold' :
+                                                                            s.status === 'in_stock' ? 'text-green-600' :
+                                                                            s.status === 'sold' ? 'text-gray-400' :
+                                                                            s.status === 'warranty' ? 'text-orange-500' :
+                                                                            'text-red-500',
                                                                     ]"
                                                                 >{{ serialStatusLabel(s.status) }}</span>
                                                             </div>
@@ -1458,7 +1606,7 @@ const formatDate = (val) => {
                                                         <span class="text-gray-400 font-normal ml-1">({{ product.serialsData?.length || 0 }})</span>
                                                     </span>
                                                     <div class="flex items-center gap-3 text-[12px]">
-                                                        <span class="text-gray-500">Giá vốn BQ sản phẩm: <span class="font-bold text-gray-700">{{ formatCurrency(product.serialsData && product.serialsData.length > 0 ? Math.round(product.serialsData.reduce((sum, s) => sum + (Number(s.cost_price) || Number(s.original_cost) || 0), 0) / product.serialsData.length) : product.cost_price) }}</span></span>
+                                                        <span class="text-gray-500">Giá vốn BQ sản phẩm: <span class="font-bold text-gray-700">{{ (() => { const inStock = (product.serialsData || []).filter(s => s.status === 'in_stock'); if (inStock.length === 0) return formatCurrency(product.cost_price); const sum = inStock.reduce((acc, s) => acc + (Number(s.cost_price) || Number(s.original_cost) || 0), 0); return formatCurrency(Math.round(sum / inStock.length)); })() }}</span> <span class="text-gray-400">(BQ {{ (product.serialsData || []).filter(s => s.status === 'in_stock').length }} còn tồn)</span></span>
                                                     </div>
                                                 </div>
 
@@ -1490,15 +1638,23 @@ const formatDate = (val) => {
                                                                 <td class="p-2.5">
                                                                     <div class="flex items-center gap-2">
                                                                         <span class="font-medium text-gray-800">{{ s.serial_number }}</span>
-                                                                        <span v-if="s.repair_status === 'repairing'" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-bold">🔧</span>
-                                                                        <span v-else-if="s.repair_status === 'ready'" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600 font-bold">✓</span>
+                                                                        <span
+                                                                            v-if="serialRowBadge(s)"
+                                                                            class="text-[10px] px-1.5 py-0.5 rounded font-bold"
+                                                                            :class="serialRowBadge(s).class"
+                                                                            :title="serialRowBadge(s).label"
+                                                                        >{{ serialRowBadge(s).icon }}</span>
                                                                     </div>
                                                                 </td>
                                                                 <td class="p-2.5 text-center">
                                                                     <span
                                                                         :class="[
                                                                             'text-[11px] px-2 py-0.5 rounded-full font-bold',
-                                                                            s.status === 'in_stock' ? 'bg-green-100 text-green-700' : s.status === 'sold' ? 'bg-gray-100 text-gray-500' : s.status === 'warranty' ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600',
+                                                                            s.status === 'dismantled' ? 'bg-red-100 text-red-700' :
+                                                                                s.status === 'in_stock' ? 'bg-green-100 text-green-700' :
+                                                                                s.status === 'sold' ? 'bg-gray-100 text-gray-500' :
+                                                                                s.status === 'warranty' ? 'bg-orange-100 text-orange-600' :
+                                                                                'bg-red-100 text-red-600',
                                                                         ]"
                                                                     >{{ serialStatusLabel(s.status) }}</span>
                                                                 </td>
@@ -1868,9 +2024,12 @@ const formatDate = (val) => {
                                 <span class="text-gray-400"
                                     >Ngày
                                     {{
-                                        docDetail.type === "purchase"
-                                            ? "nhập"
-                                            : "bán"
+                                        docDetail.type === "purchase" ? "nhập"
+                                        : docDetail.type === "repair_part" || docDetail.type === "disassemble_part" ? "tạo"
+                                        : docDetail.type === "purchase_return" ? "trả"
+                                        : docDetail.type === "stock_take" ? "kiểm"
+                                        : docDetail.type === "damage" ? "hủy"
+                                        : "bán"
                                     }}:</span
                                 >
                                 <span class="ml-2 font-medium text-gray-700">{{
@@ -1905,9 +2064,10 @@ const formatDate = (val) => {
                                         <th class="p-3">Mã hàng</th>
                                         <th class="p-3">Tên hàng</th>
                                         <th class="p-3 text-right">Số lượng</th>
-                                        <th class="p-3 text-right">Đơn giá</th>
-                                        <th class="p-3 text-right">Giảm giá</th>
-                                        <th class="p-3 text-right">Giá bán</th>
+                                        <th class="p-3 text-right">{{ (docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part') ? 'Giá vốn' : 'Đơn giá' }}</th>
+                                        <th v-if="docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part' && docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">Giảm giá</th>
+                                        <th v-if="docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'" class="p-3 text-center">Hướng</th>
+                                        <th v-else-if="docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">Giá bán</th>
                                         <th class="p-3 text-right font-bold">
                                             Thành tiền
                                         </th>
@@ -1932,6 +2092,18 @@ const formatDate = (val) => {
                                                 >
                                                     {{ item.product_name }}
                                                 </div>
+                                                <div
+                                                    v-if="(item.serial_count || item.serials?.length || 0) > 0"
+                                                    class="mt-1 text-[12px]"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        class="text-blue-600 hover:underline font-medium"
+                                                        @click.stop="toggleDocItemSerials(idx)"
+                                                    >
+                                                        {{ item.serial_count || item.serials?.length || 0 }} serial/IMEI. Xem chi tiết
+                                                    </button>
+                                                </div>
                                             </td>
                                             <td class="p-3 text-right">
                                                 {{ item.quantity }}
@@ -1939,14 +2111,19 @@ const formatDate = (val) => {
                                             <td class="p-3 text-right">
                                                 {{ formatCurrency(item.price) }}
                                             </td>
-                                            <td class="p-3 text-right">
+                                            <td v-if="docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part' && docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">
                                                 {{
                                                     formatCurrency(
                                                         item.discount,
                                                     )
                                                 }}
                                             </td>
-                                            <td class="p-3 text-right">
+                                            <td v-if="docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'" class="p-3 text-center">
+                                                <span :class="item.direction === 'import' ? 'text-green-600 bg-green-50' : 'text-orange-600 bg-orange-50'" class="px-2 py-0.5 rounded text-xs font-bold">
+                                                    {{ item.direction_label || (item.direction === 'import' ? '↩ Nhập' : '↗ Xuất') }}
+                                                </span>
+                                            </td>
+                                            <td v-else-if="docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="p-3 text-right">
                                                 {{
                                                     formatCurrency(
                                                         item.sell_price,
@@ -1963,6 +2140,24 @@ const formatDate = (val) => {
                                                 }}
                                             </td>
                                         </tr>
+                                        <tr v-if="openDocSerialIndex === idx && item.serials?.length">
+                                            <td colspan="7" class="px-3 pb-3">
+                                                <div class="rounded border border-blue-100 bg-blue-50 p-3 text-[12px]">
+                                                    <div class="mb-2 font-semibold text-gray-700">
+                                                        Có {{ item.serials.length }} serial/IMEI
+                                                    </div>
+                                                    <div class="flex flex-wrap gap-2">
+                                                        <span
+                                                            v-for="serial in item.serials"
+                                                            :key="serial.id || serial.serial_number"
+                                                            class="rounded bg-white border border-blue-200 px-2 py-1 font-semibold text-gray-700"
+                                                        >
+                                                            {{ serial.serial_number }}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
                                     </template>
                                 </tbody>
                             </table>
@@ -1972,17 +2167,17 @@ const formatDate = (val) => {
                         <div class="flex justify-end">
                             <div class="w-80 space-y-2 text-sm">
                                 <div class="flex justify-between">
-                                    <span class="text-gray-500"
-                                        >Tổng tiền hàng ({{
-                                            docDetail.items?.length || 0
-                                        }})</span
-                                    >
+                                    <span class="text-gray-500">{{
+                                        (docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part')
+                                            ? `Tổng linh kiện (${docDetail.items?.length || 0})`
+                                            : `Tổng tiền hàng (${docDetail.items?.length || 0})`
+                                    }}</span>
                                     <span class="font-bold">{{
                                         formatCurrency(docDetail.subtotal)
                                     }}</span>
                                 </div>
                                 <div
-                                    v-if="docDetail.discount"
+                                    v-if="docDetail.discount && docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part'"
                                     class="flex justify-between"
                                 >
                                     <span class="text-gray-500"
@@ -1994,15 +2189,19 @@ const formatDate = (val) => {
                                 </div>
                                 <div class="flex justify-between border-t pt-2">
                                     <span class="text-gray-700 font-semibold">{{
-                                        docDetail.type === "purchase"
-                                            ? "Cần trả NCC"
-                                            : "Khách cần trả"
+                                        docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'
+                                            ? 'Tổng chi phí sửa chữa'
+                                            : docDetail.type === 'purchase' ? 'Cần trả NCC'
+                                            : docDetail.type === 'purchase_return' ? 'Tổng trả NCC'
+                                            : docDetail.type === 'stock_take' ? 'Giá trị chênh lệch'
+                                            : docDetail.type === 'damage' ? 'Tổng giá trị hủy'
+                                            : 'Khách cần trả'
                                     }}</span>
                                     <span class="font-bold text-lg">{{
                                         formatCurrency(docDetail.total)
                                     }}</span>
                                 </div>
-                                <div class="flex justify-between">
+                                <div v-if="docDetail.type !== 'repair_part' && docDetail.type !== 'disassemble_part' && docDetail.type !== 'stock_take' && docDetail.type !== 'damage'" class="flex justify-between">
                                     <span class="text-gray-500">{{
                                         docDetail.type === "purchase"
                                             ? "Đã trả NCC"
@@ -2011,6 +2210,9 @@ const formatDate = (val) => {
                                     <span class="font-bold">{{
                                         formatCurrency(docDetail.customer_paid)
                                     }}</span>
+                                </div>
+                                <div v-if="docDetail.type === 'repair_part' || docDetail.type === 'disassemble_part'" class="mt-2 px-3 py-2 bg-blue-50 rounded text-xs text-blue-700">
+                                    ⓘ Phiếu sửa chữa chỉ ảnh hưởng tồn kho & giá vốn. Không ảnh hưởng sổ quỹ hay công nợ.
                                 </div>
                             </div>
                         </div>
@@ -2044,10 +2246,27 @@ const formatDate = (val) => {
                     <!-- Footer -->
                     <div
                         v-if="docDetail"
-                        class="px-6 py-3 border-t border-gray-200 bg-gray-50 flex justify-end"
+                        class="px-6 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-end gap-2"
                     >
-                        <button
-                            @click="closeDocPopup"
+                        <span
+                            v-if="docDetail.source_document && !docDetail.source_document.can_open"
+                            class="text-xs text-red-600 mr-auto"
+                        >
+                            {{ docDetail.source_document.missing_reason || 'Không thể mở phiếu này.' }}
+                        </span>
+                        <a
+                            v-if="docDetail.source_document?.can_print"
+                            :href="docDetail.source_document.print_url"
+                            target="_blank"
+                            class="border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-2 transition-all"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                            In phiếu
+                        </a>
+                        <a
+                            v-if="docDetail.source_document?.can_open"
+                            :href="docDetail.source_document.open_url"
+                            target="_blank"
                             class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
                         >
                             <svg
@@ -2063,6 +2282,15 @@ const formatDate = (val) => {
                                     d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
                                 ></path>
                             </svg>
+                            Mở phiếu
+                        </a>
+                        <button
+                            v-else
+                            disabled
+                            class="bg-gray-300 text-gray-500 px-5 py-2 rounded text-sm font-bold flex items-center gap-2 cursor-not-allowed"
+                            :title="docDetail.source_document?.missing_reason || 'Không thể mở phiếu'"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                             Mở phiếu
                         </button>
                     </div>

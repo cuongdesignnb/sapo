@@ -1,13 +1,19 @@
 <script setup>
-import { ref, watch } from "vue";
+import { formatVND as formatCurrency } from '@/utils/money';
+import { ref, watch, computed } from "vue";
 import { Head, router, Link, useForm } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import DateTimePicker from "@/Components/DateTimePicker.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     cashFlows: Object,
     filters: Object,
+    filterOptions: Object,
     metrics: Object,
     subjects: Object,
     bankAccounts: Array,
@@ -15,40 +21,105 @@ const props = defineProps({
     savedPaymentCategories: Array,
 });
 
-const mergeUnique = (defaults, saved) => {
-    const set = new Set(defaults);
-    (saved || []).forEach(c => set.add(c));
-    return [...set];
-};
-
-const search = ref(props.filters?.search || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
-
-let searchTimeout;
-watch(search, (value) => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/cash-flows",
-            { search: value, sort_by: sortBy.value || undefined, sort_direction: sortDirection.value || undefined },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
-    }, 500);
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/cash-flows",
 });
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/cash-flows",
-        { search: search.value || undefined, sort_by: field || undefined, sort_direction: direction || undefined },
-        { preserveState: true, replace: true },
-    );
+const handleSort = (field, direction) => setSort(field, direction);
+
+const defaultReceiptCategories = ["Thu tiền khách trả", "Thu nhập khác", "Chuyển/Rút", "Bán đồng nát"];
+const defaultPaymentCategories = [
+    "Chi trả lương NV",
+    "Chi tiền trả NCC",
+    "Chi phí điện nước",
+    "Quảng cáo",
+    "Nạp tiền chợ tốt",
+    "Tiền Internet",
+    "Chi khác",
+];
+
+const mergeUnique = (defaults, saved) => {
+    const set = new Map();
+
+    [...defaults, ...(saved || [])].forEach((raw) => {
+        const value = String(raw || "").trim();
+        if (!value) return;
+
+        const key = value.toLowerCase();
+        if (!set.has(key)) {
+            set.set(key, value);
+        }
+    });
+
+    return [...set.values()];
 };
+
+const receiptCategories = ref(props.savedReceiptCategories || []);
+const paymentCategories = ref(props.savedPaymentCategories || []);
+
+const receiptCategoryOptions = computed(() =>
+    mergeUnique(defaultReceiptCategories, receiptCategories.value)
+);
+
+const paymentCategoryOptions = computed(() =>
+    mergeUnique(defaultPaymentCategories, paymentCategories.value)
+);
+
+const selectedTypeFilter = computed(() => {
+    const value = filters.type;
+    if (Array.isArray(value)) return value;
+    return value ? [value] : [];
+});
+
+const cashFlowCategoryFilterOptions = computed(() => {
+    const types = selectedTypeFilter.value;
+
+    const receipt = receiptCategoryOptions.value.map((cat) => ({
+        key: `receipt-${cat}`,
+        value: cat,
+        label: `Thu - ${cat}`,
+        rawLabel: cat,
+        type: "receipt",
+        group: "Loại thu",
+    }));
+
+    const payment = paymentCategoryOptions.value.map((cat) => ({
+        key: `payment-${cat}`,
+        value: cat,
+        label: `Chi - ${cat}`,
+        rawLabel: cat,
+        type: "payment",
+        group: "Loại chi",
+    }));
+
+    if (types.length === 1 && types[0] === "receipt") {
+        return receipt.map((o) => ({ ...o, label: o.rawLabel }));
+    }
+
+    if (types.length === 1 && types[0] === "payment") {
+        return payment.map((o) => ({ ...o, label: o.rawLabel }));
+    }
+
+    return [...receipt, ...payment];
+});
+
+const sidebarConfig = computed(() => [
+    { key: "keyword", type: "search", label: "Tìm mã phiếu, nội dung", placeholder: "Tìm theo mã, nội dung...", zone: "quick" },
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Thời gian",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+        zone: "quick",
+    },
+    { key: "payment_method", type: "select", label: "Quỹ tiền", options: props.filterOptions?.paymentMethods || [], placeholder: "Tất cả (Tổng quỹ)", zone: "quick" },
+    { key: "type", type: "checkbox", label: "Loại chứng từ", options: props.filterOptions?.types || [], zone: "main" },
+    { key: "category", type: "select", label: "Loại thu/chi", options: cashFlowCategoryFilterOptions.value, placeholder: "-- Tất cả --", zone: "main" },
+    { key: "status", type: "checkbox", label: "Trạng thái", options: props.filterOptions?.statuses || [], zone: "main" },
+    { key: "bank_account_id", type: "select", label: "Tài khoản NH", options: props.filterOptions?.bankAccounts || [], placeholder: "Tất cả", zone: "advanced" },
+    { key: "target_type", type: "select", label: "Đối tượng", options: props.filterOptions?.targetTypes || [], placeholder: "Tất cả", zone: "advanced" },
+]);
 
 const isModalOpen = ref(false);
 const modalType = ref("receipt"); // receipt or payment
@@ -70,14 +141,67 @@ const form = useForm({
 const selectedFlowObj = ref(null);
 const getSelectedFlow = () => selectedFlowObj.value;
 
-const receiptCategories = ref(mergeUnique(
-    ["Thu tiền khách trả", "Thu nhập khác", "Chuyển/Rút", "Bán đồng nát"],
-    props.savedReceiptCategories
-));
-const paymentCategories = ref(mergeUnique(
-    ["Chi trả lương NV", "Chi tiền trả NCC", "Chi phí điện nước", "Chi khác"],
-    props.savedPaymentCategories
-));
+const currentCategoryOptions = computed(() =>
+    form.type === "receipt" ? receiptCategoryOptions.value : paymentCategoryOptions.value
+);
+const adKeywords = [
+    "fb ads",
+    "facebook",
+    "tiktok",
+    "tik tok",
+    "google ads",
+    "chatgpt",
+    "chat gpt",
+    "ads",
+];
+
+const normalizeText = (value) => String(value || "").trim().toLowerCase();
+
+const isAdvertisingText = (text) => {
+    const normalized = normalizeText(text);
+    return adKeywords.some((keyword) => normalized.includes(keyword));
+};
+
+const looksLikeAdvertisingExpense = computed(() => {
+    if (modalType.value !== "payment") return false;
+
+    return isAdvertisingText(`${form.description || ""} ${form.category || ""}`);
+});
+
+const shouldWarnAdvertisingCategory = computed(() => {
+    return looksLikeAdvertisingExpense.value && normalizeText(form.category) !== "quảng cáo";
+});
+
+const isLikelyAdFlow = (flow) => {
+    if (!flow || flow.type !== "payment") return false;
+    return isAdvertisingText(`${flow.description || ""} ${flow.category || ""}`);
+};
+
+const isAdFlowMisclassified = (flow) => {
+    return isLikelyAdFlow(flow) && normalizeText(flow.category) !== "quảng cáo";
+};
+
+const activeCategoryFilter = computed(() => {
+    const value = filters.category;
+    return Array.isArray(value) ? value[0] : value;
+});
+
+watch(
+    () => filters.type,
+    () => {
+        const currentCategory = Array.isArray(filters.category)
+            ? filters.category[0]
+            : filters.category;
+
+        if (!currentCategory) return;
+
+        const allowed = cashFlowCategoryFilterOptions.value.map((o) => o.value);
+
+        if (!allowed.includes(currentCategory)) {
+            filters.category = "";
+        }
+    },
+);
 const targetTypes = [
     "Khách hàng",
     "Nhà cung cấp",
@@ -105,20 +229,46 @@ const expandedRow = ref(null);
 
 const isCategoryModalOpen = ref(false);
 const newCategoryName = ref("");
+const categoryDropdownOpen = ref(false);
+const categorySearch = ref("");
 
-const openCategoryModal = () => {
-    newCategoryName.value = "";
+const filteredCategoryOptions = computed(() => {
+    const q = String(categorySearch.value || "").trim().toLowerCase();
+    return currentCategoryOptions.value.filter((cat) =>
+        String(cat).toLowerCase().includes(q)
+    );
+});
+
+const selectCategory = (cat) => {
+    form.category = cat;
+    categoryDropdownOpen.value = false;
+    categorySearch.value = "";
+};
+
+const openCategoryModal = (name = "") => {
+    newCategoryName.value = name;
     isCategoryModalOpen.value = true;
 };
 
+const openInlineCreateCategory = () => {
+    categoryDropdownOpen.value = false;
+    openCategoryModal(categorySearch.value || "");
+};
+
 const submitCategory = () => {
-    if (!newCategoryName.value) return;
-    if (modalType.value === "receipt") {
-        receiptCategories.value.push(newCategoryName.value);
+    const name = String(newCategoryName.value || "").trim();
+    if (!name) return;
+
+    const activeType = form.type || modalType.value;
+
+    if (activeType === "receipt") {
+        receiptCategories.value = mergeUnique(receiptCategories.value, [name]);
     } else {
-        paymentCategories.value.push(newCategoryName.value);
+        paymentCategories.value = mergeUnique(paymentCategories.value, [name]);
     }
-    form.category = newCategoryName.value;
+
+    form.category = name;
+    categorySearch.value = "";
     isCategoryModalOpen.value = false;
 };
 
@@ -163,6 +313,7 @@ const openModal = (type, flow = null) => {
 
     if (flow) {
         selectedFlowObj.value = flow;
+        modalType.value = flow.type;
         form.id = flow.id;
         form.type = flow.type;
         form.time = flow.time
@@ -177,7 +328,10 @@ const openModal = (type, flow = null) => {
             flow.accounting_result === 1 || flow.accounting_result === true;
         form.payment_method = flow.payment_method || "cash";
         form.bank_account_id = flow.bank_account_id || null;
+        categoryDropdownOpen.value = false;
+        categorySearch.value = "";
     } else {
+        modalType.value = type;
         form.id = null;
         form.type = type;
         form.time = new Date().toISOString().slice(0, 16);
@@ -189,6 +343,8 @@ const openModal = (type, flow = null) => {
         form.accounting_result = true;
         form.payment_method = "cash";
         form.bank_account_id = null;
+        categoryDropdownOpen.value = false;
+        categorySearch.value = "";
     }
 
     isModalOpen.value = true;
@@ -277,24 +433,7 @@ const printFlow = (flow) => {
     <AppLayout>
         <!-- Sidebar slot -->
         <template #sidebar>
-            <div
-                class="px-4 py-3 font-semibold text-gray-800 border-b border-gray-200 uppercase text-xs tracking-wider"
-            >
-                Từ khóa tìm kiếm
-            </div>
-            <div class="p-4 space-y-4">
-                <div>
-                    <label class="block text-sm text-gray-600 mb-1 font-medium"
-                        >Tìm mã phiếu, nội dung</label
-                    >
-                    <input
-                        v-model="search"
-                        type="text"
-                        placeholder="Tìm theo mã, nội dung..."
-                        class="w-full text-sm py-1.5 px-2 border border-gray-300 rounded focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    />
-                </div>
-            </div>
+            <SidebarFilter v-model="filters" :config="sidebarConfig" @reset="reset" />
 
             <!-- Dashboard Mini Sidebar -->
             <div
@@ -306,13 +445,13 @@ const printFlow = (flow) => {
                 <div class="flex justify-between items-center text-sm">
                     <span class="text-gray-500">Tổng thu:</span>
                     <span class="font-semibold text-blue-600 font-mono">{{
-                        Number(metrics.totalReceipts).toLocaleString()
+                        formatCurrency(metrics.totalReceipts)
                     }}</span>
                 </div>
                 <div class="flex justify-between items-center text-sm">
                     <span class="text-gray-500">Tổng chi:</span>
                     <span class="font-semibold text-red-600 font-mono">{{
-                        Number(metrics.totalPayments).toLocaleString()
+                        formatCurrency(metrics.totalPayments)
                     }}</span>
                 </div>
                 <div
@@ -322,7 +461,7 @@ const printFlow = (flow) => {
                     <span
                         class="font-bold text-lg text-gray-900 tracking-tight font-mono"
                         >{{
-                            Number(metrics.fundBalance).toLocaleString()
+                            formatCurrency(metrics.fundBalance)
                         }}</span
                     >
                 </div>
@@ -386,6 +525,14 @@ const printFlow = (flow) => {
                 </div>
             </div>
 
+            <div
+                v-if="normalizeText(activeCategoryFilter) === 'quảng cáo'"
+                class="m-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700"
+            >
+                Bộ lọc này chỉ hiển thị các phiếu có Loại thu chi đúng là "Quảng cáo".
+                Các phiếu ghi chú FB Ads/TikTok nhưng đang lưu ở "Chi khác" cần được sửa loại chi để xuất hiện trong bộ lọc này.
+            </div>
+
             <!-- Table -->
             <div class="flex-1 overflow-auto">
                 <table class="w-full text-sm text-left">
@@ -393,13 +540,13 @@ const printFlow = (flow) => {
                         class="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-200 sticky top-0 z-10 shadow-sm"
                     >
                         <tr>
-                            <SortableHeader label="Mã Phiếu" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="time" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
-                            <SortableHeader label="Loại thu chi" field="category" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Mã Phiếu" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="time" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 font-semibold" @sort="handleSort" />
+                            <SortableHeader label="Loại thu chi" field="category" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 font-semibold" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">
                                 Người nộp/nhận
                             </th>
-                            <SortableHeader label="Giá trị" field="amount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-3 font-semibold text-right" @sort="handleSort" />
+                            <SortableHeader label="Giá trị" field="amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 font-semibold text-right" @sort="handleSort" />
                             <th class="px-4 py-3 font-semibold">Ghi chú</th>
                         </tr>
                     </thead>
@@ -461,6 +608,13 @@ const printFlow = (flow) => {
                                             ? "Thu nhập khác"
                                             : "Chi khác")
                                     }}
+                                    <span
+                                        v-if="isAdFlowMisclassified(flow)"
+                                        class="ml-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                                        title="Ghi chú có vẻ là chi phí quảng cáo nhưng Loại thu chi chưa phải Quảng cáo"
+                                    >
+                                        Có vẻ là quảng cáo
+                                    </span>
                                 </td>
                                 <td class="px-4 py-3 text-gray-700 font-medium">
                                     {{
@@ -480,7 +634,7 @@ const printFlow = (flow) => {
                                 >
                                     <span v-if="flow.type === 'receipt'"></span>
                                     <span v-else>-</span
-                                    >{{ Number(flow.amount).toLocaleString() }}
+                                    >{{ formatCurrency(flow.amount) }}
                                 </td>
                                 <td class="px-4 py-3 text-gray-600 italic">
                                     {{ flow.description || "Không có" }}
@@ -592,11 +746,10 @@ const printFlow = (flow) => {
                                                     class="font-semibold text-gray-800"
                                                 >
                                                     {{
-                                                        Number(
+                                                        formatCurrency(
                                                             flow.amount,
-                                                        ).toLocaleString()
+                                                        )
                                                     }}
-                                                    ₫
                                                 </div>
                                             </div>
                                             <div>
@@ -866,10 +1019,11 @@ const printFlow = (flow) => {
                                 class="block text-[13px] font-semibold text-gray-700"
                                 >Thời gian</label
                             >
-                            <input
-                                type="datetime-local"
+                            <DateTimePicker
                                 v-model="form.time"
-                                class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-[13px] text-gray-800"
+                                naked
+                                placeholder="dd/MM/yyyy HH:mm"
+                                input-class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-[13px] text-gray-800"
                             />
                         </div>
 
@@ -897,9 +1051,7 @@ const printFlow = (flow) => {
                                         }}
                                     </option>
                                     <option
-                                        v-for="cat in modalType === 'receipt'
-                                            ? receiptCategories
-                                            : paymentCategories"
+                                        v-for="cat in currentCategoryOptions"
                                         :key="cat"
                                         :value="cat"
                                     >
@@ -929,6 +1081,19 @@ const printFlow = (flow) => {
                                         ></path>
                                     </svg>
                                 </div>
+                            </div>
+                            <div
+                                v-if="shouldWarnAdvertisingCategory"
+                                class="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                            >
+                                Ghi chú có vẻ là chi phí quảng cáo. Nên chọn Loại chi = "Quảng cáo" để khi lọc/báo cáo hiển thị đúng.
+                                <button
+                                    type="button"
+                                    class="ml-2 font-semibold text-blue-600 hover:underline"
+                                    @click="form.category = 'Quảng cáo'"
+                                >
+                                    Chọn Quảng cáo
+                                </button>
                             </div>
                         </div>
 
@@ -1061,12 +1226,10 @@ const printFlow = (flow) => {
                             >Số tiền <span class="text-red-500">*</span></label
                         >
                         <div class="relative">
-                            <input
-                                type="number"
+                            <MoneyInput
                                 v-model="form.amount"
-                                required
-                                class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-right pr-6 font-bold text-lg text-gray-800 placeholder-gray-400"
                                 placeholder="0"
+                                input-class="w-full border-b border-gray-300 py-1.5 focus:outline-none focus:border-blue-500 text-right pr-6 font-bold text-lg text-gray-800 placeholder-gray-400"
                             />
                         </div>
                     </div>
@@ -1169,7 +1332,7 @@ const printFlow = (flow) => {
             class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/60 transition-opacity"
         >
             <div
-                class="bg-white rounded-md shadow-2xl w-full max-w-[900px] flex flex-col max-h-[90vh] mx-4"
+                class="bg-white rounded-md shadow-2xl w-[96vw] max-w-[1200px] flex flex-col max-h-[92vh] mx-4"
                 @click.stop
             >
                 <div
@@ -1202,11 +1365,11 @@ const printFlow = (flow) => {
 
                 <form
                     @submit.prevent="submitForm"
-                    class="p-6 space-y-4 overflow-y-auto"
+                    class="p-7 space-y-5 overflow-y-auto"
                 >
-                    <div class="flex flex-col md:flex-row gap-8">
+                    <div class="flex flex-col xl:flex-row gap-10">
                         <!-- Left cols -->
-                        <div class="flex-1 grid grid-cols-2 gap-x-8 gap-y-5">
+                        <div class="flex-[1.45] grid grid-cols-2 gap-x-10 gap-y-5">
                             <div class="flex items-center">
                                 <span
                                     class="w-32 text-gray-700 font-medium text-[13px]"
@@ -1235,11 +1398,72 @@ const printFlow = (flow) => {
                                     class="w-32 text-gray-700 font-medium text-[13px]"
                                     >Thời gian:</span
                                 >
-                                <input
-                                    type="datetime-local"
+                                <DateTimePicker
                                     v-model="form.time"
-                                    class="flex-1 border border-gray-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-blue-500 text-[13px]"
+                                    placeholder="dd/MM/yyyy HH:mm"
+                                    input-class="flex-1 border border-gray-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-blue-500 text-[13px]"
                                 />
+                            </div>
+                            <div class="flex items-start">
+                                <span class="w-32 text-gray-700 font-medium text-[13px] pt-2">
+                                    Loại {{ form.type === "receipt" ? "thu" : "chi" }}:
+                                </span>
+
+                                <div class="relative flex-1">
+                                    <button
+                                        type="button"
+                                        class="w-full rounded border border-gray-300 bg-white px-2.5 py-1.5 text-left text-[13px] text-gray-800 hover:border-blue-400 focus:border-blue-500"
+                                        @click="categoryDropdownOpen = !categoryDropdownOpen"
+                                    >
+                                        <span v-if="form.category">{{ form.category }}</span>
+                                        <span v-else class="text-gray-400">
+                                            Chọn loại {{ form.type === "receipt" ? "thu" : "chi" }}
+                                        </span>
+                                    </button>
+
+                                    <div
+                                        v-if="categoryDropdownOpen"
+                                        class="absolute z-[120] mt-1 w-full rounded border border-gray-200 bg-white shadow-xl"
+                                    >
+                                        <div class="p-2 border-b border-gray-100">
+                                            <input
+                                                v-model="categorySearch"
+                                                type="text"
+                                                class="w-full rounded border border-gray-300 px-2 py-1.5 text-[13px] outline-none focus:border-blue-500"
+                                                placeholder="Tìm kiếm"
+                                            />
+                                        </div>
+
+                                        <div class="max-h-56 overflow-auto py-1">
+                                            <button
+                                                v-for="cat in filteredCategoryOptions"
+                                                :key="cat"
+                                                type="button"
+                                                class="flex w-full items-center justify-between px-3 py-2 text-left text-[13px] hover:bg-blue-50"
+                                                :class="form.category === cat ? 'text-blue-600 font-semibold' : 'text-gray-700'"
+                                                @click="selectCategory(cat)"
+                                            >
+                                                <span>{{ cat }}</span>
+                                                <span v-if="form.category === cat">✓</span>
+                                            </button>
+
+                                            <div
+                                                v-if="filteredCategoryOptions.length === 0"
+                                                class="px-3 py-2 text-[13px] text-gray-400"
+                                            >
+                                                Không tìm thấy loại phù hợp
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            class="w-full border-t border-gray-100 px-3 py-2 text-left text-[13px] font-semibold text-blue-600 hover:bg-blue-50"
+                                            @click="openInlineCreateCategory"
+                                        >
+                                            + Tạo mới
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                             <div class="flex items-center">
                                 <span
@@ -1312,7 +1536,7 @@ const printFlow = (flow) => {
 
                         <!-- Right col for Notes -->
                         <div
-                            class="flex-1 md:max-w-xs border-l border-gray-200 pl-8"
+                            class="flex-1 xl:max-w-[380px] xl:border-l border-gray-200 xl:pl-8"
                         >
                             <textarea
                                 v-model="form.description"
@@ -1406,9 +1630,9 @@ const printFlow = (flow) => {
                                         class="px-4 py-3 text-[13px] text-gray-800 text-right"
                                     >
                                         {{
-                                            Number(
+                                            formatCurrency(
                                                 getSelectedFlow()?.amount || 0,
-                                            ).toLocaleString()
+                                            )
                                         }}
                                     </td>
                                     <td
@@ -1420,9 +1644,9 @@ const printFlow = (flow) => {
                                         class="px-4 py-3 text-[13px] font-medium text-gray-800 text-right"
                                     >
                                         {{
-                                            Number(
+                                            formatCurrency(
                                                 getSelectedFlow()?.amount || 0,
-                                            ).toLocaleString()
+                                            )
                                         }}
                                     </td>
                                     <td
@@ -1447,9 +1671,9 @@ const printFlow = (flow) => {
                                         class="px-4 py-4 text-[14px] font-bold text-gray-900 text-right"
                                     >
                                         {{
-                                            Number(
+                                            formatCurrency(
                                                 getSelectedFlow()?.amount || 0,
-                                            ).toLocaleString()
+                                            )
                                         }}
                                     </td>
                                     <td></td>

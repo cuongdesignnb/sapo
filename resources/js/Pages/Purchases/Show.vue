@@ -1,7 +1,10 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed } from 'vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     purchase: Object,
@@ -11,14 +14,15 @@ const props = defineProps({
 });
 
 const activeTab = ref('info');
-const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
+
 const formatDate = (val) => val ? new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
 const totalQty = props.purchase.items?.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 0;
 const totalProducts = props.purchase.items?.length || 0;
 const calcTotal = props.purchase.items?.reduce((s, i) => s + (Number(i.subtotal) || 0), 0) || 0;
 const totalAmount = calcTotal || Number(props.purchase.total_amount) || 0;
-const needToPay = totalAmount - (Number(props.purchase.discount) || 0);
+const otherCostsTotal = Number(props.purchase.other_costs_total) || 0;
+const needToPay = totalAmount - (Number(props.purchase.discount) || 0) + otherCostsTotal;
 
 const printPurchase = () => {
     window.open(`/purchases/${props.purchase.id}/print`, '_blank', 'width=400,height=600');
@@ -54,8 +58,35 @@ const editForm = ref({
     employee_id: props.purchase.employee_id || '',
 });
 
-const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0));
-const editDebt = computed(() => Math.max(0, editPayAmount.value - (Number(editForm.value.paid_amount) || 0)));
+const editPayAmount = computed(() => totalAmount - (Number(editForm.value.discount) || 0) + otherCostsTotal);
+// HOTFIX 24.21 — split into raw balance + clamped debt/overpaid so the modal
+// can show "Tiền thừa" when the operator increases paid_amount past the
+// invoice total.
+const editPurchaseBalance = computed(
+    () => Number(editPayAmount.value || 0) - Number(editForm.value.paid_amount || 0)
+);
+const editDebt = computed(() => Math.max(0, editPurchaseBalance.value));
+const editOverpaid = computed(() => Math.max(0, -editPurchaseBalance.value));
+
+// Original purchase debt as stored on the row — used to back out this
+// purchase from the supplier's current balance, so the projected balance
+// after save reflects only the NEW value, not double-counted.
+const originalPurchaseDebt = computed(() => Number(props.purchase?.debt_amount || 0));
+
+const supplierCurrentBalance = computed(
+    () => Number(props.purchase?.supplier?.supplier_debt_amount || 0)
+);
+const supplierBalanceBeforeThisPurchase = computed(
+    () => supplierCurrentBalance.value - originalPurchaseDebt.value
+);
+const projectedSupplierBalance = computed(
+    () => supplierBalanceBeforeThisPurchase.value + editPurchaseBalance.value
+);
+const projectedSupplierDebt = computed(() => Math.max(0, projectedSupplierBalance.value));
+const projectedSupplierCredit = computed(() => Math.max(0, -projectedSupplierBalance.value));
+const supplierCurrentDebt = computed(() => Math.max(0, supplierCurrentBalance.value));
+const supplierCurrentCredit = computed(() => Math.max(0, -supplierCurrentBalance.value));
+
 const isSubmitting = ref(false);
 
 const openUpdateModal = () => {
@@ -78,8 +109,10 @@ const submitUpdate = () => {
             showUpdateModal.value = false;
             isSubmitting.value = false;
         },
-        onError: () => {
+        onError: (errors) => {
             isSubmitting.value = false;
+            const firstError = Object.values(errors)[0];
+            if (firstError) alert(firstError);
         },
     });
 };
@@ -93,6 +126,15 @@ const paymentMethodLabel = (method) => {
     <Head :title="`Chi tiết phiếu nhập ${purchase.code}`" />
     <AppLayout>
         <div class="bg-white h-full flex flex-col">
+            <!-- Flash Messages -->
+            <div v-if="usePage().props.flash?.error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 text-sm flex items-center gap-2">
+                <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+                {{ usePage().props.flash.error }}
+            </div>
+            <div v-if="usePage().props.flash?.success" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 text-sm flex items-center gap-2">
+                <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                {{ usePage().props.flash.success }}
+            </div>
             <!-- Header -->
             <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-gray-50/50">
                 <Link href="/purchases" class="text-gray-500 hover:text-gray-700">
@@ -290,6 +332,19 @@ const paymentMethodLabel = (method) => {
                                 </span>
                                 <span class="font-medium">{{ formatCurrency(purchase.discount) }}</span>
                             </div>
+                            <!-- Chi phí nhập khác -->
+                            <div v-if="purchase.other_costs && purchase.other_costs.length > 0">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-500">Chi phí nhập khác:</span>
+                                    <span class="font-medium text-orange-600">{{ formatCurrency(otherCostsTotal) }}</span>
+                                </div>
+                                <div class="ml-4 mt-1 space-y-0.5">
+                                    <div v-for="(cost, ci) in (typeof purchase.other_costs === 'string' ? JSON.parse(purchase.other_costs) : purchase.other_costs)" :key="ci" class="flex justify-between text-[12px] text-gray-400">
+                                        <span>• {{ cost.name }}</span>
+                                        <span>{{ formatCurrency(cost.amount) }}</span>
+                                    </div>
+                                </div>
+                            </div>
                             <div class="flex justify-between border-t border-gray-200 pt-2">
                                 <span class="text-gray-700 font-medium">Cần trả NCC:</span>
                                 <span class="font-bold text-gray-800">{{ formatCurrency(needToPay) }}</span>
@@ -424,7 +479,11 @@ const paymentMethodLabel = (method) => {
                     <!-- Thời gian -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Thời gian</label>
-                        <input type="datetime-local" v-model="editForm.purchase_date" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+                        <DateTimePicker
+                            v-model="editForm.purchase_date"
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                        />
                     </div>
 
                     <!-- Nhân viên -->
@@ -439,16 +498,45 @@ const paymentMethodLabel = (method) => {
                     <!-- Giảm giá -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giảm giá</label>
-                        <input type="number" v-model.number="editForm.discount" min="0" class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+                        <MoneyInput v-model="editForm.discount" :min="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" />
                     </div>
 
                     <!-- Tiền trả NCC -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-1">Tiền trả NCC</label>
-                        <input type="number" v-model.number="editForm.paid_amount" min="0" class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none font-bold text-blue-600" />
+                        <MoneyInput v-model="editForm.paid_amount" :min="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm text-right focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none font-bold text-blue-600" />
                         <div class="flex justify-between mt-1 text-[12px]">
                             <span class="text-gray-500">Cần trả: {{ formatCurrency(editPayAmount) }}</span>
                             <span class="text-red-500" v-if="editDebt > 0">Còn nợ: {{ formatCurrency(editDebt) }}</span>
+                            <span class="text-green-600" v-else-if="editOverpaid > 0">Tiền thừa: {{ formatCurrency(editOverpaid) }}</span>
+                        </div>
+                        <!-- HOTFIX 24.21 — NCC balance breakdown (current / this purchase / projected). -->
+                        <div v-if="props.purchase?.supplier" class="mt-2 pt-2 border-t border-dashed border-gray-200 space-y-1 text-[12px]">
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">
+                                    <template v-if="supplierCurrentCredit > 0">Số dư hiện tại NCC đang dư</template>
+                                    <template v-else>Nợ hiện tại NCC</template>
+                                </span>
+                                <span class="font-semibold"
+                                      :class="supplierCurrentCredit > 0 ? 'text-green-600' : supplierCurrentDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                    {{ formatCurrency(supplierCurrentCredit > 0 ? supplierCurrentCredit : supplierCurrentDebt) }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Nợ phiếu này trước khi sửa</span>
+                                <span class="font-semibold text-gray-700">{{ formatCurrency(originalPurchaseDebt) }}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">
+                                    <template v-if="projectedSupplierCredit > 0">Dự kiến NCC còn dư sau cập nhật</template>
+                                    <template v-else-if="projectedSupplierDebt > 0">Dự kiến còn nợ NCC sau cập nhật</template>
+                                    <template v-else>Dự kiến công nợ NCC sau cập nhật</template>
+                                </span>
+                                <span class="font-bold"
+                                      :class="projectedSupplierCredit > 0 ? 'text-green-600' : projectedSupplierDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                    {{ formatCurrency(projectedSupplierCredit > 0 ? projectedSupplierCredit : projectedSupplierDebt) }}
+                                </span>
+                            </div>
                         </div>
                     </div>
 

@@ -1,4 +1,5 @@
-<script setup>
+﻿<script setup>
+import { formatVND as fmt } from '@/utils/money';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { ref, computed, onMounted, onUnmounted } from 'vue';
@@ -53,6 +54,15 @@ const props = defineProps({
     recentReturns: Array,
     ordersByStatus: Object,
     branches: Array,
+    // Step 24.1 — Operational control props
+    serialControl: { type: Object, default: () => ({}) },
+    stockTransferControl: { type: Object, default: () => ({}) },
+    repairControl: { type: Object, default: () => ({}) },
+    warrantyControl: { type: Object, default: () => ({}) },
+    inventoryRisk: { type: Object, default: () => ({}) },
+    financeControl: { type: Object, default: () => ({}) },
+    highRiskActivities: { type: Object, default: () => ({}) },
+    canViewAuditLog: { type: Boolean, default: false },
 });
 
 // Tab states
@@ -60,13 +70,14 @@ const productRankTab = ref('revenue'); // 'revenue' | 'profit' | 'qty'
 const customerRankTab = ref('revenue'); // 'revenue' | 'qty'
 const inventoryFilter = ref('all'); // 'all' | 'low' | 'out'
 
-const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
 const fmtShort = (v) => {
     const n = Number(v || 0);
-    if (n >= 1e9) return (n / 1e9).toFixed(1) + ' tỷ';
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + ' tr';
-    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'k';
-    return n.toString();
+    const abs = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (abs >= 1e9) return sign + (abs / 1e9).toFixed(1) + ' tỷ';
+    if (abs >= 1e6) return sign + (abs / 1e6).toFixed(1) + ' tr';
+    if (abs >= 1e3) return sign + (abs / 1e3).toFixed(0) + 'k';
+    return sign + abs.toString();
 };
 
 const pctChange = (current, prev) => {
@@ -263,7 +274,7 @@ const orderStatusOptions = {
             <div class="px-4 py-4 space-y-3">
                <div>
                    <div class="text-xs text-gray-500 mb-0.5">Doanh thu hôm nay</div>
-                   <div class="font-bold text-lg text-indigo-600 font-mono">{{ fmt(todayRevenue) }} ₫</div>
+                   <div class="font-bold text-lg text-indigo-600 font-mono">{{ fmt(todayRevenue) }}</div>
                    <div class="flex items-center gap-1 mt-0.5">
                        <span :class="revenuePct >= 0 ? 'text-green-600' : 'text-red-500'" class="text-xs font-semibold flex items-center">
                            <svg v-if="revenuePct >= 0" class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path></svg>
@@ -280,16 +291,16 @@ const orderStatusOptions = {
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Tồn kho</div>
                    <div class="font-bold text-gray-800">{{ fmt(totalProductsInStock) }} <span class="text-xs text-gray-400 font-normal">SP</span></div>
-                   <div class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }} ₫</span></div>
+                   <div class="text-xs text-gray-500 mt-0.5">Giá trị: <span class="font-semibold text-gray-700">{{ fmt(totalStockValue) }}</span></div>
                    <div v-if="outOfStockCount > 0" class="text-xs text-red-500 mt-0.5">⚠ {{ outOfStockCount }} hết hàng</div>
                </div>
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Nợ phải thu</div>
-                   <div class="font-bold text-orange-600 font-mono">{{ fmt(totalCustomerDebt) }} ₫</div>
+                   <div class="font-bold text-orange-600 font-mono">{{ fmt(totalCustomerDebt) }}</div>
                </div>
                <div class="border-t border-gray-100 pt-2">
                    <div class="text-xs text-gray-500 mb-0.5">Nợ phải trả NCC</div>
-                   <div class="font-bold text-red-500 font-mono">{{ fmt(totalSupplierDebt) }} ₫</div>
+                   <div class="font-bold text-red-500 font-mono">{{ fmt(totalSupplierDebt) }}</div>
                </div>
             </div>
 
@@ -474,7 +485,7 @@ const orderStatusOptions = {
                                 <p class="text-sm font-semibold text-gray-800">{{ inv.code }}</p>
                                 <p class="text-[10px] text-gray-400">{{ timeAgo(inv.created_at) }} <span v-if="inv.employee">• {{ inv.employee.name }}</span></p>
                             </div>
-                            <span class="text-sm font-bold text-indigo-600 font-mono">+{{ fmt(inv.total) }}đ</span>
+                            <span class="text-sm font-bold text-indigo-600 font-mono">+{{ fmt(inv.total) }}</span>
                         </div>
                         <div v-if="!recentInvoices || recentInvoices.length === 0" class="px-5 py-8 text-center text-gray-400 text-sm">Chưa có hóa đơn</div>
                     </div>
@@ -493,7 +504,7 @@ const orderStatusOptions = {
                                 <p class="text-[10px] text-gray-400">{{ timeAgo(p.created_at) }} <span v-if="p.supplier">• {{ p.supplier.name }}</span></p>
                             </div>
                             <div class="text-right">
-                                <span class="text-sm font-bold text-red-500 font-mono">-{{ fmt(p.total_amount) }}đ</span>
+                                <span class="text-sm font-bold text-red-500 font-mono">-{{ fmt(p.total_amount) }}</span>
                                 <span v-if="p.status === 'completed'" class="block text-[10px] text-green-600">Hoàn thành</span>
                                 <span v-else class="block text-[10px] text-yellow-600">{{ p.status }}</span>
                             </div>
@@ -563,8 +574,8 @@ const orderStatusOptions = {
                                 <td class="px-3 py-2.5 font-medium text-gray-800">{{ p.name }}</td>
                                 <td class="px-3 py-2.5 text-gray-500 text-xs">{{ p.sku }}</td>
                                 <td class="px-3 py-2.5 text-right font-semibold">{{ p.qty }}</td>
-                                <td class="px-3 py-2.5 text-right font-mono text-indigo-600 font-semibold">{{ fmt(p.revenue) }}đ</td>
-                                <td v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right font-mono font-semibold" :class="p.profit >= 0 ? 'text-green-600' : 'text-red-500'">{{ fmt(p.profit) }}đ</td>
+                                <td class="px-3 py-2.5 text-right font-mono text-indigo-600 font-semibold">{{ fmt(p.revenue) }}</td>
+                                <td v-if="productRankTab !== 'qty'" class="px-5 py-2.5 text-right font-mono font-semibold" :class="p.profit >= 0 ? 'text-green-600' : 'text-red-500'">{{ fmt(p.profit) }}</td>
                             </tr>
                             <tr v-if="!(productRankTab === 'profit' ? topProductsByProfit : topProductsByRevenue)?.length"><td colspan="6" class="px-5 py-6 text-center text-gray-400">Chưa có dữ liệu</td></tr>
                         </tbody>
@@ -593,7 +604,7 @@ const orderStatusOptions = {
                                 </div>
                             </div>
                             <div class="text-right flex-shrink-0 ml-2">
-                                <p class="text-sm font-bold text-indigo-600 font-mono">{{ fmt(c.revenue) }}đ</p>
+                                <p class="text-sm font-bold text-indigo-600 font-mono">{{ fmt(c.revenue) }}</p>
                                 <p class="text-[10px] text-gray-400">{{ c.orders }} đơn</p>
                             </div>
                         </div>
@@ -616,7 +627,7 @@ const orderStatusOptions = {
                                 </div>
                             </div>
                             <div class="text-right">
-                                <p class="text-sm font-bold text-emerald-600 font-mono">{{ fmt(e.revenue) }}đ</p>
+                                <p class="text-sm font-bold text-emerald-600 font-mono">{{ fmt(e.revenue) }}</p>
                                 <!-- Revenue bar -->
                                 <div class="w-24 h-1.5 bg-gray-100 rounded-full mt-1">
                                     <div class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" :style="{width: Math.min(100, (e.revenue / ((topEmployees || [])[0]?.revenue || 1)) * 100) + '%'}"></div>
@@ -633,7 +644,7 @@ const orderStatusOptions = {
                 <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
                     <div>
                         <h2 class="font-bold text-gray-800 text-[15px]">📦 Tồn kho sản phẩm</h2>
-                        <p class="text-xs text-gray-400">Giá trị tồn kho: <span class="font-semibold text-gray-600">{{ fmt(totalStockValue) }}đ</span></p>
+                        <p class="text-xs text-gray-400">Giá trị tồn kho: <span class="font-semibold text-gray-600">{{ fmt(totalStockValue) }}</span></p>
                     </div>
                     <div class="flex gap-1 bg-gray-100 rounded-lg p-0.5">
                         <button @click="inventoryFilter = 'all'" :class="inventoryFilter === 'all' ? 'bg-white shadow text-indigo-700' : 'text-gray-500'" class="px-3 py-1 text-xs font-semibold rounded-md transition">
@@ -683,6 +694,267 @@ const orderStatusOptions = {
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- Step 24.1 — KIỂM SOÁT VẬN HÀNH -->
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5 mt-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-base font-bold text-gray-800">🛡 Kiểm soát vận hành</h2>
+                    <div class="text-xs text-gray-400">Read-only — số liệu cập nhật mỗi lần tải dashboard</div>
+                </div>
+
+                <!-- Card cảnh báo -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                    <Link href="/products" class="block border rounded-lg p-3 hover:shadow-md transition"
+                        :class="(serialControl.in_transit_count || 0) > 0 ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200'">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Serial đang chuyển kho</div>
+                        <div class="text-2xl font-bold mt-1" :class="(serialControl.in_transit_count || 0) > 0 ? 'text-yellow-700' : 'text-gray-400'">
+                            {{ fmt(serialControl.in_transit_count || 0) }}
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">in_transit</div>
+                    </Link>
+                    <Link href="/tasks" class="block border rounded-lg p-3 hover:shadow-md transition"
+                        :class="(serialControl.used_for_repair_count || 0) > 0 ? 'border-blue-300 bg-blue-50' : 'border-gray-200'">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Serial đang dùng sửa chữa</div>
+                        <div class="text-2xl font-bold mt-1" :class="(serialControl.used_for_repair_count || 0) > 0 ? 'text-blue-700' : 'text-gray-400'">
+                            {{ fmt(serialControl.used_for_repair_count || 0) }}
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">used_for_repair</div>
+                    </Link>
+                    <Link href="/tasks" class="block border rounded-lg p-3 hover:shadow-md transition"
+                        :class="(serialControl.dismantled_count || 0) > 0 ? 'border-orange-300 bg-orange-50' : 'border-gray-200'">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Serial đã bóc tách</div>
+                        <div class="text-2xl font-bold mt-1" :class="(serialControl.dismantled_count || 0) > 0 ? 'text-orange-700' : 'text-gray-400'">
+                            {{ fmt(serialControl.dismantled_count || 0) }}
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">dismantled</div>
+                    </Link>
+                    <Link href="/stock-transfers" class="block border rounded-lg p-3 hover:shadow-md transition"
+                        :class="(stockTransferControl.transferring_over_24h_count || 0) > 0 ? 'border-red-300 bg-red-50' : (stockTransferControl.transferring_count || 0) > 0 ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200'">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Chuyển kho chờ nhận</div>
+                        <div class="text-2xl font-bold mt-1"
+                            :class="(stockTransferControl.transferring_over_24h_count || 0) > 0 ? 'text-red-700' : (stockTransferControl.transferring_count || 0) > 0 ? 'text-yellow-700' : 'text-gray-400'">
+                            {{ fmt(stockTransferControl.transferring_count || 0) }}
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">
+                            {{ stockTransferControl.transferring_over_24h_count || 0 }} >24h ·
+                            {{ stockTransferControl.transferring_over_72h_count || 0 }} >72h
+                        </div>
+                    </Link>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                    <Link href="/tasks" class="block border rounded-lg p-3 hover:shadow-md transition"
+                        :class="((repairControl.external_open_count || 0) + (repairControl.internal_open_count || 0)) > 0 ? 'border-blue-300 bg-blue-50' : 'border-gray-200'">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Repair đang mở</div>
+                        <div class="text-2xl font-bold mt-1 text-blue-700">
+                            {{ fmt((repairControl.external_open_count || 0) + (repairControl.internal_open_count || 0)) }}
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">
+                            ngoài: {{ repairControl.external_open_count || 0 }} · nội bộ: {{ repairControl.internal_open_count || 0 }}
+                        </div>
+                    </Link>
+                    <div class="block border border-orange-300 bg-orange-50 rounded-lg p-3">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Công nợ sửa chữa</div>
+                        <div class="text-xl font-bold mt-1 text-orange-700">{{ fmt(repairControl.repair_debt_total || 0) }}</div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">External tasks chưa thanh toán đủ</div>
+                    </div>
+                    <Link href="/warranties" class="block border rounded-lg p-3 hover:shadow-md transition"
+                        :class="(warrantyControl.expiring_7_days_count || 0) > 0 ? 'border-red-300 bg-red-50' : (warrantyControl.expiring_30_days_count || 0) > 0 ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200'">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Bảo hành sắp hết hạn</div>
+                        <div class="text-2xl font-bold mt-1"
+                            :class="(warrantyControl.expiring_7_days_count || 0) > 0 ? 'text-red-700' : 'text-yellow-700'">
+                            {{ fmt(warrantyControl.expiring_30_days_count || 0) }}
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">
+                            {{ warrantyControl.expiring_7_days_count || 0 }} trong 7 ngày · {{ warrantyControl.expired_count || 0 }} đã hết hạn
+                        </div>
+                    </Link>
+                    <Link href="/products" class="block border rounded-lg p-3 hover:shadow-md transition"
+                        :class="(inventoryRisk.serial_stock_mismatch_count || 0) > 0 || (inventoryRisk.negative_stock_count || 0) > 0 ? 'border-red-300 bg-red-50' : 'border-gray-200'">
+                        <div class="text-[11px] uppercase font-semibold text-gray-500">Sản phẩm rủi ro tồn</div>
+                        <div class="text-2xl font-bold mt-1"
+                            :class="(inventoryRisk.serial_stock_mismatch_count || 0) > 0 || (inventoryRisk.negative_stock_count || 0) > 0 ? 'text-red-700' : 'text-gray-400'">
+                            {{ fmt((inventoryRisk.serial_stock_mismatch_count || 0) + (inventoryRisk.negative_stock_count || 0)) }}
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">
+                            {{ inventoryRisk.serial_stock_mismatch_count || 0 }} lệch serial · {{ inventoryRisk.negative_stock_count || 0 }} tồn âm
+                        </div>
+                    </Link>
+                </div>
+
+                <!-- Danh sách ngắn -->
+                <div class="grid md:grid-cols-2 gap-4">
+                    <!-- Transferring -->
+                    <div class="border border-gray-200 rounded-lg">
+                        <div class="px-4 py-2 border-b font-semibold text-sm text-gray-700 bg-gray-50">
+                            Chuyển kho đang chờ nhận
+                            <Link href="/stock-transfers" class="text-xs text-blue-600 hover:underline ml-1">→ Xem</Link>
+                        </div>
+                        <div v-if="!(stockTransferControl.latest_transferring_transfers || []).length"
+                            class="p-4 text-sm text-gray-400 text-center">Không có cảnh báo</div>
+                        <table v-else class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-500 text-[11px] uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Mã</th>
+                                    <th class="px-3 py-2 text-left">Từ → Đến</th>
+                                    <th class="px-3 py-2 text-right">SL</th>
+                                    <th class="px-3 py-2 text-right">Tuổi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="t in stockTransferControl.latest_transferring_transfers" :key="t.id" class="border-t hover:bg-gray-50">
+                                    <td class="px-3 py-2 font-mono text-blue-600">{{ t.code }}</td>
+                                    <td class="px-3 py-2 text-xs">{{ t.from_branch }} → {{ t.to_branch }}</td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(t.total_quantity) }}</td>
+                                    <td class="px-3 py-2 text-right text-xs"
+                                        :class="(t.age_hours || 0) >= 72 ? 'text-red-600 font-semibold' : (t.age_hours || 0) >= 24 ? 'text-yellow-600' : 'text-gray-500'">
+                                        {{ t.age_hours !== null ? t.age_hours + 'h' : '-' }}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Open repairs -->
+                    <div class="border border-gray-200 rounded-lg">
+                        <div class="px-4 py-2 border-b font-semibold text-sm text-gray-700 bg-gray-50">
+                            Phiếu sửa chữa đang mở
+                            <Link href="/tasks" class="text-xs text-blue-600 hover:underline ml-1">→ Xem</Link>
+                        </div>
+                        <div v-if="!(repairControl.latest_open_repairs || []).length"
+                            class="p-4 text-sm text-gray-400 text-center">Không có cảnh báo</div>
+                        <table v-else class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-500 text-[11px] uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Mã</th>
+                                    <th class="px-3 py-2 text-left">Khách</th>
+                                    <th class="px-3 py-2 text-center">Loại</th>
+                                    <th class="px-3 py-2 text-center">Trạng thái</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="r in repairControl.latest_open_repairs" :key="r.id" class="border-t hover:bg-gray-50">
+                                    <td class="px-3 py-2 font-mono text-blue-600">
+                                        <Link :href="`/tasks/${r.id}`">{{ r.code }}</Link>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs">{{ r.customer_name || '-' }}</td>
+                                    <td class="px-3 py-2 text-center">
+                                        <span class="text-[11px] px-1.5 py-0.5 rounded"
+                                            :class="r.external ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'">
+                                            {{ r.external ? 'Khách ngoài' : 'Nội bộ' }}
+                                        </span>
+                                    </td>
+                                    <td class="px-3 py-2 text-center text-xs">{{ r.status }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Expiring warranties -->
+                    <div class="border border-gray-200 rounded-lg">
+                        <div class="px-4 py-2 border-b font-semibold text-sm text-gray-700 bg-gray-50">
+                            Bảo hành sắp hết hạn (≤30 ngày)
+                            <Link href="/warranties" class="text-xs text-blue-600 hover:underline ml-1">→ Xem</Link>
+                        </div>
+                        <div v-if="!(warrantyControl.latest_expiring_warranties || []).length"
+                            class="p-4 text-sm text-gray-400 text-center">Không có cảnh báo</div>
+                        <table v-else class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-500 text-[11px] uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">HĐ</th>
+                                    <th class="px-3 py-2 text-left">Sản phẩm</th>
+                                    <th class="px-3 py-2 text-left">Serial</th>
+                                    <th class="px-3 py-2 text-right">Hết hạn</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="w in warrantyControl.latest_expiring_warranties" :key="w.id" class="border-t hover:bg-gray-50">
+                                    <td class="px-3 py-2 font-mono text-xs">{{ w.invoice_code }}</td>
+                                    <td class="px-3 py-2 text-xs">{{ w.product_name || '-' }}</td>
+                                    <td class="px-3 py-2 text-xs font-mono">{{ w.serial_imei || '-' }}</td>
+                                    <td class="px-3 py-2 text-right text-xs">
+                                        {{ w.warranty_end_date ? new Date(w.warranty_end_date).toLocaleDateString('vi-VN') : '-' }}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Serial stock mismatch -->
+                    <div class="border border-gray-200 rounded-lg">
+                        <div class="px-4 py-2 border-b font-semibold text-sm text-gray-700 bg-gray-50">
+                            Sản phẩm lệch serial / tồn
+                            <Link href="/products" class="text-xs text-blue-600 hover:underline ml-1">→ Xem</Link>
+                        </div>
+                        <div v-if="!(inventoryRisk.serial_mismatch_products || []).length"
+                            class="p-4 text-sm text-gray-400 text-center">Không có cảnh báo</div>
+                        <table v-else class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-500 text-[11px] uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">SKU</th>
+                                    <th class="px-3 py-2 text-left">Tên</th>
+                                    <th class="px-3 py-2 text-right">Tồn</th>
+                                    <th class="px-3 py-2 text-right">Serial in_stock</th>
+                                    <th class="px-3 py-2 text-right">Lệch</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="p in inventoryRisk.serial_mismatch_products" :key="p.id" class="border-t hover:bg-gray-50">
+                                    <td class="px-3 py-2 text-xs font-mono">{{ p.sku }}</td>
+                                    <td class="px-3 py-2 text-xs">{{ p.name }}</td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(p.stock_quantity) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ fmt(p.serial_count) }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold"
+                                        :class="p.diff > 0 ? 'text-red-600' : 'text-orange-600'">
+                                        {{ p.diff > 0 ? '+' : '' }}{{ p.diff }}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- High-risk activities -->
+                <div v-if="canViewAuditLog && highRiskActivities && highRiskActivities.visible" class="mt-5 border border-red-200 rounded-lg bg-red-50/30">
+                    <div class="px-4 py-2 border-b border-red-200 font-semibold text-sm text-red-700 bg-red-50 flex items-center justify-between">
+                        <span>⚠ Thao tác rủi ro cao gần đây</span>
+                        <Link href="/activity-logs" class="text-xs text-red-600 hover:underline">→ Xem nhật ký đầy đủ</Link>
+                    </div>
+                    <div class="px-4 py-2 text-xs text-gray-600 border-b border-red-100">
+                        Hôm nay: <strong class="text-red-600">{{ highRiskActivities.count_today || 0 }}</strong>
+                        · 7 ngày: <strong class="text-red-600">{{ highRiskActivities.count_7_days || 0 }}</strong>
+                    </div>
+                    <div v-if="!(highRiskActivities.latest_logs || []).length" class="p-4 text-sm text-gray-400 text-center">Không có hoạt động rủi ro</div>
+                    <table v-else class="w-full text-sm">
+                        <thead class="bg-red-50 text-gray-600 text-[11px] uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Thời gian</th>
+                                <th class="px-3 py-2 text-left">Hành động</th>
+                                <th class="px-3 py-2 text-left">Mô tả</th>
+                                <th class="px-3 py-2 text-left">Người dùng</th>
+                                <th class="px-3 py-2 text-left">IP</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="log in highRiskActivities.latest_logs" :key="log.id" class="border-t border-red-100 hover:bg-red-50/50">
+                                <td class="px-3 py-2 text-xs whitespace-nowrap">
+                                    {{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '-' }}
+                                </td>
+                                <td class="px-3 py-2 text-xs">
+                                    <span class="mr-1">{{ log.action_icon }}</span>{{ log.action_label }}
+                                </td>
+                                <td class="px-3 py-2 text-xs">{{ log.description }}</td>
+                                <td class="px-3 py-2 text-xs">{{ log.user_name || '-' }}</td>
+                                <td class="px-3 py-2 text-xs font-mono text-gray-500">{{ log.ip_address || '-' }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div v-else-if="highRiskActivities && !highRiskActivities.visible" class="mt-5 border border-gray-200 rounded-lg bg-gray-50 px-4 py-3 text-xs text-gray-500">
+                    Có {{ highRiskActivities.count_today || 0 }} thao tác rủi ro cao hôm nay ({{ highRiskActivities.count_7_days || 0 }} trong 7 ngày).
+                    Cần quyền <code class="bg-gray-200 px-1 rounded">system.audit.view</code> để xem chi tiết.
                 </div>
             </div>
 

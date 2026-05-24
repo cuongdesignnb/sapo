@@ -142,18 +142,16 @@ class TimekeepingService
 
             if ($scheduleStart && $checkIn) {
                 $checkInCarbon = Carbon::parse($checkIn);
-                $lateMinutes = max(0, (int) $checkInCarbon->diffInMinutes($scheduleStart, false));
-                $lateMinutes = max(0, $lateMinutes - $allowLate);
+                // Carbon 3: diffInMinutes trả về giá trị có dấu → dùng abs() + kiểm tra hướng
+                if ($checkInCarbon->greaterThan($scheduleStart)) {
+                    $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
+                }
 
-                if ($overtimeBeforeEnabled) {
-                    if ($checkInCarbon->lessThan($scheduleStart)) {
-                        $rawBeforeOt = abs($scheduleStart->diffInMinutes($checkInCarbon));
-                        $rawBeforeOt = max(0, $rawBeforeOt - $overtimeBeforeMinutes);
-                        if ($otRounding > 0) {
-                            $rawBeforeOt = intdiv($rawBeforeOt, $otRounding) * $otRounding;
-                        }
-                        $otMinutes += $rawBeforeOt;
-                    }
+                // OT TRƯỚC CA: ceil(seconds/60) - threshold (KiotViet truncate checkin xuống phút)
+                $otBeforeShift = (int) ($setting?->ot_before_minutes ?? 0);
+                if ($otBeforeShift > 0 && $checkInCarbon->lessThan($scheduleStart)) {
+                    $earlyArrival = (int) ceil(abs($scheduleStart->diffInSeconds($checkInCarbon)) / 60);
+                    $otMinutes += max(0, $earlyArrival - $otBeforeShift);
                 }
             }
 
@@ -164,12 +162,12 @@ class TimekeepingService
                     $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
                     $earlyMinutes = max(0, $diffEarly - $allowEarly);
                 } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
-                    $rawOt = abs($checkOutCarbon->diffInMinutes($scheduleEnd));
-                    $rawOt = max(0, $rawOt - $otAfter);
+                    // OT SAU CA: floor(seconds/60) - threshold (KiotViet: bỏ qua X phút đầu sau ca)
+                    $rawOt = max(0, intdiv(abs($checkOutCarbon->diffInSeconds($scheduleEnd)), 60) - $otAfter);
                     if ($otRounding > 0) {
                         $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
                     }
-                    $otMinutes = $rawOt;
+                    $otMinutes += $rawOt;
                 }
             }
 
@@ -184,6 +182,10 @@ class TimekeepingService
                 $weekDays = ($branchWorkday ?? $globalWorkday)?->week_days ?? [1, 2, 3, 4, 5, 6]; // Mặc định T2-T7
                 $isRestDay = !in_array($dayOfWeek, $weekDays);
             }
+
+            // Ngày nghỉ / ngày lễ: OT, late, early tính BÌNH THƯỜNG theo ca
+            // work_units vẫn tính bình thường (1.0 / 0.5)
+            // Hệ số nhân (2x, 3x) áp dụng trong SalaryCalculationService qua holiday_multiplier
 
             // Tính work_units: 0 (vắng), 0.5 (nửa ngày), 1 (đủ ngày)
             $standardHours = (float) ($setting?->standard_hours_per_day ?? 8);
@@ -212,6 +214,10 @@ class TimekeepingService
             if ($lateHalfDayEnabled && $lateMinutes >= $lateHalfDayThreshold && $workUnits > 0.5) {
                 $workUnits = 0.5;
             }
+
+            // Ngày nghỉ/lễ: work_units GIỮ NGUYÊN (1.0 hoặc 0.5)
+            // Hệ số nhân (2x, 3x) sẽ được áp dụng trong SalaryCalculationService
+            // qua trường holiday_multiplier
 
             $attributes = [
                 'employee_id' => $schedule->employee_id,
@@ -242,6 +248,179 @@ class TimekeepingService
 
             if ($existing) {
                 $existing->fill($attributes)->save();
+                $updated++;
+            } else {
+                TimekeepingRecord::create($attributes);
+                $created++;
+            }
+        }
+
+        // ===== XỬ LÝ NGÀY NGHỈ không có schedule nhưng có chấm công =====
+        // Tìm tất cả attendance log trong khoảng thời gian, nhóm theo employee+date
+        $allLogs = AttendanceLog::whereBetween('punched_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+            ->when($employeeId, fn($q) => $q->where('employee_id', $employeeId))
+            ->orderBy('punched_at')
+            ->get();
+
+        $logsByEmpDate = $allLogs->groupBy(function ($log) {
+            return $log->employee_id . '_' . Carbon::parse($log->punched_at)->toDateString();
+        });
+
+        foreach ($logsByEmpDate as $key => $logs) {
+            [$empId, $dateStr] = explode('_', $key, 2);
+            $empId = (int) $empId;
+
+            // Nếu đã có TimekeepingRecord cho ngày này (từ schedule) → bỏ qua
+            $existingRecord = TimekeepingRecord::where('employee_id', $empId)
+                ->where('work_date', $dateStr)
+                ->first();
+            if ($existingRecord && $existingRecord->manual_override) continue;
+            if ($existingRecord && $existingRecord->employee_work_schedule_id) continue;
+
+            // Kiểm tra có phải ngày nghỉ không
+            $dayOfWeek = Carbon::parse($dateStr)->dayOfWeek;
+            $employee = \App\Models\Employee::find($empId);
+            if (!$employee) continue;
+
+            $holiday = $holidayMap->get($dateStr);
+            $isRestDay = false;
+            if (!$holiday) {
+                $branchWorkday = $workdaySettings->firstWhere('branch_id', $employee->branch_id);
+                $globalWorkday = $workdaySettings->firstWhere('branch_id', null);
+                $weekDays = ($branchWorkday ?? $globalWorkday)?->week_days ?? [1, 2, 3, 4, 5, 6];
+                $isRestDay = !in_array($dayOfWeek, $weekDays);
+            }
+
+            // Chỉ tạo record cho ngày nghỉ/lễ (ngày thường không có schedule = không tính)
+            if (!$holiday && !$isRestDay) continue;
+
+            // Lấy shift thực tế của nhân viên từ lịch làm việc gần nhất trong kỳ
+            $empSchedule = EmployeeWorkSchedule::where('employee_id', $empId)
+                ->whereBetween('work_date', [$from, $to])
+                ->whereNotNull('shift_id')
+                ->orderByRaw("ABS(DATEDIFF(work_date, ?))", [$dateStr])
+                ->first();
+            $empShift = $empSchedule?->shift_id ? ($shifts->all()[$empSchedule->shift_id] ?? Shift::find($empSchedule->shift_id)) : null;
+            if (!$empShift) {
+                $empShift = Shift::where('branch_id', $employee->branch_id)->first() ?? Shift::first();
+            }
+
+            $setting = $settings->all()[(string) $employee->branch_id] ?? $globalSetting;
+
+            // Xác định thời gian ca từ shift thực tế của nhân viên
+            $scheduleStart = $empShift
+                ? $this->buildScheduleDateTime($dateStr, null, $empShift->start_time)
+                : Carbon::parse($dateStr)->setTimeFromTimeString('08:30');
+            $scheduleEnd = $empShift
+                ? $this->buildScheduleDateTime($dateStr, null, $empShift->end_time)
+                : Carbon::parse($dateStr)->setTimeFromTimeString('18:00');
+            if ($scheduleStart && $scheduleEnd && $scheduleEnd <= $scheduleStart) {
+                $scheduleEnd->addDay();
+            }
+
+            // Tính check_in / check_out từ logs
+            $checkIn = $logs->first()->punched_at;
+            $checkOut = $logs->count() > 1 ? $logs->last()->punched_at : null;
+
+            $workedMinutes = 0;
+            if ($checkIn && $checkOut) {
+                $workedMinutes = abs(Carbon::parse($checkOut)->diffInMinutes(Carbon::parse($checkIn)));
+            }
+
+            // Tính late/early/OT theo ca mặc định (giống ngày thường)
+            $useShiftAllowances = (bool) ($setting?->use_shift_allowances ?? true);
+            $allowLate = $useShiftAllowances ? ($empShift?->allow_late_minutes ?? 0) : ($setting?->late_grace_minutes ?? 0);
+            $allowEarly = $useShiftAllowances ? ($empShift?->allow_early_minutes ?? 0) : ($setting?->early_grace_minutes ?? 0);
+            $otAfter = (int) ($setting?->ot_after_minutes ?? 0);
+            $otRounding = (int) ($setting?->ot_rounding_minutes ?? 0);
+
+            $lateMinutes = $earlyMinutes = $otMinutes = 0;
+
+            if ($scheduleStart && $checkIn) {
+                $checkInCarbon = Carbon::parse($checkIn);
+                if ($checkInCarbon->greaterThan($scheduleStart)) {
+                    $lateMinutes = max(0, abs($checkInCarbon->diffInMinutes($scheduleStart)) - $allowLate);
+                }
+                if ((bool) Setting::get('attendance_overtime_before_enabled', true)) {
+                    if ($checkInCarbon->lessThan($scheduleStart)) {
+                        $rawBeforeOt = (int) abs($scheduleStart->diffInMinutes($checkInCarbon));
+                        $otBefore = (int) Setting::get('attendance_overtime_before_minutes', 0);
+                        if ($rawBeforeOt < $otBefore) {
+                            $rawBeforeOt = 0;
+                        }
+                        if ($otRounding > 0) {
+                            $rawBeforeOt = intdiv($rawBeforeOt, $otRounding) * $otRounding;
+                        }
+                        $otMinutes += $rawBeforeOt;
+                    }
+                }
+            }
+
+            if ($scheduleEnd && $checkOut) {
+                $checkOutCarbon = Carbon::parse($checkOut);
+                if ($checkOutCarbon->lessThan($scheduleEnd)) {
+                    $diffEarly = abs($scheduleEnd->diffInMinutes($checkOutCarbon));
+                    $earlyMinutes = max(0, $diffEarly - $allowEarly);
+                } elseif ($checkOutCarbon->greaterThan($scheduleEnd)) {
+                    $rawOt = (int) abs($checkOutCarbon->diffInMinutes($scheduleEnd));
+                    if ($rawOt < $otAfter) {
+                        $rawOt = 0;
+                    }
+                    if ($otRounding > 0) {
+                        $rawOt = intdiv($rawOt, $otRounding) * $otRounding;
+                    }
+                    $otMinutes += $rawOt;
+                }
+            }
+
+            // Tính work_units
+            $standardHoursRestDay = (float) ($setting?->standard_hours_per_day ?? 8);
+            $halfDayThresholdRest = $standardHoursRestDay / 2;
+            $workUnitsRest = 0;
+            if ($workedMinutes > 0) {
+                if ($halfWorkEnabled) {
+                    if ($workedMinutes < $halfWorkMinMinutes) {
+                        $workUnitsRest = 0;
+                    } elseif ($workedMinutes <= $halfWorkMaxMinutes) {
+                        $workUnitsRest = 0.5;
+                    } else {
+                        $workUnitsRest = 1.0;
+                    }
+                } else {
+                    $workedHoursRest = $workedMinutes / 60;
+                    $workUnitsRest = ($workedHoursRest >= $halfDayThresholdRest) ? 1.0 : 0.5;
+                }
+            }
+
+            $attributes = [
+                'employee_id' => $empId,
+                'employee_work_schedule_id' => null,
+                'branch_id' => $employee->branch_id,
+                'shift_id' => $empShift?->id,
+                'work_date' => $dateStr,
+                'slot' => 1,
+                'scheduled_start_at' => $scheduleStart,
+                'scheduled_end_at' => $scheduleEnd,
+                'check_in_at' => $checkIn,
+                'check_out_at' => $checkOut,
+                'source' => 'device',
+                'attendance_type' => 'work',
+                'manual_override' => false,
+                'late_minutes' => $lateMinutes,
+                'early_minutes' => $earlyMinutes,
+                'ot_minutes' => $otMinutes,
+                'worked_minutes' => $workedMinutes,
+                'work_units' => $workUnitsRest,
+                'is_holiday' => true,
+                'holiday_multiplier' => $holiday ? (float) $holiday->multiplier : 2.0,
+                'raw' => [
+                    'log_ids' => $logs->pluck('id')->values()->all(),
+                    'device_ids' => $logs->pluck('attendance_device_id')->unique()->values()->all(),
+                ],
+            ];
+
+            if ($existingRecord) {
+                $existingRecord->fill($attributes)->save();
                 $updated++;
             } else {
                 TimekeepingRecord::create($attributes);

@@ -31,6 +31,9 @@ class MyTasksController extends Controller
             'category:id,name,color',
             'branch:id,name',
             'creator:id,name',
+            'product:id,name,sku',
+            'serialImei:id,serial_number,product_id,repair_status',
+            'serialImei.product:id,name,sku',
             'assignments' => fn($q) => $q->where('employee_id', $employee->id),
         ])
         ->whereHas('assignments', fn($q) => $q->where('employee_id', $employee->id))
@@ -98,5 +101,37 @@ class MyTasksController extends Controller
 
         $result = $this->service->updateProgress($task, $data['progress']);
         return response()->json($result);
+    }
+
+    /**
+     * Nhận tất cả công việc đang chờ (pending) của nhân viên.
+     */
+    public function acceptAll(Request $request)
+    {
+        $employee = $request->user()->employee;
+        if (!$employee) {
+            return response()->json(['message' => 'Tài khoản chưa liên kết nhân viên.'], 403);
+        }
+
+        // Lấy tất cả assignments pending của NV này, mà task chưa completed/cancelled
+        $pendingAssignments = TaskAssignment::where('employee_id', $employee->id)
+            ->where('status', 'pending')
+            ->whereHas('task', fn($q) => $q->whereNotIn('status', ['completed', 'cancelled']))
+            ->get();
+
+        $accepted = 0;
+        foreach ($pendingAssignments as $assignment) {
+            try {
+                $this->service->respondToAssignment($assignment, 'accepted');
+                $accepted++;
+            } catch (\Exception $e) {
+                // Skip errors, continue
+            }
+        }
+
+        return response()->json([
+            'message' => "Đã nhận {$accepted} công việc.",
+            'accepted' => $accepted,
+        ]);
     }
 }

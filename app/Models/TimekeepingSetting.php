@@ -19,6 +19,7 @@ class TimekeepingSetting extends Model
         'enforce_shift_checkin_window',
         'ot_rounding_minutes',
         'ot_after_minutes',
+        'ot_before_minutes',
         'status',
         'created_by',
         'updated_by',

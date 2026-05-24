@@ -1,9 +1,9 @@
-<script setup>
-import { Head, Link } from '@inertiajs/vue3';
+﻿<script setup>
+import { formatVND as fmt } from '@/utils/money';
+import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({ returnOrder: Object });
-const fmt = (v) => Number(v || 0).toLocaleString('vi-VN');
 
 const statusLabels = {
     completed: 'Hoàn thành',
@@ -14,6 +14,13 @@ const statusColors = {
     completed: 'bg-green-100 text-green-700',
     cancelled: 'bg-red-100 text-red-700',
     pending: 'bg-yellow-100 text-yellow-700',
+};
+
+const cancelReturn = () => {
+    if (!confirm('Bạn chắc chắn muốn hủy phiếu trả hàng này? Hệ thống sẽ rollback tồn kho, công nợ và serial đã trả.')) return;
+    router.post(`/returns/${props.returnOrder.id}/cancel`, {}, {
+        preserveScroll: true,
+    });
 };
 </script>
 
@@ -31,6 +38,13 @@ const statusColors = {
                     <span :class="statusColors[returnOrder.status] || 'bg-gray-100 text-gray-700'" class="px-3 py-1 rounded-full text-sm font-semibold">
                         {{ statusLabels[returnOrder.status] || returnOrder.status }}
                     </span>
+                    <button
+                        v-if="returnOrder.status !== 'Đã hủy' && returnOrder.status !== 'cancelled'"
+                        @click="cancelReturn"
+                        class="bg-white border border-red-300 text-red-600 rounded px-3 py-1.5 text-sm font-semibold hover:bg-red-50"
+                    >
+                        Hủy phiếu trả hàng
+                    </button>
                     <a :href="`/returns/${returnOrder.id}/print`" target="_blank" class="bg-white border border-gray-300 rounded px-3 py-1.5 text-sm font-semibold hover:bg-gray-50">
                         🖨 In
                     </a>
@@ -87,7 +101,17 @@ const statusColors = {
                     <tbody class="divide-y">
                         <tr v-for="(item, idx) in returnOrder.items" :key="idx" class="hover:bg-gray-50">
                             <td class="px-4 py-3 text-blue-600 font-semibold">{{ item.product_code }}</td>
-                            <td class="px-4 py-3">{{ item.product_name }}</td>
+                            <td class="px-4 py-3">
+                                <div>{{ item.product_name }}</div>
+                                <div v-if="item.returned_serials && item.returned_serials.length" class="mt-1 flex flex-wrap gap-1">
+                                    <span class="text-gray-500 text-xs mr-1">Serial/IMEI đã trả:</span>
+                                    <span
+                                        v-for="s in item.returned_serials"
+                                        :key="s.id"
+                                        class="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded"
+                                    >{{ s.serial_number || ('#' + s.id) }}</span>
+                                </div>
+                            </td>
                             <td class="px-4 py-3 text-right">{{ item.quantity }}</td>
                             <td class="px-4 py-3 text-right">{{ fmt(item.price) }}</td>
                             <td class="px-4 py-3 text-right text-red-500">{{ item.discount ? fmt(item.discount) : '---' }}</td>
@@ -103,7 +127,7 @@ const statusColors = {
                     <div class="flex justify-between"><span class="text-gray-500">Tổng tiền hàng</span><span class="font-semibold">{{ fmt(returnOrder.subtotal) }}</span></div>
                     <div v-if="returnOrder.discount" class="flex justify-between"><span class="text-gray-500">Giảm giá</span><span class="font-semibold text-red-500">-{{ fmt(returnOrder.discount) }}</span></div>
                     <div v-if="returnOrder.fee" class="flex justify-between"><span class="text-gray-500">Phí trả hàng</span><span class="font-semibold">{{ fmt(returnOrder.fee) }}</span></div>
-                    <div class="flex justify-between border-t pt-2 text-base"><span class="font-bold">Cần trả khách</span><span class="font-bold text-orange-600">{{ fmt(returnOrder.total) }}₫</span></div>
+                    <div class="flex justify-between border-t pt-2 text-base"><span class="font-bold">Cần trả khách</span><span class="font-bold text-orange-600">{{ fmt(returnOrder.total) }}</span></div>
                     <div class="flex justify-between"><span class="text-gray-500">Đã trả khách</span><span class="font-semibold text-green-600">{{ fmt(returnOrder.paid_to_customer) }}</span></div>
                 </div>
             </div>

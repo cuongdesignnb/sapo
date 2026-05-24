@@ -1,45 +1,54 @@
 <script setup>
-import { ref, watch, computed } from "vue";
+import { formatVND as formatCurrency } from '@/utils/money';
+import { ref, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
+import axios from "axios";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
-
-const debounce = (fn, delay) => {
-    let timeoutID;
-    return (...args) => {
-        if (timeoutID) clearTimeout(timeoutID);
-        timeoutID = setTimeout(() => {
-            fn(...args);
-        }, delay);
-    };
-};
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     stockTakes: Object,
     branches: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
-const searchQuery = ref(props.filters.search || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/stock-takes",
+    defaults: { date_filter: "all" },
+});
+
 const expandedRow = ref(null);
-const selectedFilter = ref("all"); // all, draft, balanced, cancelled
-const activeDateFilter = ref(props.filters.date_filter || "all");
-const creatorQuery = ref(props.filters.user_name || "");
-const sortBy = ref(props.filters.sort_by || "");
-const sortDirection = ref(props.filters.sort_direction || "");
+const selectedFilter = ref("all");
 
-const activeStatusFilters = ref({
-    "Phiếu tạm": props.filters.status?.includes("draft") ?? true,
-    "Đã cân bằng kho": props.filters.status?.includes("balanced") ?? true,
-    "Đã hủy": props.filters.status?.includes("cancelled") ?? false,
+const statusLabelMap = {
+    "Phiếu tạm": "draft",
+    "Đã cân bằng kho": "balanced",
+    "Đã hủy": "cancelled",
+};
+const activeStatusFilters = computed({
+    get() {
+        const arr = filters.status || [];
+        return Object.fromEntries(Object.entries(statusLabelMap).map(([k, v]) => [k, arr.includes(v)]));
+    },
+    set(val) {
+        filters.status = Object.entries(val).filter(([, on]) => on).map(([k]) => statusLabelMap[k]);
+    },
 });
+const toggleStatus = (label) => {
+    const current = { ...activeStatusFilters.value };
+    current[label] = !current[label];
+    activeStatusFilters.value = current;
+};
 
 const toggleRow = (id) => {
     expandedRow.value = expandedRow.value === id ? null : id;
 };
 
-const formatCurrency = (val) => Number(val).toLocaleString("vi-VN");
+
 const formatDate = (dateStr) => {
     if (!dateStr) return "";
     const date = new Date(dateStr);
@@ -61,52 +70,7 @@ const getStatusLabelText = (status) => {
     return "Chưa rõ";
 };
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    let activeStatuses = [];
-    if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
-    if (activeStatusFilters.value["Đã cân bằng kho"]) activeStatuses.push("balanced");
-    if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
-    router.get(
-        "/stock-takes",
-        {
-            search: searchQuery.value,
-            status: activeStatuses,
-            date_filter: activeDateFilter.value,
-            user_name: creatorQuery.value,
-            sort_by: field,
-            sort_direction: direction,
-        },
-        { preserveState: true, replace: true },
-    );
-};
-
-const updateFilters = debounce(() => {
-    let activeStatuses = [];
-    if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
-    if (activeStatusFilters.value["Đã cân bằng kho"]) activeStatuses.push("balanced");
-    if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
-
-    router.get(
-        "/stock-takes",
-        {
-            search: searchQuery.value,
-            status: activeStatuses,
-            date_filter: activeDateFilter.value,
-            user_name: creatorQuery.value,
-            sort_by: sortBy.value,
-            sort_direction: sortDirection.value,
-        },
-        { preserveState: true, replace: true },
-    );
-}, 300);
-
-watch(
-    [searchQuery, activeStatusFilters, activeDateFilter, creatorQuery],
-    updateFilters,
-    { deep: true },
-);
+const handleSort = (field, direction) => setSort(field, direction);
 
 const printStockTake = (stockTake) => {
     window.open(
@@ -114,6 +78,42 @@ const printStockTake = (stockTake) => {
         "_blank",
         "width=400,height=600",
     );
+};
+
+// Tính diff live cho mỗi item
+const computedDiff = (item) => {
+    return (parseInt(item.actual_stock) || 0) - (parseInt(item.system_stock) || 0);
+};
+
+// Cân bằng kho
+const balanceStockTake = async (stockTake) => {
+    if (!confirm('Bạn có chắc muốn cân bằng kho? Tồn kho sẽ được cập nhật theo số thực tế.')) return;
+    try {
+        const res = await axios.post(`/stock-takes/${stockTake.id}/balance`);
+        if (res.data.success) {
+            alert(res.data.message);
+            router.reload();
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || 'Có lỗi xảy ra');
+    }
+};
+
+// Hủy phiếu kiểm kho
+const cancelStockTake = async (stockTake) => {
+    const msg = stockTake.status === 'balanced'
+        ? 'Hủy phiếu đã cân bằng sẽ hoàn lại tồn kho. Tiếp tục?'
+        : 'Hủy phiếu tạm này?';
+    if (!confirm(msg)) return;
+    try {
+        const res = await axios.post(`/stock-takes/${stockTake.id}/cancel`);
+        if (res.data.success) {
+            alert(res.data.message);
+            router.reload();
+        }
+    } catch (e) {
+        alert(e.response?.data?.message || 'Có lỗi xảy ra');
+    }
 };
 </script>
 
@@ -153,7 +153,7 @@ const printStockTake = (stockTake) => {
                             >
                                 <input
                                     type="radio"
-                                    v-model="activeDateFilter"
+                                    v-model="filters.date_filter"
                                     value="all"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
@@ -165,7 +165,7 @@ const printStockTake = (stockTake) => {
                             >
                                 <input
                                     type="radio"
-                                    v-model="activeDateFilter"
+                                    v-model="filters.date_filter"
                                     value="today"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
@@ -177,7 +177,7 @@ const printStockTake = (stockTake) => {
                             >
                                 <input
                                     type="radio"
-                                    v-model="activeDateFilter"
+                                    v-model="filters.date_filter"
                                     value="this_month"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
@@ -200,7 +200,7 @@ const printStockTake = (stockTake) => {
                             >
                                 <input
                                     type="checkbox"
-                                    v-model="activeStatusFilters[key]"
+                                    :checked="val" @change="toggleStatus(key)"
                                     class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
                                 />
                                 <span>{{ key }}</span>
@@ -234,7 +234,7 @@ const printStockTake = (stockTake) => {
                         </div>
                         <input
                             type="text"
-                            v-model="creatorQuery"
+                            v-model="filters.user_name"
                             placeholder="Chọn người tạo"
                             class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
                         />
@@ -268,7 +268,7 @@ const printStockTake = (stockTake) => {
                             </svg>
                         </div>
                         <input
-                            v-model="searchQuery"
+                            v-model="filters.search"
                             type="text"
                             placeholder="Theo mã phiếu kiểm"
                             class="w-full pl-9 pr-8 border-b-2 border-transparent focus:border-blue-500 bg-transparent py-2.5 outline-none transition-colors shadow-none text-[13px] block"
@@ -332,8 +332,8 @@ const printStockTake = (stockTake) => {
                                         class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                     />
                                 </th>
-                                <SortableHeader label="Mã kiểm kho" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Mã kiểm kho" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ngày cân bằng
                                 </th>
@@ -365,7 +365,7 @@ const printStockTake = (stockTake) => {
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ghi chú
                                 </th>
-                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 w-24 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="p-3 w-24 text-right border-b border-[#dce3ec]" @sort="handleSort" />
                             </tr>
                         </thead>
                         <tbody>
@@ -401,28 +401,28 @@ const printStockTake = (stockTake) => {
                                             formatDate(stockTake.balanced_date)
                                         }}
                                     </td>
-                                    <td class="p-3 text-right">{{ 1 }}</td>
+                                    <td class="p-3 text-right">{{ stockTake.items?.length || 0 }}</td>
                                     <td class="p-3 text-right">
-                                        {{ stockTake.total_actual_qty }}
+                                        {{ stockTake.items?.reduce((s, i) => s + (parseInt(i.actual_stock) || 0), 0) || 0 }}
                                     </td>
                                     <td
                                         class="p-3 text-right font-medium"
                                         :class="{
                                             'text-red-500':
-                                                stockTake.total_diff_qty < 0,
+                                                stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) < 0,
                                             'text-green-500':
-                                                stockTake.total_diff_qty > 0,
+                                                stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) > 0,
                                         }"
                                     >
-                                        {{ stockTake.total_diff_qty }}
+                                        {{ stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) || 0 }}
                                     </td>
                                     <td class="p-3 text-right text-green-500">
-                                        {{ stockTake.total_diff_increase }}
+                                        {{ stockTake.items?.filter(i => computedDiff(i) > 0).reduce((s, i) => s + computedDiff(i), 0) || 0 }}
                                     </td>
                                     <td
                                         class="p-3 text-right text-red-500 w-[120px]"
                                     >
-                                        {{ stockTake.total_diff_decrease }}
+                                        {{ stockTake.items?.filter(i => computedDiff(i) < 0).reduce((s, i) => s + computedDiff(i), 0) || 0 }}
                                     </td>
                                     <td class="p-3 truncate max-w-[150px]">
                                         {{
@@ -656,7 +656,7 @@ const printStockTake = (stockTake) => {
                                                                     }}
                                                                 </td>
                                                                 <td
-                                                                    class="p-3 text-right"
+                                                                    class="p-3 text-right font-semibold text-blue-700"
                                                                 >
                                                                     {{
                                                                         item.actual_stock
@@ -666,15 +666,15 @@ const printStockTake = (stockTake) => {
                                                                     class="p-3 text-right font-medium"
                                                                     :class="{
                                                                         'text-red-500':
-                                                                            item.diff_qty <
+                                                                            computedDiff(item) <
                                                                             0,
                                                                         'text-green-500':
-                                                                            item.diff_qty >
+                                                                            computedDiff(item) >
                                                                             0,
                                                                     }"
                                                                 >
                                                                     {{
-                                                                        item.diff_qty
+                                                                        computedDiff(item)
                                                                     }}
                                                                 </td>
                                                                 <td
@@ -682,7 +682,7 @@ const printStockTake = (stockTake) => {
                                                                 >
                                                                     {{
                                                                         formatCurrency(
-                                                                            item.diff_value,
+                                                                            computedDiff(item) * (item.product?.cost_price || 0),
                                                                         )
                                                                     }}
                                                                 </td>
@@ -722,7 +722,7 @@ const printStockTake = (stockTake) => {
                                                             <span
                                                                 class="w-20 text-right font-medium"
                                                                 >{{
-                                                                    stockTake.total_actual_qty
+                                                                    stockTake.items?.reduce((s, i) => s + (parseInt(i.actual_stock) || 0), 0) || 0
                                                                 }}</span
                                                             >
                                                         </div>
@@ -732,12 +732,12 @@ const printStockTake = (stockTake) => {
                                                             <span
                                                                 class="w-[150px] text-right text-gray-500"
                                                                 >Tổng lệch tăng
-                                                                (0):</span
+                                                                ({{ (stockTake.items?.filter(i => computedDiff(i) > 0) || []).length }}):</span
                                                             >
                                                             <span
                                                                 class="w-20 text-right text-green-600 font-medium"
                                                                 >{{
-                                                                    stockTake.total_diff_increase
+                                                                    stockTake.items?.filter(i => computedDiff(i) > 0).reduce((s, i) => s + computedDiff(i), 0) || 0
                                                                 }}</span
                                                             >
                                                         </div>
@@ -753,7 +753,7 @@ const printStockTake = (stockTake) => {
                                                                             (
                                                                                 i,
                                                                             ) =>
-                                                                                i.diff_qty <
+                                                                                computedDiff(i) <
                                                                                 0,
                                                                         ) || []
                                                                     ).length
@@ -762,9 +762,7 @@ const printStockTake = (stockTake) => {
                                                             <span
                                                                 class="w-20 text-right text-red-500 font-medium"
                                                                 >{{
-                                                                    formatCurrency(
-                                                                        stockTake.total_diff_value,
-                                                                    )
+                                                                    stockTake.items?.filter(i => computedDiff(i) < 0).reduce((s, i) => s + computedDiff(i), 0) || 0
                                                                 }}</span
                                                             >
                                                         </div>
@@ -780,7 +778,7 @@ const printStockTake = (stockTake) => {
                                                                             (
                                                                                 i,
                                                                             ) =>
-                                                                                i.diff_qty <
+                                                                                computedDiff(i) !==
                                                                                 0,
                                                                         ) || []
                                                                     ).length
@@ -789,9 +787,7 @@ const printStockTake = (stockTake) => {
                                                             <span
                                                                 class="w-20 text-right font-bold"
                                                                 >{{
-                                                                    formatCurrency(
-                                                                        stockTake.total_diff_value,
-                                                                    )
+                                                                    stockTake.items?.reduce((s, i) => s + computedDiff(i), 0) || 0
                                                                 }}</span
                                                             >
                                                         </div>
@@ -805,7 +801,9 @@ const printStockTake = (stockTake) => {
                                             >
                                                 <div class="flex gap-3">
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-red-500 font-medium hover:bg-gray-50 flex items-center gap-2"
+                                                        v-if="stockTake.status !== 'cancelled'"
+                                                        @click.stop="cancelStockTake(stockTake)"
+                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-red-500 font-medium hover:bg-red-50 flex items-center gap-2"
                                                     >
                                                         <svg
                                                             class="w-4 h-4"
@@ -906,6 +904,7 @@ const printStockTake = (stockTake) => {
                                                             stockTake.status ===
                                                             'draft'
                                                         "
+                                                        @click.stop="balanceStockTake(stockTake)"
                                                         class="bg-[#4aa136] hover:bg-[#3d872c] text-white px-5 py-1.5 rounded font-medium flex items-center gap-2 shadow-sm"
                                                     >
                                                         <svg

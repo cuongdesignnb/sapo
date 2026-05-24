@@ -5,10 +5,14 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Paysheet;
 use App\Models\Payslip;
+use App\Models\PayslipAdjustment;
 use App\Models\PaysheetPayment;
+use App\Models\CashFlow;
 use App\Models\Employee;
+use App\Models\EmployeeSalarySetting;
 use App\Services\TimekeepingService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class PaysheetController extends Controller
 {
@@ -60,16 +64,57 @@ class PaysheetController extends Controller
 
     /**
      * GET /api/paysheets/{id} — Chi tiết bảng lương
+     * Nếu needs_recalc = true → tự động tính lại trước khi trả về
      */
     public function show($id)
     {
         $paysheet = Paysheet::with([
             'branch:id,name',
             'payslips.employee:id,code,name',
+            'payslips.adjustments',
             'payments',
         ])->findOrFail($id);
 
-        return response()->json(['success' => true, 'data' => $paysheet]);
+        $autoRecalculated = false;
+
+        // Auto-recalc nếu có dữ liệu thay đổi và chưa chốt
+        if ($paysheet->needs_recalc && !in_array($paysheet->status, ['locked', 'cancelled'])) {
+            $this->performRecalculation($paysheet);
+            $paysheet->refresh();
+            $paysheet->load([
+                'branch:id,name',
+                'payslips.employee:id,code,name',
+                'payslips.adjustments',
+                'payments',
+            ]);
+            $autoRecalculated = true;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->withEffectiveStandard($paysheet),
+            'auto_recalculated' => $autoRecalculated,
+        ]);
+    }
+
+    /**
+     * Step 24.12-FIX — Annotate a paysheet payload with the *effective* standard
+     * working days for the UI. When the column is null (legacy paysheets created
+     * before STEP 24.12), fall back to the calendar lookup so the right side
+     * panel never has to invent a number — and never silently persists 26.
+     */
+    private function withEffectiveStandard(Paysheet $paysheet): Paysheet
+    {
+        $effective = $paysheet->standard_working_days
+            ? (float) $paysheet->standard_working_days
+            : (float) app(\App\Services\SalaryCalculationService::class)
+                ->standardWorkingDaysForBranch(
+                    $paysheet->branch_id,
+                    Carbon::parse($paysheet->period_start),
+                    Carbon::parse($paysheet->period_end),
+                );
+        $paysheet->setAttribute('effective_standard_working_days', $effective > 0 ? $effective : null);
+        return $paysheet;
     }
 
     /**
@@ -95,12 +140,18 @@ class PaysheetController extends Controller
         $yearLabel = $periodStart->year;
         $name = "Bảng lương tháng {$monthLabel}/{$yearLabel}";
 
+        // Step 24.12 — seed standard_working_days from the calendar so the
+        // right side panel has a sensible default; the user can override later.
+        $calendarStandard = app(\App\Services\SalaryCalculationService::class)
+            ->standardWorkingDaysForBranch($data['branch_id'] ?? null, $periodStart, $periodEnd);
+
         $paysheet = Paysheet::create([
             'code' => Paysheet::nextCode(),
             'name' => $name,
             'pay_period' => $data['pay_period'],
             'period_start' => $periodStart->toDateString(),
             'period_end' => $periodEnd->toDateString(),
+            'standard_working_days' => $calendarStandard > 0 ? round($calendarStandard, 2) : null,
             'branch_id' => $data['branch_id'] ?? null,
             'scope' => $data['scope'] ?? 'all',
             'status' => 'calculating',
@@ -170,30 +221,101 @@ class PaysheetController extends Controller
             return response()->json(['success' => false, 'message' => 'Bảng lương đã chốt, không thể tính lại.'], 422);
         }
 
+        $this->performRecalculation($paysheet);
+
+        return response()->json([
+            'success' => true,
+            'data' => $paysheet->load(['payslips.employee:id,code,name', 'payslips.adjustments', 'branch:id,name']),
+        ]);
+    }
+
+    /**
+     * Thực hiện tính lại bảng lương — dùng chung cho cả auto-recalc và manual recalc.
+     * Tự động: recalculate timekeeping → salary calculation → merge adjustments → save.
+     */
+    private function performRecalculation(Paysheet $paysheet): void
+    {
         $periodStart = Carbon::parse($paysheet->period_start);
         $periodEnd = Carbon::parse($paysheet->period_end);
 
-        // Auto-recalculate timekeeping trước khi tính lại lương
+        // Step 1: Recalculate timekeeping
         $timekeepingService = app(TimekeepingService::class);
         $employeeIds = $paysheet->payslips->pluck('employee_id')->unique()->toArray();
         foreach ($employeeIds as $empId) {
             $timekeepingService->recalculateForRange($periodStart, $periodEnd, $empId);
         }
 
+        // Step 2: Recalculate salary for each payslip
+        // Step 24.12 — honour paysheet.standard_working_days as the denominator
+        // when set; null falls back to calendar via SalaryCalculationService.
+        $standardOverride = $paysheet->standard_working_days
+            ? (float) $paysheet->standard_working_days
+            : null;
+        $salaryService = app(\App\Services\SalaryCalculationService::class);
+
         foreach ($paysheet->payslips as $slip) {
             $employee = Employee::with(['salarySetting'])->find($slip->employee_id);
             if (!$employee) continue;
 
-            $calc = $employee->calculateSalaryForRange($periodStart, $periodEnd);
+            $calc = $salaryService->calculateForEmployee($employee, $periodStart, $periodEnd, $standardOverride);
+
+            // HOTFIX 24.12B — Preserve manual_overrides set by bulkSaveAdjustments
+            // across performRecalculation (otherwise $calc overwrites details and
+            // the user's "phụ cấp = 0" intent silently reverts to auto).
+            $oldDetails = is_array($slip->details) ? $slip->details : [];
+            if (isset($oldDetails['manual_overrides']) && is_array($oldDetails['manual_overrides'])) {
+                $calc['manual_overrides'] = $oldDetails['manual_overrides'];
+            }
+            $manualOverrides = $calc['manual_overrides'] ?? [];
+            $commissionOverride = (bool) ($manualOverrides['commission'] ?? false);
+            $allowanceOverride  = (bool) ($manualOverrides['allowance']  ?? false);
+            $bonusOverride      = (bool) ($manualOverrides['bonus']      ?? false);
+            $deductionOverride  = (bool) ($manualOverrides['deduction']  ?? false);
+
+            // Merge manual adjustments (giữ qua recalculate)
+            $adjs = $slip->adjustments()->get();
+            $adjCommission = $adjs->where('type', 'commission')->sum('amount');
+            $adjBonus      = $adjs->where('type', 'bonus')->sum('amount');
+            $adjAllowance  = $adjs->where('type', 'allowance')->sum('amount');
+            $adjDeduction  = $adjs->where('type', 'deduction')->sum('amount');
+            $adjOt         = $adjs->where('type', 'ot')->sum('amount');
+
+            $autoOt = ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0);
+            $autoLatePenalty = $calc['late_penalty'] ?? 0;
+
+            // 24.12C — commission/bonus/allowance/deduction: adjustments OR
+            // manual override REPLACE auto. OT: adjustments ADD to auto.
+            // late_penalty is included only in the no-override deduction path
+            // (a row-based addition); when the user explicitly overrides
+            // deduction, their total is the final number.
+            $totalCommission = ($commissionOverride || $adjs->where('type', 'commission')->count() > 0)
+                ? $adjCommission
+                : ($calc['commission'] ?? 0);
+            $totalBonus = ($bonusOverride || $adjs->where('type', 'bonus')->count() > 0)
+                ? $adjBonus
+                : ($calc['bonus'] ?? 0);
+            $totalAllowance = ($allowanceOverride || $adjs->where('type', 'allowance')->count() > 0)
+                ? $adjAllowance
+                : ($calc['allowances'] ?? 0);
+            if ($deductionOverride) {
+                $totalDeduction = $adjDeduction;
+            } elseif ($adjs->where('type', 'deduction')->count() > 0) {
+                $totalDeduction = $adjDeduction + $autoLatePenalty;
+            } else {
+                $totalDeduction = $calc['deductions'] ?? 0;
+            }
+            $totalOt = $autoOt + $adjOt;
+            $totalSalary = max(0, $calc['base'] + $totalBonus + $totalCommission + $totalAllowance + $totalOt - $totalDeduction);
+
             $slip->update([
                 'base_salary' => $calc['base'],
-                'bonus' => $calc['bonus'] ?? 0,
-                'commission' => $calc['commission'] ?? 0,
-                'allowances' => $calc['allowances'],
-                'deductions' => $calc['deductions'],
-                'ot_pay' => ($calc['ot_pay'] ?? 0) + ($calc['holiday_pay'] ?? 0),
-                'total_salary' => $calc['total'],
-                'remaining' => max(0, $calc['total'] - $slip->paid_amount),
+                'bonus' => $totalBonus,
+                'commission' => $totalCommission,
+                'allowances' => $totalAllowance,
+                'deductions' => $totalDeduction,
+                'ot_pay' => $totalOt,
+                'total_salary' => $totalSalary,
+                'remaining' => max(0, $totalSalary - $slip->paid_amount),
                 'work_units' => $calc['work_units'],
                 'paid_leave_units' => $calc['paid_leave_units'] ?? 0,
                 'ot_minutes' => $calc['ot_minutes'] ?? 0,
@@ -201,14 +323,11 @@ class PaysheetController extends Controller
             ]);
         }
 
+        // Step 3: Update paysheet status & totals, clear recalc flag
         $paysheet->status = 'calculated';
+        $paysheet->needs_recalc = false;
         $paysheet->save();
         $paysheet->recalculateTotals();
-
-        return response()->json([
-            'success' => true,
-            'data' => $paysheet->load(['payslips.employee:id,code,name', 'branch:id,name']),
-        ]);
     }
 
     /**
@@ -270,6 +389,12 @@ class PaysheetController extends Controller
     public function cancel($id)
     {
         $paysheet = Paysheet::findOrFail($id);
+
+        // Reverse CashFlow entries for this paysheet
+        CashFlow::where('reference_type', 'paysheet')
+            ->where('reference_code', $paysheet->code)
+            ->delete();
+
         $paysheet->update(['status' => 'cancelled']);
         return response()->json(['success' => true, 'data' => $paysheet]);
     }
@@ -294,20 +419,40 @@ class PaysheetController extends Controller
             $slip = Payslip::where('paysheet_id', $paysheet->id)->findOrFail($slipId);
             if ($slip->remaining <= 0) continue;
 
+            $paidAmount = $slip->remaining;
+
             PaysheetPayment::create([
                 'paysheet_id' => $paysheet->id,
                 'payslip_id' => $slip->id,
                 'employee_id' => $slip->employee_id,
-                'amount' => $slip->remaining,
+                'amount' => $paidAmount,
                 'method' => $method,
                 'notes' => $data['notes'] ?? null,
                 'paid_at' => now(),
             ]);
 
+            // Tạo CashFlow entry — kết nối với báo cáo tài chính
+            $employee = Employee::find($slip->employee_id);
+            CashFlow::create([
+                'code' => 'PC' . now()->format('ymdHis') . $slip->id,
+                'type' => 'payment',
+                'amount' => $paidAmount,
+                'time' => now(),
+                'branch_id' => $paysheet->branch_id,
+                'category' => 'Chi lương nhân viên',
+                'target_type' => 'employee',
+                'target_id' => $slip->employee_id,
+                'target_name' => $employee?->name ?? '',
+                'reference_type' => 'paysheet',
+                'reference_code' => $paysheet->code,
+                'payment_method' => $method,
+                'description' => "Thanh toán lương {$slip->code} - {$employee?->name}",
+            ]);
+
             $slip->paid_amount = $slip->total_salary;
             $slip->remaining = 0;
             $slip->save();
-            $totalPaid += $slip->paid_amount;
+            $totalPaid += $paidAmount;
         }
 
         $paysheet->recalculateTotals();
@@ -329,6 +474,49 @@ class PaysheetController extends Controller
     }
 
     /**
+     * Step 24.12 — PUT /api/paysheets/{id}/standard-working-days
+     *
+     * Update the per-paysheet "ngày công chuẩn" and recompute every payslip
+     * in the sheet. Backend recomputes — frontend's net_pay / totals are
+     * never trusted. Locked or cancelled sheets are refused outright.
+     */
+    public function updateStandardWorkingDays(Request $request, $id)
+    {
+        $data = $request->validate([
+            'standard_working_days' => 'required|numeric|min:1|max:31',
+            'name'                  => 'sometimes|string|max:255',
+            'notes'                 => 'sometimes|nullable|string|max:2000',
+        ]);
+
+        $paysheet = Paysheet::with('payslips')->findOrFail($id);
+
+        if (in_array($paysheet->status, ['locked', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bảng lương đã chốt hoặc hủy, không thể chỉnh sửa ngày công chuẩn.',
+            ], 422);
+        }
+
+        $paysheet->standard_working_days = (float) $data['standard_working_days'];
+        if (array_key_exists('name', $data)) {
+            $paysheet->name = $data['name'];
+        }
+        if (array_key_exists('notes', $data)) {
+            $paysheet->notes = $data['notes'];
+        }
+        $paysheet->save();
+
+        // Recompute every payslip with the new denominator. Backend never
+        // trusts the FE-sent net_pay — recalculation is the source of truth.
+        $this->performRecalculation($paysheet);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $paysheet->fresh()->load(['payslips.employee:id,code,name', 'branch:id,name']),
+        ]);
+    }
+
+    /**
      * DELETE /api/paysheets/{id}
      */
     public function destroy($id)
@@ -337,6 +525,12 @@ class PaysheetController extends Controller
         if ($paysheet->status === 'locked') {
             return response()->json(['success' => false, 'message' => 'Không thể xóa bảng lương đã chốt.'], 422);
         }
+
+        // Reverse CashFlow entries
+        CashFlow::where('reference_type', 'paysheet')
+            ->where('reference_code', $paysheet->code)
+            ->delete();
+
         $paysheet->delete();
         return response()->json(['success' => true]);
     }
@@ -358,5 +552,301 @@ class PaysheetController extends Controller
     {
         $paysheet->load(['branch', 'payslips.employee']);
         return view('prints.paysheet', compact('paysheet'));
+    }
+
+    /**
+     * GET /employees/paysheets/{id}/edit — Trang sửa bảng lương (Inertia)
+     */
+    public function edit($id)
+    {
+        $paysheet = Paysheet::with([
+            'branch:id,name',
+            'payslips.employee:id,code,name',
+            'payslips.adjustments',
+        ])->findOrFail($id);
+
+        // Lấy salary settings cho mỗi nhân viên trong bảng lương
+        $employeeIds = $paysheet->payslips->pluck('employee_id')->unique();
+        $salarySettings = EmployeeSalarySetting::whereIn('employee_id', $employeeIds)
+            ->get()
+            ->keyBy('employee_id');
+
+        return inertia('Employees/PaysheetEdit', [
+            'paysheet' => $this->withEffectiveStandard($paysheet),
+            'salarySettings' => $salarySettings,
+        ]);
+    }
+
+    // ===== Payslip Adjustments CRUD =====
+
+    public function listAdjustments($id, $slipId)
+    {
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+        return response()->json(['success' => true, 'data' => $slip->adjustments]);
+    }
+
+    public function storeAdjustment(Request $request, $id, $slipId)
+    {
+        $paysheet = Paysheet::findOrFail($id);
+        if ($paysheet->status === 'locked') {
+            return response()->json(['success' => false, 'message' => 'Bảng lương đã chốt.'], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+        $data = $request->validate([
+            'type' => 'required|in:bonus,allowance,deduction,ot',
+            'name' => 'required|string|max:255',
+            'amount' => 'required|integer|min:0',
+            'notes' => 'nullable|string|max:500',
+            'meta' => 'nullable|array',
+        ]);
+
+        $adj = PayslipAdjustment::create([
+            'payslip_id' => $slip->id,
+            ...$data,
+        ]);
+
+        $this->recalcSlipWithAdjustments($slip);
+
+        return response()->json(['success' => true, 'data' => $adj, 'slip' => $slip->fresh()->load('employee:id,code,name')]);
+    }
+
+    public function updateAdjustment(Request $request, $id, $slipId, $adjId)
+    {
+        $paysheet = Paysheet::findOrFail($id);
+        if ($paysheet->status === 'locked') {
+            return response()->json(['success' => false, 'message' => 'Bảng lương đã chốt.'], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+        $adj = PayslipAdjustment::where('payslip_id', $slip->id)->findOrFail($adjId);
+
+        $data = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'amount' => 'sometimes|integer|min:0',
+            'notes' => 'nullable|string|max:500',
+            'meta' => 'nullable|array',
+        ]);
+
+        $adj->update($data);
+        $this->recalcSlipWithAdjustments($slip);
+
+        return response()->json(['success' => true, 'data' => $adj, 'slip' => $slip->fresh()->load('employee:id,code,name')]);
+    }
+
+    public function deleteAdjustment($id, $slipId, $adjId)
+    {
+        $paysheet = Paysheet::findOrFail($id);
+        if ($paysheet->status === 'locked') {
+            return response()->json(['success' => false, 'message' => 'Bảng lương đã chốt.'], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+        PayslipAdjustment::where('payslip_id', $slip->id)->findOrFail($adjId)->delete();
+        $this->recalcSlipWithAdjustments($slip);
+
+        return response()->json(['success' => true, 'slip' => $slip->fresh()->load('employee:id,code,name')]);
+    }
+
+    /**
+     * Tính lại tổng payslip bao gồm adjustments
+     */
+    private function recalcSlipWithAdjustments(Payslip $slip): void
+    {
+        $adjs = $slip->adjustments()->get();
+        $adjCommission = $adjs->where('type', 'commission')->sum('amount');
+        $adjBonus      = $adjs->where('type', 'bonus')->sum('amount');
+        $adjAllowance  = $adjs->where('type', 'allowance')->sum('amount');
+        $adjDeduction  = $adjs->where('type', 'deduction')->sum('amount');
+        $adjOt         = $adjs->where('type', 'ot')->sum('amount');
+
+        // Lấy giá trị auto từ details (tính bởi SalaryCalculationService)
+        $details = $slip->details ?? [];
+        $autoCommission  = $details['commission'] ?? 0;
+        $autoBonus       = $details['bonus'] ?? 0;
+        $autoAllowance   = $details['allowances'] ?? 0;
+        $autoDeduction   = $details['deductions'] ?? 0;
+        $autoLatePenalty = $details['late_penalty'] ?? 0;
+        $autoOt          = ($details['ot_pay'] ?? 0) + ($details['holiday_pay'] ?? 0);
+
+        // HOTFIX 24.12B/24.12C — Honour `details.manual_overrides` so deleting
+        // every row in the popup (sum=0) does NOT fall back to the auto value.
+        // Set by bulkSaveAdjustments(), cleared by resetDefaultAdjustments().
+        // 24.12C extends to commission and changes the deduction override path
+        // to ignore auto late_penalty (override = user's exact total).
+        $manualOverrides = is_array($details['manual_overrides'] ?? null)
+            ? $details['manual_overrides']
+            : [];
+        $commissionOverride = (bool) ($manualOverrides['commission'] ?? false);
+        $allowanceOverride  = (bool) ($manualOverrides['allowance']  ?? false);
+        $bonusOverride      = (bool) ($manualOverrides['bonus']      ?? false);
+        $deductionOverride  = (bool) ($manualOverrides['deduction']  ?? false);
+
+        $slip->commission = ($commissionOverride || $adjs->where('type', 'commission')->count() > 0)
+            ? $adjCommission
+            : $autoCommission;
+        $slip->bonus = ($bonusOverride || $adjs->where('type', 'bonus')->count() > 0)
+            ? $adjBonus
+            : $autoBonus;
+        $slip->allowances = ($allowanceOverride || $adjs->where('type', 'allowance')->count() > 0)
+            ? $adjAllowance
+            : $autoAllowance;
+        // 24.12C — when deduction is overridden, late_penalty is NOT added.
+        // Override mode means "the user's number is the final total"; if they
+        // want late_penalty back they reset to default.
+        if ($deductionOverride) {
+            $slip->deductions = $adjDeduction;
+        } elseif ($adjs->where('type', 'deduction')->count() > 0) {
+            $slip->deductions = $adjDeduction + $autoLatePenalty;
+        } else {
+            $slip->deductions = $autoDeduction;
+        }
+        // OT stays additive — autoOt + any manual OT items.
+        $slip->ot_pay = $autoOt + $adjOt;
+
+        $slip->total_salary = max(
+            0,
+            $slip->base_salary + $slip->bonus + $slip->commission + $slip->allowances + $slip->ot_pay - $slip->deductions
+        );
+        $slip->remaining = max(0, $slip->total_salary - $slip->paid_amount);
+        $slip->save();
+
+        $slip->paysheet->recalculateTotals();
+    }
+
+    /**
+     * HOTFIX 24.12B — Bulk-replace every adjustment of a given type in one shot.
+     *
+     * Why a separate endpoint: the popup is a list editor — the user adds rows,
+     * removes rows, edits inline, then clicks "Xong". The legacy per-row
+     * POST/PUT/DELETE endpoints can't express "remove the last allowance row
+     * and keep allowance = 0" because once the count drops to 0 the old recalc
+     * fell back to the auto value. This endpoint atomically (a) deletes the
+     * existing rows of that type, (b) re-inserts the user's list, (c) sets the
+     * manual_overrides[type] flag for allowance/bonus/deduction so the empty
+     * list is honoured, then (d) recomputes the slip.
+     */
+    public function bulkSaveAdjustments(Request $request, $id, $slipId, string $type)
+    {
+        // HOTFIX 24.12C — commission is now editable like the other types.
+        if (!in_array($type, ['commission', 'allowance', 'bonus', 'deduction', 'ot'], true)) {
+            return response()->json(['success' => false, 'message' => 'Loại không hợp lệ.'], 422);
+        }
+
+        $paysheet = Paysheet::findOrFail($id);
+        if (in_array($paysheet->status, ['locked', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bảng lương đã chốt hoặc hủy, không thể chỉnh ' . $type . '.',
+            ], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+
+        $data = $request->validate([
+            'items'           => 'nullable|array',
+            'items.*.id'      => 'nullable|integer',
+            'items.*.name'    => 'required_with:items|string|max:255',
+            'items.*.amount'  => 'required_with:items|integer|min:0',
+            'items.*.notes'   => 'nullable|string|max:500',
+            'items.*.meta'    => 'nullable|array',
+        ]);
+
+        DB::transaction(function () use ($slip, $type, $data) {
+            // 1. Wipe existing rows of this type.
+            PayslipAdjustment::where('payslip_id', $slip->id)
+                ->where('type', $type)
+                ->delete();
+
+            // 2. Re-insert. Skip rows with no name and no amount (UI may leave a
+            //    blank row when the user is mid-edit).
+            $rows = $data['items'] ?? [];
+            foreach ($rows as $row) {
+                $name = trim((string) ($row['name'] ?? ''));
+                $amount = (int) ($row['amount'] ?? 0);
+                if ($name === '' && $amount <= 0) {
+                    continue;
+                }
+                PayslipAdjustment::create([
+                    'payslip_id' => $slip->id,
+                    'type'       => $type,
+                    'name'       => $name !== '' ? $name : ucfirst($type),
+                    'amount'     => $amount,
+                    'notes'      => $row['notes'] ?? null,
+                    'meta'       => $row['meta'] ?? null,
+                ]);
+            }
+
+            // 3. Set manual_overrides flag for replace-style types so that
+            //    sum=0 is honoured. OT stays additive — no flag.
+            if ($type !== 'ot') {
+                $details = is_array($slip->details) ? $slip->details : [];
+                $overrides = is_array($details['manual_overrides'] ?? null) ? $details['manual_overrides'] : [];
+                $overrides[$type] = true;
+                $details['manual_overrides'] = $overrides;
+                $slip->details = $details;
+                $slip->save();
+            }
+        });
+
+        // 4. Recompute outside the transaction so any service calls run on
+        //    the committed state.
+        $this->recalcSlipWithAdjustments($slip);
+
+        $slip->refresh()->load('employee:id,code,name', 'adjustments');
+        return response()->json([
+            'success'     => true,
+            'slip'        => $slip,
+            'adjustments' => $slip->adjustments,
+        ]);
+    }
+
+    /**
+     * HOTFIX 24.12B — Restore the auto-computed value for a given type by
+     * dropping its adjustments + clearing the manual_overrides flag.
+     */
+    public function resetDefaultAdjustments($id, $slipId, string $type)
+    {
+        // HOTFIX 24.12C — commission is now editable like the other types.
+        if (!in_array($type, ['commission', 'allowance', 'bonus', 'deduction', 'ot'], true)) {
+            return response()->json(['success' => false, 'message' => 'Loại không hợp lệ.'], 422);
+        }
+
+        $paysheet = Paysheet::findOrFail($id);
+        if (in_array($paysheet->status, ['locked', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bảng lương đã chốt hoặc hủy.',
+            ], 422);
+        }
+
+        $slip = Payslip::where('paysheet_id', $id)->findOrFail($slipId);
+
+        DB::transaction(function () use ($slip, $type) {
+            PayslipAdjustment::where('payslip_id', $slip->id)
+                ->where('type', $type)
+                ->delete();
+
+            if ($type !== 'ot') {
+                $details = is_array($slip->details) ? $slip->details : [];
+                if (isset($details['manual_overrides']) && is_array($details['manual_overrides'])) {
+                    unset($details['manual_overrides'][$type]);
+                    if (empty($details['manual_overrides'])) {
+                        unset($details['manual_overrides']);
+                    }
+                }
+                $slip->details = $details;
+                $slip->save();
+            }
+        });
+
+        $this->recalcSlipWithAdjustments($slip);
+
+        $slip->refresh()->load('employee:id,code,name', 'adjustments');
+        return response()->json([
+            'success'     => true,
+            'slip'        => $slip,
+            'adjustments' => $slip->adjustments,
+        ]);
     }
 }

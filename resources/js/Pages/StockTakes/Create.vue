@@ -1,7 +1,9 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
 
 const props = defineProps({
     products: Array,
@@ -116,7 +118,6 @@ const save = async (status) => {
     }
 };
 
-const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
 </script>
 
@@ -237,7 +238,13 @@ const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
                     <div class="p-4 flex items-center gap-2 border-b border-gray-200 bg-white">
                         <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                         <span class="font-medium text-gray-800 flex-1">Trần Văn Tiến</span>
-                        <input type="datetime-local" v-model="transactionDate" class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400">
+                        <DateTimePicker
+                            v-model="transactionDate"
+                            naked
+                            compact
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="text-gray-500 text-[12px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200 outline-none focus:border-blue-500 hover:border-blue-400 w-[150px]"
+                        />
                     </div>
 
                     <div class="p-4 flex flex-col gap-4 bg-white border-b border-gray-200">

@@ -372,9 +372,29 @@ watch(() => page.props.flash, triggerToast, { deep: true });
                             </div>
                         </div>
                     </div>
-                    <Link href="#" class="px-3 py-2 hover:bg-[#005bb5] rounded"
-                        >Phân tích</Link
-                    >
+                    <div class="relative group">
+                        <button
+                            class="px-3 py-2 hover:bg-[#005bb5] rounded flex items-center gap-1"
+                            :class="{ 'bg-[#005bb5]': $page.url.startsWith('/reports') }"
+                        >
+                            Phân tích
+                        </button>
+                        <div
+                            class="absolute left-0 mt-0 w-56 bg-white rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pt-1 border border-gray-100"
+                        >
+                            <div class="bg-white rounded py-1">
+                                <Link href="/reports/business" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Tổng quan kinh doanh</Link>
+                                <Link href="/reports/cost-profit" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Chi phí &amp; Lợi nhuận</Link>
+                                <Link href="/reports/financial-report" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Báo cáo tài chính</Link>
+                                <div class="border-t border-gray-100 my-1"></div>
+                                <Link href="/reports/sales" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Báo cáo bán hàng</Link>
+                                <Link href="/reports/products" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Báo cáo hàng hóa</Link>
+                                <Link href="/reports/customers" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Báo cáo khách hàng</Link>
+                                <Link href="/reports/employees" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Báo cáo nhân viên</Link>
+                                <Link href="/reports/suppliers" class="block px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100">Báo cáo nhà cung cấp</Link>
+                            </div>
+                        </div>
+                    </div>
                 </nav>
             </div>
 
@@ -511,7 +531,7 @@ watch(() => page.props.flash, triggerToast, { deep: true });
             <!-- Sidebar slot (if provided) -->
             <aside
                 v-if="slots.sidebar"
-                class="w-64 bg-white border-r border-gray-200 overflow-y-auto flex-shrink-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] h-[calc(100vh-3.5rem)] sticky top-0"
+                class="w-64 bg-white border-r border-gray-200 overflow-y-auto overflow-x-hidden flex-shrink-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] h-[calc(100vh-3.5rem)] sticky top-0"
             >
                 <slot name="sidebar"></slot>
             </aside>

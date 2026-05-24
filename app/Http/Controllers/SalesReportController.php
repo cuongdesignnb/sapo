@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
+use App\Support\Reports\SellerResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -184,49 +185,28 @@ class SalesReportController extends Controller
     }
 
     // ═══════════════════════════════════════
-    // Concern: Lợi nhuận
+    // Concern: Lợi nhuận (via MetricService — single source of truth)
     // ═══════════════════════════════════════
     private function buildProfitSeries($invoiceQuery, $start, $end, $groupBy, $branchId)
     {
-        $format = $groupBy === 'month' ? '%m-%Y' : '%d-%m-%Y';
         $phpFormat = $groupBy === 'month' ? 'm-Y' : 'd-m-Y';
-
-        // Revenue per period
-        $revenue = (clone $invoiceQuery)
-            ->select(
-                DB::raw("DATE_FORMAT(created_at, '{$format}') as period"),
-                DB::raw('COALESCE(SUM(total), 0) as total')
-            )
-            ->groupBy('period')
-            ->pluck('total', 'period');
-
-        // Cost per period (from invoice_items * product cost_price)
-        $invoiceIds = (clone $invoiceQuery)->pluck('id');
-        $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
-        $costCalc = $hasItemCostCol
-            ? 'invoice_items.quantity * COALESCE(NULLIF(invoice_items.cost_price, 0), products.cost_price, 0)'
-            : 'invoice_items.quantity * COALESCE(products.cost_price, 0)';
-        $costs = DB::table('invoice_items')
-            ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
-            ->join('products', 'invoice_items.product_id', '=', 'products.id')
-            ->select(
-                DB::raw("DATE_FORMAT(invoices.created_at, '{$format}') as period"),
-                DB::raw("COALESCE(SUM({$costCalc}), 0) as total_cost")
-            )
-            ->groupBy('period')
-            ->pluck('total_cost', 'period');
-
         $labels = [];
         $profitData = [];
         $current = $start->copy();
         while ($current <= $end) {
-            $key = $current->format($phpFormat);
-            $labels[] = $groupBy === 'month' ? $current->format('m/Y') : $current->format('d/m');
-            $rev = (float) ($revenue[$key] ?? 0);
-            $cost = (float) ($costs[$key] ?? 0);
-            $profitData[] = $rev - $cost;
-            $groupBy === 'month' ? $current->addMonth() : $current->addDay();
+            if ($groupBy === 'month') {
+                $bucketStart = $current->copy()->startOfMonth();
+                $bucketEnd   = $current->copy()->endOfMonth();
+                $labels[] = $current->format('m/Y');
+                $current->addMonth();
+            } else {
+                $bucketStart = $current->copy()->startOfDay();
+                $bucketEnd   = $current->copy()->endOfDay();
+                $labels[] = $current->format('d/m');
+                $current->addDay();
+            }
+            $m = \App\Support\Reports\MetricService::compute($bucketStart, $bucketEnd, $branchId);
+            $profitData[] = $m['gross_profit'];
         }
 
         return [
@@ -319,28 +299,19 @@ class SalesReportController extends Controller
     // ═══════════════════════════════════════
     private function buildEmployeeSeries($invoiceQuery, $returnsQuery, $branchId)
     {
-        $employees = Employee::orderBy('name')->get(['id', 'name']);
+        // HOTFIX 24.26 — Use SellerResolver to include Admin/User sellers
+        $sellers = new SellerResolver();
+        $revBySeller = $sellers->aggregateBySeller(clone $invoiceQuery, 'SUM(total)');
+        arsort($revBySeller);
 
-        $labels = [];
+        $sellerMeta = $sellers->sellerMeta(array_keys($revBySeller));
+
+        $labels      = [];
         $revenueData = [];
-
-        foreach ($employees as $emp) {
-            $rev = (float) (clone $invoiceQuery)->where('employee_id', $emp->id)->sum('total');
-            if ($rev > 0) {
-                $labels[] = $emp->name;
-                $revenueData[] = $rev;
-            }
-        }
-
-        // If no employee data, also check created_by
-        if (empty($labels)) {
-            foreach ($employees as $emp) {
-                $rev = (float) (clone $invoiceQuery)->where('created_by', $emp->id)->sum('total');
-                if ($rev > 0) {
-                    $labels[] = $emp->name;
-                    $revenueData[] = $rev;
-                }
-            }
+        foreach ($revBySeller as $key => $rev) {
+            if ($rev <= 0) continue;
+            $labels[]      = $sellerMeta[$key]['name'] ?? $key;
+            $revenueData[] = $rev;
         }
 
         return [

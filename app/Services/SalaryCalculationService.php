@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Employee;
+use App\Models\EmployeeWorkSchedule;
 use App\Models\Holiday;
 use App\Models\SalaryTemplate;
 use App\Models\CommissionTable;
@@ -18,7 +19,7 @@ class SalaryCalculationService
     /**
      * Tính lương đầy đủ cho nhân viên theo mẫu lương trong khoảng thời gian
      */
-    public function calculateForEmployee(Employee $employee, Carbon $from, Carbon $to): array
+    public function calculateForEmployee(Employee $employee, Carbon $from, Carbon $to, ?float $standardWorkingDaysOverride = null): array
     {
         $setting = $employee->salarySetting;
         if (!$setting) {
@@ -41,15 +42,45 @@ class SalaryCalculationService
         $allowanceList = !empty($setting->custom_allowances) ? collect($setting->custom_allowances) : ($template ? $template->allowances : collect());
         $deductionList = !empty($setting->custom_deductions) ? collect($setting->custom_deductions) : ($template ? $template->deductions : collect());
 
-        // Tính ngày công chuẩn theo lịch thực tế (WorkdaySetting + Holiday)
-        $standardWorkUnits = $this->getStandardWorkUnits($employee->branch_id, $from, $to);
+        // Step 24.12 — paysheet-level standard_working_days override.
+        // When set, use the user-supplied value (e.g. 25 or 26) as the
+        // denominator for salary_main. Fall back to the calendar
+        // (WorkdaySetting + Holiday) computation otherwise.
+        $standardWorkUnits = ($standardWorkingDaysOverride !== null && $standardWorkingDaysOverride > 0)
+            ? (float) $standardWorkingDaysOverride
+            : $this->getStandardWorkUnits($employee->branch_id, $from, $to);
 
         // Lấy dữ liệu chấm công
         $records = $employee->timekeepingRecords()
             ->whereBetween('work_date', [$from, $to])
             ->get();
 
-        $workUnits = $records->where('attendance_type', 'work')->sum('work_units');
+        // Lấy hệ số nhân từ CÀI ĐẶT LƯƠNG NV (không từ timekeeping record)
+        $restDayMultiplier = ($setting->holiday_rate ?? 200) / 100; // VD: 200% = 2.0
+        $holidayMultiplier = ($setting->tet_rate ?? 300) / 100;     // VD: 300% = 3.0
+
+        // Lấy danh sách ngày lễ chính thức để phân biệt CN vs Lễ
+        $officialHolidayDates = Holiday::whereBetween('holiday_date', [$from, $to])
+            ->where('status', 'active')
+            ->pluck('holiday_date')
+            ->map(fn($d) => Carbon::parse($d)->toDateString())
+            ->toArray();
+
+        // Tính ngày công: áp dụng hệ số nhân cho ngày nghỉ/lễ
+        // VD: CN (holiday_rate=200%) → 1 ngày = 2 units, Lễ (tet_rate=300%) → 1 ngày = 3 units
+        $workUnits = 0;
+        $normalWorkUnits = 0; // Ngày công thật (không nhân hệ số, dùng cho hiển thị)
+        foreach ($records->where('attendance_type', 'work') as $rec) {
+            $units = (float) $rec->work_units;
+            $multiplier = 1;
+            if ($rec->is_holiday && $units > 0) {
+                $dateStr = Carbon::parse($rec->work_date)->toDateString();
+                $isOfficialHoliday = in_array($dateStr, $officialHolidayDates);
+                $multiplier = $isOfficialHoliday ? $holidayMultiplier : $restDayMultiplier;
+            }
+            $workUnits += $units * $multiplier;
+            $normalWorkUnits += $units;
+        }
         $paidLeaveUnits = $records->where('attendance_type', 'leave_paid')->sum('work_units');
         $totalUnits = $workUnits + $paidLeaveUnits;
         $otMinutes = $records->sum('ot_minutes');
@@ -123,7 +154,7 @@ class SalaryCalculationService
         if ($hasDeduction && $deductionList->count()) {
             $result = $this->calculateDeductionsFromList(
                 $deductionList, $lateCount, $lateTotalMinutes,
-                $earlyLeaveCount, $earlyTotalMinutes
+                $earlyLeaveCount, $earlyTotalMinutes, $records
             );
             $deductionAmount = $result['amount'];
             $deductionDetails = $result['details'];
@@ -140,12 +171,17 @@ class SalaryCalculationService
                     $mins = (int) $rec->late_minutes;
                     $matched = $tiers->first(fn($t) => $mins >= (int) $t['minutes']);
                     if ($matched) {
-                        $latePenaltyAmount += (float) $matched['amount'];
+                        $tierMinutes = (int) $matched['minutes'];
+                        $tierAmount = (float) $matched['amount'];
+                        // Block-based: mỗi khối X phút phạt Y đồng
+                        // VD: tier 10 phút / 10.000đ → 25 phút = floor(25/10)*10000 = 20.000
+                        $penalty = floor($mins / $tierMinutes) * $tierAmount;
+                        $latePenaltyAmount += $penalty;
                         $latePenaltyDetails[] = [
                             'date' => $rec->work_date,
                             'late_minutes' => $mins,
-                            'tier_minutes' => (int) $matched['minutes'],
-                            'penalty' => (float) $matched['amount'],
+                            'tier_minutes' => $tierMinutes,
+                            'penalty' => $penalty,
                         ];
                     }
                 }
@@ -154,72 +190,171 @@ class SalaryCalculationService
         $deductionAmount += $latePenaltyAmount;
 
         // ===== TÍNH TIỀN TĂNG CA (OT PAY) =====
+        // Logic: Ngày nghỉ/lễ → lương đã tính qua work_units × multiplier ở lương chính
+        //        OT = chỉ giờ vượt ca trên mọi loại ngày
         $otPay = 0;
-        $standardHoursPerDay = 8;
-        if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
-            $overtimeRate = ($setting->overtime_rate ?? 150) / 100; // 150% = 1.5x
+        $otBreakdown = [];
 
+        // Tính giờ ca chuẩn từ CA LÀM VIỆC (Shift model) — không auto-detect từ records
+        // VD: ca 8:30-18:30 → duration_minutes = 600 → 10h
+        $standardHoursPerDay = 8; // fallback
+        $employeeShift = EmployeeWorkSchedule::where('employee_id', $employee->id)
+            ->whereBetween('work_date', [$from, $to])
+            ->whereNotNull('shift_id')
+            ->first();
+        if ($employeeShift?->shift) {
+            $shiftDuration = $employeeShift->shift->duration_minutes;
+            if ($shiftDuration > 0) {
+                $standardHoursPerDay = round($shiftDuration / 60, 2); // 600/60 = 10h
+            }
+        }
+        if ($otMinutes > 0 && ($setting->has_overtime ?? false)) {
+            // Hệ số OT từ cài đặt lương riêng của nhân viên (5 loại ngày)
+            $overtimeRate = ($setting->overtime_rate ?? 150) / 100;       // Ngày thường: VD 150% = 1.5x
+            $saturdayOtRate = ($setting->saturday_ot_rate ?? 150) / 100;  // Thứ 7
+            $sundayOtRate = ($setting->sunday_ot_rate ?? 150) / 100;      // Chủ nhật
+            $restDayOtRate = ($setting->rest_day_ot_rate ?? 150) / 100;   // Ngày nghỉ
+            $holidayOtRate = ($setting->holiday_ot_rate ?? 150) / 100;    // Ngày lễ tết
+
+            // Lương theo ngày
+            $dailyWage = ($standardWorkUnits > 0) ? $setting->base_salary / $standardWorkUnits : 0;
+
+            // Lương theo giờ (dùng cho OT ngày thường/T7 và lương giờ)
             if ($setting->salary_type === 'hourly') {
-                // Hourly: base_salary chính là hourly_rate
                 $hourlyRate = $setting->base_salary;
             } else {
-                // Fixed/by_workday: tính hourly_rate từ lương tháng / công chuẩn / giờ chuẩn
                 $hourlyRate = ($standardWorkUnits > 0)
                     ? $setting->base_salary / $standardWorkUnits / $standardHoursPerDay
                     : 0;
             }
 
-            $otPay = ($otMinutes / 60) * $hourlyRate * $overtimeRate;
-        }
-
-        // ===== TÍNH PHẦN CHÊNH LỆCH NGÀY NGHỈ + NGÀY LỄ =====
-        // Chỉ tính khi NV bật "Thiết lập nâng cao" (advanced_salary = true)
-        $holidayPay = 0;
-        $holidayPayDetails = [];
-        if ($setting->advanced_salary) {
-            $restDayRate = ($setting->holiday_rate ?? 200) / 100;
-            $tetRate = ($setting->tet_rate ?? 300) / 100;
-
-            $officialHolidays = Holiday::whereBetween('holiday_date', [$from, $to])
+            // Lấy danh sách ngày lễ chính thức
+            $officialHolidayDates = Holiday::whereBetween('holiday_date', [$from, $to])
                 ->where('status', 'active')
                 ->pluck('holiday_date')
                 ->map(fn($d) => Carbon::parse($d)->toDateString())
                 ->toArray();
 
-            $holidayRecords = $records->where('is_holiday', true)->where('work_units', '>', 0);
-            foreach ($holidayRecords as $hRec) {
-                $dateStr = Carbon::parse($hRec->work_date)->toDateString();
-                $isOfficialHoliday = in_array($dateStr, $officialHolidays);
-                $multiplier = $isOfficialHoliday ? $tetRate : $restDayRate;
+            $typeLabels = [
+                'weekday' => 'Ngày thường',
+                'saturday' => 'Thứ 7',
+                'sunday' => 'Chủ nhật',
+                'rest_day' => 'Ngày nghỉ',
+                'holiday' => 'Ngày lễ tết',
+            ];
 
-                if ($multiplier > 1) {
-                    if ($setting->salary_type === 'hourly') {
-                        $dayPay = $hRec->work_units * $standardHoursPerDay * $setting->base_salary;
-                    } elseif ($setting->salary_type === 'by_workday' && $standardWorkUnits > 0) {
-                        $dayPay = $setting->base_salary * $hRec->work_units / $standardWorkUnits;
+            if ($setting->salary_type === 'hourly') {
+                // ======= LƯƠNG GIỜ: tính OT theo giờ cho mọi loại ngày =======
+                $otByType = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'rest_day' => 0, 'holiday' => 0];
+                foreach ($records->where('ot_minutes', '>', 0) as $rec) {
+                    $dateStr = Carbon::parse($rec->work_date)->toDateString();
+                    $dayOfWeek = Carbon::parse($rec->work_date)->dayOfWeek;
+                    $mins = (int) $rec->ot_minutes;
+
+                    // Phân loại theo KiotViet: is_holiday (ngày nghỉ, gồm CN) ưu tiên trước dayOfWeek
+                    if (in_array($dateStr, $officialHolidayDates)) {
+                        $otByType['holiday'] += $mins;
+                    } elseif ($rec->is_holiday) {
+                        // Ngày nghỉ (gồm CN nếu CN là ngày nghỉ theo workday settings)
+                        $otByType['rest_day'] += $mins;
+                    } elseif ($dayOfWeek === 6) {
+                        $otByType['saturday'] += $mins;
+                    } elseif ($dayOfWeek === 0) {
+                        // Chủ nhật CHỈ khi CN là ngày làm việc (không phải ngày nghỉ)
+                        $otByType['sunday'] += $mins;
                     } else {
-                        $dayPay = ($standardWorkUnits > 0)
-                            ? $setting->base_salary * $hRec->work_units / $standardWorkUnits
-                            : 0;
+                        $otByType['weekday'] += $mins;
                     }
-                    $extra = $dayPay * ($multiplier - 1);
-                    $holidayPay += $extra;
-                    $holidayPayDetails[] = [
-                        'date' => $hRec->work_date,
-                        'work_units' => $hRec->work_units,
-                        'type' => $isOfficialHoliday ? 'holiday/tet' : 'rest_day',
-                        'multiplier' => $multiplier,
-                        'extra_pay' => round($extra),
+                }
+
+                $typeRates = [
+                    'weekday' => $overtimeRate,
+                    'saturday' => $saturdayOtRate,
+                    'sunday' => $sundayOtRate,
+                    'rest_day' => $restDayOtRate,
+                    'holiday' => $holidayOtRate,
+                ];
+
+                foreach ($otByType as $type => $mins) {
+                    if ($mins <= 0) continue;
+                    $rate = $typeRates[$type];
+                    $hours = round($mins / 60, 2);
+                    $amount = round($hours * $hourlyRate * $rate);
+                    $otPay += $amount;
+                    $otBreakdown[] = [
+                        'type' => $type,
+                        'label' => $typeLabels[$type],
+                        'rate_percent' => round($rate * 100),
+                        'hourly_rate' => round($hourlyRate),
+                        'hours' => $hours,
+                        'minutes' => $mins,
+                        'amount' => $amount,
+                    ];
+                }
+            } else {
+                // ======= LƯƠNG CỐ ĐỊNH / NGÀY CÔNG =======
+                // Phân loại OT 5 nhóm: weekday, saturday, sunday, rest_day, holiday
+                $otByType = ['weekday' => 0, 'saturday' => 0, 'sunday' => 0, 'rest_day' => 0, 'holiday' => 0];
+                foreach ($records->where('ot_minutes', '>', 0) as $rec) {
+                    $dateStr = Carbon::parse($rec->work_date)->toDateString();
+                    $dayOfWeek = Carbon::parse($rec->work_date)->dayOfWeek;
+                    $mins = (int) $rec->ot_minutes;
+
+                    // Phân loại theo KiotViet: is_holiday (ngày nghỉ, gồm CN) ưu tiên trước dayOfWeek
+                    if (in_array($dateStr, $officialHolidayDates)) {
+                        $otByType['holiday'] += $mins;
+                    } elseif ($rec->is_holiday) {
+                        // Ngày nghỉ (gồm CN nếu CN là ngày nghỉ theo workday settings)
+                        $otByType['rest_day'] += $mins;
+                    } elseif ($dayOfWeek === 6) {
+                        $otByType['saturday'] += $mins;
+                    } elseif ($dayOfWeek === 0) {
+                        // Chủ nhật CHỈ khi CN là ngày làm việc (không phải ngày nghỉ)
+                        $otByType['sunday'] += $mins;
+                    } else {
+                        $otByType['weekday'] += $mins;
+                    }
+                }
+
+                $typeRates = [
+                    'weekday' => $overtimeRate,
+                    'saturday' => $saturdayOtRate,
+                    'sunday' => $sundayOtRate,
+                    'rest_day' => $restDayOtRate,
+                    'holiday' => $holidayOtRate,
+                ];
+
+                foreach ($otByType as $type => $mins) {
+                    if ($mins <= 0) continue;
+                    $rate = $typeRates[$type];
+                    $hours = round($mins / 60, 2);
+                    $amount = round($hours * $hourlyRate * $rate);
+                    $otPay += $amount;
+                    $otBreakdown[] = [
+                        'type' => $type,
+                        'label' => $typeLabels[$type],
+                        'rate_percent' => round($rate * 100),
+                        'hourly_rate' => round($hourlyRate),
+                        'hours' => $hours,
+                        'minutes' => $mins,
+                        'amount' => $amount,
                     ];
                 }
             }
         }
 
+        // ===== PHẦN CHÊNH LỆCH NGÀY NGHỈ + NGÀY LỄ =====
+        // Không cần tính riêng nữa vì hệ số nhân (2x CN, 3x Lễ) đã được áp dụng
+        // trực tiếp vào work_units ở bước tính lương chính.
+        // VD: 1 ngày CN = 2 work_units → lương chính đã bao gồm phần chênh lệch.
+        $holidayPay = 0;
+        $holidayPayDetails = [];
+
         $totalSalary = $baseSalary + $bonusAmount + $commissionAmount + $allowanceAmount + $otPay + $holidayPay - $deductionAmount;
 
         // ===== ĐÁNH GIÁ NĂNG SUẤT SỬA CHỮA (chỉ khi module bật) =====
         $repairPerformance = null;
-        if (Setting::get('repair_performance_salary_enabled', false)) {
+        if (Setting::get('repair_performance_salary_enabled', false) && class_exists(RepairService::class)) {
             $repairService = new RepairService();
             $repairPerformance = $repairService->getEmployeePerformance($employee->id, $from->toDateString(), $to->toDateString());
             if ($repairPerformance['assigned'] > 0) {
@@ -241,6 +376,7 @@ class SalaryCalculationService
             'ot_minutes' => $otMinutes,
             'standard_work_units' => $standardWorkUnits,
             'work_units' => $totalUnits,
+            'normal_work_units' => $normalWorkUnits, // Ngày công thật (không nhân hệ số)
             'total_worked_minutes' => $totalWorkedMinutes,
             'paid_leave_units' => $paidLeaveUnits,
             'late_count' => $lateCount,
@@ -258,6 +394,7 @@ class SalaryCalculationService
                 'deductions' => $deductionDetails,
                 'late_penalty' => $latePenaltyDetails,
                 'holiday_pay' => $holidayPayDetails,
+                'ot_breakdown' => $otBreakdown,
             ],
         ];
     }
@@ -613,7 +750,8 @@ class SalaryCalculationService
     private function calculateDeductionsFromList(
         Collection $deductionList,
         int $lateCount, int $lateTotalMinutes,
-        int $earlyLeaveCount, int $earlyTotalMinutes
+        int $earlyLeaveCount, int $earlyTotalMinutes,
+        Collection $records = null
     ): array {
         $amount = 0;
         $details = [];
@@ -624,6 +762,7 @@ class SalaryCalculationService
             $category = data_get($deduction, 'deduction_category');
             $calcType = data_get($deduction, 'calculation_type');
             $amt = data_get($deduction, 'amount', 0);
+            $perMinutes = data_get($deduction, 'per_minutes');
 
             // Per-employee custom deductions: chỉ có name + amount (cố định/tháng)
             // Template deductions: có đầy đủ category + calc_type
@@ -638,7 +777,16 @@ class SalaryCalculationService
                         if ($calcType === 'per_occurrence') {
                             $dedAmount = $amt * $lateCount;
                         } elseif ($calcType === 'per_minute') {
-                            $dedAmount = $amt * $lateTotalMinutes;
+                            // Block-based: mỗi khối X phút phạt Y đồng, tính theo từng ngày
+                            $blockSize = $perMinutes && $perMinutes > 0 ? (int) $perMinutes : 1;
+                            if ($records) {
+                                foreach ($records->where('late_minutes', '>', 0) as $rec) {
+                                    $mins = (int) $rec->late_minutes;
+                                    $dedAmount += floor($mins / $blockSize) * $amt;
+                                }
+                            } else {
+                                $dedAmount = floor($lateTotalMinutes / $blockSize) * $amt;
+                            }
                         } else {
                             $dedAmount = $amt;
                         }
@@ -648,7 +796,15 @@ class SalaryCalculationService
                         if ($calcType === 'per_occurrence') {
                             $dedAmount = $amt * $earlyLeaveCount;
                         } elseif ($calcType === 'per_minute') {
-                            $dedAmount = $amt * $earlyTotalMinutes;
+                            $blockSize = $perMinutes && $perMinutes > 0 ? (int) $perMinutes : 1;
+                            if ($records) {
+                                foreach ($records->where('early_minutes', '>', 0) as $rec) {
+                                    $mins = (int) $rec->early_minutes;
+                                    $dedAmount += floor($mins / $blockSize) * $amt;
+                                }
+                            } else {
+                                $dedAmount = floor($earlyTotalMinutes / $blockSize) * $amt;
+                            }
                         } else {
                             $dedAmount = $amt;
                         }
@@ -673,6 +829,7 @@ class SalaryCalculationService
                 'category' => $category ?? 'fixed',
                 'calc_type' => $calcType ?? 'fixed_per_month',
                 'config_amount' => $amt,
+                'per_minutes' => $perMinutes,
                 'occurrences' => $occurrences,
                 'total_minutes' => $totalMinutes,
                 'calculated' => round($dedAmount),
@@ -690,6 +847,15 @@ class SalaryCalculationService
      * - Trừ ngày lễ (Holiday) không tính công
      * - Ngày lễ có paid_leave=true vẫn tính vào công chuẩn
      */
+    /**
+     * Step 24.12 — public wrapper so PaysheetController can seed
+     * `paysheets.standard_working_days` with the calendar default.
+     */
+    public function standardWorkingDaysForBranch(?int $branchId, Carbon $from, Carbon $to): float
+    {
+        return $this->getStandardWorkUnits($branchId, $from, $to);
+    }
+
     private function getStandardWorkUnits(?int $branchId, Carbon $from, Carbon $to): float
     {
         // Lấy cấu hình ngày làm theo chi nhánh, fallback sang cấu hình chung

@@ -1,4 +1,6 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
+import MoneyInput from '@/Components/MoneyInput.vue';
 import { ref, computed } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 
@@ -8,6 +10,7 @@ const props = defineProps({
     returnCode: String,
     bankAccounts: Array,
     employees: Array,
+    currentReturner: Object,
 });
 
 const items = ref(
@@ -50,10 +53,38 @@ const totalAmount = computed(() => selectedItems.value.reduce((sum, i) => sum + 
 
 const refundAmount = ref(0);
 const note = ref('');
-const employeeId = ref('');
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 const submitting = ref(false);
+
+const returnerOptions = computed(() => {
+    const options = (props.employees || []).map(emp => ({
+        value: String(emp.id),
+        label: emp.name,
+        code: emp.code,
+        is_current_user: props.currentReturner?.employee_id === emp.id,
+    }));
+
+    if (props.currentReturner && !props.currentReturner.employee_id) {
+        options.unshift({
+            value: 'current_user',
+            label: props.currentReturner.name,
+            code: props.currentReturner.code,
+            is_current_user: true,
+        });
+    }
+
+    return options;
+});
+
+const employeeId = ref(props.currentReturner?.employee_id
+    ? String(props.currentReturner.employee_id)
+    : (props.currentReturner ? 'current_user' : '')
+);
+
+const selectedEmployeeId = () => employeeId.value === 'current_user'
+    ? null
+    : (employeeId.value || null);
 
 // Keep refund synced with total
 const syncRefund = computed(() => {
@@ -61,7 +92,6 @@ const syncRefund = computed(() => {
     return totalAmount.value;
 });
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
 
 const save = () => {
     if (selectedItems.value.length === 0) {
@@ -74,8 +104,8 @@ const save = () => {
     router.post('/purchase-returns', {
         code: props.returnCode,
         purchase_id: props.purchase.id,
-        employee_id: employeeId.value || null,
-        refund_amount: refundAmount.value,
+        employee_id: selectedEmployeeId(),
+        refund_amount: Number(refundAmount.value) || 0,
         note: note.value,
         payment_method: paymentMethod.value,
         bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
@@ -200,7 +230,9 @@ const save = () => {
                         <label class="block text-[12px] text-gray-500 mb-1">Người trả hàng</label>
                         <select v-model="employeeId" class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] outline-none focus:border-green-500 bg-white">
                             <option value="">-- Chọn nhân viên --</option>
-                            <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
+                            <option v-for="emp in returnerOptions" :key="emp.value" :value="emp.value">
+                                {{ emp.label }}{{ emp.is_current_user ? ' (hiện tại)' : '' }}
+                            </option>
                         </select>
                     </div>
 
@@ -223,7 +255,7 @@ const save = () => {
                     <!-- Refund Amount -->
                     <div>
                         <label class="block text-[12px] text-gray-500 mb-1">NCC hoàn tiền</label>
-                        <input type="number" v-model.number="refundAmount" :max="totalAmount" min="0" class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] text-right outline-none focus:border-green-500 font-bold text-blue-600">
+                        <MoneyInput v-model="refundAmount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] text-right outline-none focus:border-green-500 font-bold text-blue-600" />
                     </div>
 
                     <!-- Payment Method -->

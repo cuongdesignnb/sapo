@@ -681,7 +681,7 @@
                                                                 ps.status !==
                                                                     'cancelled'
                                                             "
-                                                            @click="
+                                                            @click.stop="
                                                                 recalculatePaysheet(
                                                                     ps,
                                                                 )
@@ -708,8 +708,8 @@
                                                                 ps.status ===
                                                                 'calculated'
                                                             "
-                                                            @click="
-                                                                lockPaysheet(ps)
+                                                            @click.stop="
+                                                                router.visit(`/employees/paysheets/${ps.id}/edit`)
                                                             "
                                                             class="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 transition"
                                                         >
@@ -723,10 +723,41 @@
                                                                     stroke-linecap="round"
                                                                     stroke-linejoin="round"
                                                                     stroke-width="2"
-                                                                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                                                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                                                />
+                                                                <path
+                                                                    stroke-linecap="round"
+                                                                    stroke-linejoin="round"
+                                                                    stroke-width="2"
+                                                                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
                                                                 />
                                                             </svg>
                                                             Xem bảng lương
+                                                        </button>
+                                                        <button
+                                                            v-if="
+                                                                ps.status ===
+                                                                'calculated'
+                                                            "
+                                                            @click.stop="
+                                                                lockPaysheet(ps)
+                                                            "
+                                                            class="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 transition"
+                                                        >
+                                                            <svg
+                                                                class="w-4 h-4"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <path
+                                                                    stroke-linecap="round"
+                                                                    stroke-linejoin="round"
+                                                                    stroke-width="2"
+                                                                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                                                                />
+                                                            </svg>
+                                                            Chốt lương
                                                         </button>
                                                         <button
                                                             @click.stop="
@@ -788,7 +819,7 @@
                                                 </div>
                                                 <table
                                                     v-else
-                                                    class="w-full text-sm"
+                                                    class="w-full text-sm table-fixed"
                                                 >
                                                     <thead
                                                         class="bg-gray-50 border-b border-gray-200 sticky top-0"
@@ -804,15 +835,15 @@
                                                             </th>
                                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 w-10">STT</th>
                                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 min-w-[140px]">Tên nhân viên</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Lương chính</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Làm thêm</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Hoa hồng</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Phụ cấp</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Thưởng</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Giảm trừ</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Tổng lương</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Đã trả NV</th>
-                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500">Còn cần trả</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[120px]">Lương chính</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Làm thêm</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Hoa hồng</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Phụ cấp</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Thưởng</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Giảm trừ</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[120px]">Tổng lương</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[100px]">Đã trả NV</th>
+                                                            <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 w-[110px]">Còn cần trả</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -862,7 +893,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'base_salary', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-28 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -872,7 +903,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'ot_pay', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -882,7 +913,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'commission', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -892,7 +923,7 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'allowances', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
@@ -902,18 +933,15 @@
                                                                     @focus="$event.target.select()"
                                                                     @blur="updateSlipField(slip, 'bonus', $event)"
                                                                     :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                                                 />
                                                             </td>
                                                             <td class="px-2 py-1">
-                                                                <input
-                                                                    type="text"
-                                                                    :value="formatNumber(slip.deductions)"
-                                                                    @focus="$event.target.select()"
-                                                                    @blur="updateSlipField(slip, 'deductions', $event)"
-                                                                    :disabled="ps.status === 'locked'"
-                                                                    class="w-24 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
-                                                                />
+                                                                <div
+                                                                    @click="ps.status !== 'locked' && openDeductionModal(slip)"
+                                                                    class="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition"
+                                                                    :class="ps.status === 'locked' ? 'bg-gray-100 cursor-not-allowed' : ''"
+                                                                >{{ formatNumber(slip.deductions) }}</div>
                                                             </td>
                                                             <td class="px-3 py-1.5 text-right font-semibold text-blue-700">
                                                                 {{ formatMoney(slip.total_salary) }}
@@ -928,109 +956,172 @@
 
                                                         <!-- Chi tiết phiếu lương (expandable) -->
                                                         <tr v-if="expandedSlipId === slip.id">
-                                                            <td colspan="6" class="bg-gray-50 px-6 py-4">
+                                                            <td colspan="12" class="bg-gray-50 px-6 py-4">
                                                                 <div class="grid grid-cols-2 gap-6 text-sm">
-                                                                    <!-- Cột trái: Thông tin cơ bản -->
-                                                                    <div class="space-y-2">
-                                                                        <h4 class="font-semibold text-gray-700 mb-2">Thông tin lương</h4>
-                                                                        <div class="flex justify-between">
-                                                                            <span class="text-gray-500">Lương cơ bản:</span>
-                                                                            <span class="font-medium">{{ formatMoney(slip.base_salary) }}</span>
+                                                                    <!-- Cột trái: Thông tin lương -->
+                                                                    <div>
+                                                                        <h4 class="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                                                            <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                                                                            Thông tin lương
+                                                                        </h4>
+                                                                        <div class="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
+                                                                            <!-- Lương chính -->
+                                                                            <div class="flex justify-between px-4 py-2.5">
+                                                                                <span class="text-gray-600">Lương chính</span>
+                                                                                <span class="font-medium">{{ formatMoney(slip.base_salary) }}</span>
+                                                                            </div>
+                                                                            <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.work_units !== undefined">
+                                                                                Ngày công: {{ slip.details?.work_units ?? slip.work_units }}/{{ slip.details?.standard_work_units ?? '-' }}
+                                                                                <template v-if="slip.details?.paid_leave_units > 0"> (nghỉ phép: {{ slip.details.paid_leave_units }})</template>
+                                                                            </div>
+                                                                            <!-- Làm thêm -->
+                                                                            <div class="flex justify-between px-4 py-2.5">
+                                                                                <span class="text-gray-600">Làm thêm</span>
+                                                                                <span class="font-medium" :class="slip.ot_pay > 0 ? 'text-green-600' : ''">{{ slip.ot_pay > 0 ? '+' : '' }}{{ formatMoney(slip.ot_pay) }}</span>
+                                                                            </div>
+                                                                            <div class="px-4 py-1.5 text-xs text-gray-400 bg-gray-50" v-if="slip.details?.ot_minutes > 0 || slip.details?.holiday_pay > 0">
+                                                                                <span v-if="slip.details?.ot_minutes > 0">OT: {{ Math.round(slip.details.ot_minutes / 60 * 10) / 10 }}h</span>
+                                                                                <span v-if="slip.details?.ot_minutes > 0 && slip.details?.holiday_pay > 0"> · </span>
+                                                                                <span v-if="slip.details?.holiday_pay > 0">Ngày lễ/nghỉ: +{{ formatMoney(slip.details.holiday_pay) }}</span>
+                                                                            </div>
+                                                                            <!-- Hoa hồng -->
+                                                                            <div class="flex justify-between px-4 py-2.5">
+                                                                                <span class="text-gray-600">Hoa hồng</span>
+                                                                                <span class="font-medium" :class="slip.commission > 0 ? 'text-green-600' : ''">{{ slip.commission > 0 ? '+' : '' }}{{ formatMoney(slip.commission) }}</span>
+                                                                            </div>
+                                                                            <!-- Phụ cấp -->
+                                                                            <div class="flex justify-between px-4 py-2.5">
+                                                                                <span class="text-gray-600">Phụ cấp</span>
+                                                                                <span class="font-medium" :class="slip.allowances > 0 ? 'text-green-600' : ''">{{ slip.allowances > 0 ? '+' : '' }}{{ formatMoney(slip.allowances) }}</span>
+                                                                            </div>
+                                                                            <!-- Thưởng -->
+                                                                            <div class="flex justify-between px-4 py-2.5">
+                                                                                <span class="text-gray-600">Thưởng</span>
+                                                                                <span class="font-medium" :class="slip.bonus > 0 ? 'text-green-600' : ''">{{ slip.bonus > 0 ? '+' : '' }}{{ formatMoney(slip.bonus) }}</span>
+                                                                            </div>
+                                                                            <!-- Giảm trừ -->
+                                                                            <div class="flex justify-between px-4 py-2.5">
+                                                                                <span class="text-gray-600">Giảm trừ</span>
+                                                                                <span class="font-medium text-red-600">{{ slip.deductions > 0 ? '-' : '' }}{{ formatMoney(slip.deductions) }}</span>
+                                                                            </div>
+                                                                            <!-- Thực lĩnh -->
+                                                                            <div class="flex justify-between px-4 py-3 bg-blue-50">
+                                                                                <span class="text-gray-800 font-bold">Thực lĩnh</span>
+                                                                                <span class="font-bold text-blue-600 text-base">{{ formatMoney(slip.total_salary) }}</span>
+                                                                            </div>
                                                                         </div>
-                                                                        <div class="flex justify-between" v-if="slip.details?.work_units !== undefined">
-                                                                            <span class="text-gray-500">Ngày công:</span>
-                                                                            <span class="font-medium">{{ slip.details?.work_units ?? slip.work_units }} / {{ slip.details?.standard_work_units ?? '-' }}</span>
-                                                                        </div>
-                                                                        <div class="flex justify-between" v-if="slip.bonus > 0">
-                                                                            <span class="text-gray-500">Thưởng:</span>
-                                                                            <span class="font-medium text-green-600">+{{ formatMoney(slip.bonus) }}</span>
-                                                                        </div>
-                                                                        <div class="flex justify-between" v-if="slip.commission > 0">
-                                                                            <span class="text-gray-500">Hoa hồng:</span>
-                                                                            <span class="font-medium text-green-600">+{{ formatMoney(slip.commission) }}</span>
-                                                                        </div>
-                                                                        <div class="flex justify-between" v-if="slip.allowances > 0">
-                                                                            <span class="text-gray-500">Phụ cấp:</span>
-                                                                            <span class="font-medium text-green-600">+{{ formatMoney(slip.allowances) }}</span>
-                                                                        </div>
-                                                                        <div class="flex justify-between border-t pt-2 mt-2">
-                                                                            <span class="text-gray-700 font-semibold">Tổng giảm trừ:</span>
-                                                                            <span class="font-semibold text-red-600">-{{ formatMoney(slip.deductions) }}</span>
-                                                                        </div>
-                                                                        <div class="flex justify-between border-t pt-2">
-                                                                            <span class="text-gray-800 font-bold">Thực lãnh:</span>
-                                                                            <span class="font-bold text-blue-600">{{ formatMoney(slip.total_salary) }}</span>
+                                                                        <!-- Attendance summary -->
+                                                                        <div class="mt-3 text-xs text-gray-400 space-y-0.5" v-if="slip.details">
+                                                                            <div v-if="slip.details.late_count > 0">Đi muộn: {{ slip.details.late_count }} lần ({{ slip.details.late_minutes }} phút)</div>
+                                                                            <div v-if="slip.details.early_leave_count > 0">Về sớm: {{ slip.details.early_leave_count }} lần ({{ slip.details.early_minutes }} phút)</div>
+                                                                            <div v-if="slip.details.personal_revenue > 0">Doanh thu cá nhân: {{ formatMoney(slip.details.personal_revenue) }}</div>
                                                                         </div>
                                                                     </div>
 
                                                                     <!-- Cột phải: Chi tiết giảm trừ -->
-                                                                    <div class="space-y-2" v-if="slip.details?.details?.deductions?.length || slip.details?.details?.late_penalty?.length">
-                                                                        <h4 class="font-semibold text-gray-700 mb-2">Chi tiết giảm trừ</h4>
-
-                                                                        <!-- Template deductions -->
-                                                                        <div v-for="(ded, i) in (slip.details?.details?.deductions || [])" :key="'ded-'+i"
-                                                                            class="bg-white rounded-md border border-gray-200 px-3 py-2">
-                                                                            <div class="flex justify-between items-start">
-                                                                                <div>
-                                                                                    <span class="font-medium text-gray-800">{{ ded.name }}</span>
-                                                                                    <span class="ml-2 text-xs text-gray-400">({{ categoryLabel(ded.category) }})</span>
+                                                                    <div>
+                                                                        <h4 class="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                                                            <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                                                            Chi tiết giảm trừ
+                                                                        </h4>
+                                                                        <template v-if="slip.details?.details?.deductions?.length || slip.details?.details?.late_penalty?.length">
+                                                                            <!-- Custom/template deductions -->
+                                                                            <div class="space-y-2">
+                                                                                <div v-for="(ded, i) in (slip.details?.details?.deductions || [])" :key="'ded-'+i"
+                                                                                    class="bg-white rounded-lg border border-gray-200 px-4 py-2.5">
+                                                                                    <div class="flex justify-between items-center">
+                                                                                        <div>
+                                                                                            <span class="font-medium text-gray-800">{{ ded.name }}</span>
+                                                                                            <span class="ml-2 text-xs px-1.5 py-0.5 rounded-full"
+                                                                                                :class="ded.category === 'late' ? 'bg-orange-100 text-orange-600' : ded.category === 'early_leave' ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-500'">
+                                                                                                {{ categoryLabel(ded.category) }}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <span class="font-semibold text-red-600">-{{ formatMoney(ded.calculated) }}</span>
+                                                                                    </div>
+                                                                                    <div class="text-xs text-gray-400 mt-1">
+                                                                                        <template v-if="ded.calc_type === 'per_minute'">
+                                                                                            {{ ded.total_minutes || 0 }} phút × {{ formatMoney(ded.config_amount) }}/phút
+                                                                                        </template>
+                                                                                        <template v-else-if="ded.calc_type === 'per_occurrence'">
+                                                                                            {{ ded.occurrences }} lần × {{ formatMoney(ded.config_amount) }}/lần
+                                                                                        </template>
+                                                                                        <template v-else>
+                                                                                            {{ calcTypeLabel(ded.calc_type) }}
+                                                                                        </template>
+                                                                                    </div>
                                                                                 </div>
-                                                                                <span class="font-semibold text-red-600">-{{ formatMoney(ded.calculated) }}</span>
                                                                             </div>
-                                                                            <div class="text-xs text-gray-500 mt-1">
-                                                                                <template v-if="ded.calc_type === 'per_minute'">
-                                                                                    {{ calcTypeLabel(ded.calc_type) }}: <span class="font-medium text-gray-700">{{ ded.total_minutes || (ded.config_amount > 0 ? Math.round(ded.calculated / ded.config_amount) : 0) }} phút</span>
-                                                                                    × {{ formatMoney(ded.config_amount) }}/phút
-                                                                                </template>
-                                                                                <template v-else-if="ded.calc_type === 'per_occurrence'">
-                                                                                    {{ calcTypeLabel(ded.calc_type) }}: <span class="font-medium text-gray-700">{{ ded.occurrences }} lần</span>
-                                                                                    × {{ formatMoney(ded.config_amount) }}/lần
-                                                                                </template>
-                                                                                <template v-else>
-                                                                                    {{ calcTypeLabel(ded.calc_type) }}: {{ formatMoney(ded.config_amount) }}
-                                                                                </template>
-                                                                            </div>
+
+                                                                            <!-- Tier-based late penalties -->
+                                                                            <template v-if="slip.details?.details?.late_penalty?.length">
+                                                                                <h5 class="font-medium text-gray-600 mt-4 mb-2 text-xs uppercase tracking-wide">Phạt đi muộn theo mức</h5>
+                                                                                <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                                                                    <table class="w-full text-xs">
+                                                                                        <thead class="bg-gray-50">
+                                                                                            <tr>
+                                                                                                <th class="px-3 py-2 text-left text-gray-500 font-medium">Ngày</th>
+                                                                                                <th class="px-3 py-2 text-right text-gray-500 font-medium">Muộn (phút)</th>
+                                                                                                <th class="px-3 py-2 text-right text-gray-500 font-medium">Mức phạt</th>
+                                                                                            </tr>
+                                                                                        </thead>
+                                                                                        <tbody>
+                                                                                            <tr v-for="(lp, j) in slip.details.details.late_penalty" :key="'lp-'+j" class="border-t border-gray-100">
+                                                                                                <td class="px-3 py-2 text-gray-700">{{ lp.date }}</td>
+                                                                                                <td class="px-3 py-2 text-right text-gray-700">{{ lp.late_minutes }}</td>
+                                                                                                <td class="px-3 py-2 text-right text-red-600 font-medium">-{{ formatMoney(lp.penalty) }}</td>
+                                                                                            </tr>
+                                                                                        </tbody>
+                                                                                        <tfoot class="bg-gray-50 font-medium border-t">
+                                                                                            <tr>
+                                                                                                <td class="px-3 py-2">Tổng</td>
+                                                                                                <td class="px-3 py-2 text-right">{{ slip.details?.details?.late_penalty?.reduce((s, lp) => s + lp.late_minutes, 0) }} phút</td>
+                                                                                                <td class="px-3 py-2 text-right text-red-600">-{{ formatMoney(slip.details?.late_penalty || slip.details?.details?.late_penalty?.reduce((s, lp) => s + lp.penalty, 0)) }}</td>
+                                                                                            </tr>
+                                                                                        </tfoot>
+                                                                                    </table>
+                                                                                </div>
+                                                                            </template>
+                                                                        </template>
+                                                                        <div v-else class="bg-white rounded-lg border border-gray-200 px-4 py-6 text-center">
+                                                                            <p class="text-gray-400 text-xs">Không có giảm trừ</p>
                                                                         </div>
 
-                                                                        <!-- Tier-based late penalties -->
-                                                                        <template v-if="slip.details?.details?.late_penalty?.length">
-                                                                            <h5 class="font-medium text-gray-600 mt-3 mb-1">Phạt đi muộn theo mức</h5>
-                                                                            <div class="bg-white rounded-md border border-gray-200 overflow-hidden">
-                                                                                <table class="w-full text-xs">
-                                                                                    <thead class="bg-gray-100">
-                                                                                        <tr>
-                                                                                            <th class="px-2 py-1.5 text-left text-gray-500">Ngày</th>
-                                                                                            <th class="px-2 py-1.5 text-right text-gray-500">Muộn (phút)</th>
-                                                                                            <th class="px-2 py-1.5 text-right text-gray-500">Mức phạt</th>
-                                                                                        </tr>
-                                                                                    </thead>
-                                                                                    <tbody>
-                                                                                        <tr v-for="(lp, j) in slip.details.details.late_penalty" :key="'lp-'+j" class="border-t border-gray-100">
-                                                                                            <td class="px-2 py-1.5 text-gray-700">{{ lp.date }}</td>
-                                                                                            <td class="px-2 py-1.5 text-right text-gray-700">{{ lp.late_minutes }}</td>
-                                                                                            <td class="px-2 py-1.5 text-right text-red-600 font-medium">-{{ formatMoney(lp.penalty) }}</td>
-                                                                                        </tr>
-                                                                                    </tbody>
-                                                                                    <tfoot class="bg-gray-50 font-medium">
-                                                                                        <tr>
-                                                                                            <td class="px-2 py-1.5">Tổng</td>
-                                                                                            <td class="px-2 py-1.5 text-right">{{ slip.details?.late_minutes || slip.details?.details?.late_penalty?.reduce((s, lp) => s + lp.late_minutes, 0) }} phút</td>
-                                                                                            <td class="px-2 py-1.5 text-right text-red-600">-{{ formatMoney(slip.details?.late_penalty || slip.details?.details?.late_penalty?.reduce((s, lp) => s + lp.penalty, 0)) }}</td>
-                                                                                        </tr>
-                                                                                    </tfoot>
-                                                                                </table>
+                                                                        <!-- Chi tiết phụ cấp -->
+                                                                        <template v-if="slip.details?.details?.allowances?.length">
+                                                                            <h5 class="font-medium text-gray-600 mt-4 mb-2 text-xs uppercase tracking-wide">Chi tiết phụ cấp</h5>
+                                                                            <div class="space-y-1">
+                                                                                <div v-for="(alw, i) in slip.details.details.allowances" :key="'alw-'+i"
+                                                                                    class="flex justify-between bg-white rounded-lg border border-gray-200 px-4 py-2">
+                                                                                    <span class="text-gray-700">{{ alw.name }}</span>
+                                                                                    <span class="font-medium text-green-600">+{{ formatMoney(alw.calculated || alw.amount) }}</span>
+                                                                                </div>
                                                                             </div>
                                                                         </template>
 
-                                                                        <!-- Tổng hợp đi muộn -->
-                                                                        <div v-if="slip.details?.late_count > 0 && !slip.details?.details?.late_penalty?.length"
-                                                                            class="text-xs text-gray-500 mt-1">
-                                                                            Đi muộn: {{ slip.details.late_count }} lần, tổng {{ slip.details.late_minutes }} phút
-                                                                        </div>
-                                                                    </div>
-                                                                    <div v-else class="space-y-2">
-                                                                        <h4 class="font-semibold text-gray-700 mb-2">Chi tiết giảm trừ</h4>
-                                                                        <p class="text-gray-400 text-xs">Không có giảm trừ.</p>
+                                                                        <!-- Chi tiết thưởng -->
+                                                                        <template v-if="slip.details?.details?.bonus?.length">
+                                                                            <h5 class="font-medium text-gray-600 mt-4 mb-2 text-xs uppercase tracking-wide">Chi tiết thưởng</h5>
+                                                                            <div class="space-y-1">
+                                                                                <div v-for="(bon, i) in slip.details.details.bonus" :key="'bon-'+i"
+                                                                                    class="flex justify-between bg-white rounded-lg border border-gray-200 px-4 py-2">
+                                                                                    <span class="text-gray-700">{{ bon.role_type || 'Thưởng' }}: {{ formatMoney(bon.revenue_from) }}+</span>
+                                                                                    <span class="font-medium text-green-600">+{{ formatMoney(bon.calculated) }}</span>
+                                                                                </div>
+                                                                            </div>
+                                                                        </template>
+
+                                                                        <!-- Chi tiết ngày lễ/nghỉ -->
+                                                                        <template v-if="slip.details?.details?.holiday_pay?.length">
+                                                                            <h5 class="font-medium text-gray-600 mt-4 mb-2 text-xs uppercase tracking-wide">Ngày lễ / ngày nghỉ</h5>
+                                                                            <div class="space-y-1">
+                                                                                <div v-for="(hp, i) in slip.details.details.holiday_pay" :key="'hp-'+i"
+                                                                                    class="flex justify-between bg-white rounded-lg border border-gray-200 px-4 py-2 text-xs">
+                                                                                    <span class="text-gray-700">{{ hp.date }} <span class="text-gray-400">({{ hp.type === 'holiday/tet' ? 'Lễ' : 'Ngày nghỉ' }} ×{{ hp.multiplier }})</span></span>
+                                                                                    <span class="font-medium text-green-600">+{{ formatMoney(hp.extra_pay) }}</span>
+                                                                                </div>
+                                                                            </div>
+                                                                        </template>
                                                                     </div>
                                                                 </div>
                                                             </td>
@@ -1391,14 +1482,98 @@
             </div>
         </div>
     </AppLayout>
+
+    <!-- Modal Các khoản giảm trừ -->
+    <Teleport to="body">
+        <div v-if="showDeductionModal" class="fixed inset-0 z-50 flex items-center justify-center">
+            <div class="fixed inset-0 bg-black/40" @click="closeDeductionModal"></div>
+            <div class="relative bg-white rounded-lg shadow-xl w-[560px] max-h-[80vh] overflow-hidden">
+                <!-- Header -->
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-800">Các khoản giảm trừ</h3>
+                        <p class="text-sm text-gray-500">Nhân viên: {{ deductionModalSlip?.employee?.name }}</p>
+                    </div>
+                    <button @click="closeDeductionModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+
+                <!-- Body -->
+                <div class="px-6 py-4 overflow-y-auto max-h-[60vh]">
+                    <!-- Header row -->
+                    <div class="flex justify-between text-xs font-medium text-gray-500 uppercase tracking-wide pb-2 border-b border-gray-200 mb-3">
+                        <span>Loại giảm trừ</span>
+                        <span>Tiền giảm trừ</span>
+                    </div>
+
+                    <!-- Tổng giảm trừ -->
+                    <div class="flex justify-between py-2 mb-2">
+                        <span class="font-semibold text-gray-700"></span>
+                        <span class="font-bold text-blue-600 text-lg">{{ formatMoney(deductionModalSlip?.deductions || 0) }}</span>
+                    </div>
+
+                    <!-- Giảm trừ đi muộn, về sớm, cố định -->
+                    <div class="border-t border-gray-100 py-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-700">Giảm trừ đi muộn, về sớm, cố định</span>
+                            <span class="font-medium" :class="fixedDeductionTotal > 0 ? 'text-red-600' : 'text-blue-600'">{{ formatMoney(fixedDeductionTotal) }}</span>
+                        </div>
+                        <div v-if="fixedDeductionItems.length" class="mt-2 ml-4 space-y-1">
+                            <div v-for="(ded, i) in fixedDeductionItems" :key="'fd-'+i" class="flex justify-between text-sm text-gray-500">
+                                <span>{{ ded.name }} <span class="text-xs">({{ calcTypeLabel(ded.calc_type) }})</span></span>
+                                <span class="text-red-500">-{{ formatMoney(ded.calculated) }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Phạt vi phạm theo ngày -->
+                    <div class="border-t border-gray-100 py-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-700">Phạt vi phạm theo ngày</span>
+                            <div class="flex items-center gap-2">
+                                <span class="font-medium" :class="latePenaltyTotal > 0 ? 'text-red-600' : 'text-blue-600'">{{ formatMoney(latePenaltyTotal) }}</span>
+                            </div>
+                        </div>
+                        <div v-if="latePenaltyItems.length" class="mt-2 ml-4 space-y-1">
+                            <div v-for="(lp, j) in latePenaltyItems" :key="'lp-'+j" class="flex justify-between text-sm text-gray-500">
+                                <span>{{ lp.date }} (muộn {{ lp.late_minutes }} phút)</span>
+                                <span class="text-red-500">-{{ formatMoney(lp.penalty) }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Giảm trừ khác (manual) -->
+                    <div class="border-t border-gray-100 py-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-700">Giảm trừ khác</span>
+                            <div class="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    :value="formatNumber(manualDeduction)"
+                                    @blur="updateManualDeduction($event)"
+                                    @focus="$event.target.select()"
+                                    class="w-28 text-right border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="flex justify-end px-6 py-3 border-t border-gray-200 bg-gray-50">
+                    <button @click="closeDeductionModal" class="px-5 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition">Bỏ qua</button>
+                </div>
+            </div>
+        </div>
+    </Teleport>
 </template>
 
 <script setup>
-import { Head } from "@inertiajs/vue3";
+import { Head, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import { ref, computed, reactive, onMounted, watch } from "vue";
 import axios from "axios";
+import { formatVND as formatMoney } from '@/utils/money';
 
 const props = defineProps({
     branches: { type: Array, default: () => [] },
@@ -1465,6 +1640,53 @@ const selectedSlipIds = ref([]);
 const selectAllSlips = ref(false);
 const isPaying = ref(false);
 const expandedSlipId = ref(null);
+
+// ===== Deduction modal =====
+const showDeductionModal = ref(false);
+const deductionModalSlip = ref(null);
+const manualDeduction = ref(0);
+
+const fixedDeductionItems = computed(() => {
+    const deds = deductionModalSlip.value?.details?.details?.deductions || [];
+    return deds.filter(d => d.category !== 'violation');
+});
+const fixedDeductionTotal = computed(() => fixedDeductionItems.value.reduce((s, d) => s + (d.calculated || 0), 0));
+
+const latePenaltyItems = computed(() => deductionModalSlip.value?.details?.details?.late_penalty || []);
+const latePenaltyTotal = computed(() => latePenaltyItems.value.reduce((s, lp) => s + (lp.penalty || 0), 0));
+
+const openDeductionModal = (slip) => {
+    deductionModalSlip.value = slip;
+    const autoTotal = fixedDeductionTotal.value + latePenaltyTotal.value;
+    manualDeduction.value = Math.max(0, (slip.deductions || 0) - autoTotal);
+    showDeductionModal.value = true;
+};
+
+const closeDeductionModal = () => {
+    showDeductionModal.value = false;
+    deductionModalSlip.value = null;
+};
+
+const updateManualDeduction = async (event) => {
+    const newVal = parseNumber(event.target.value);
+    manualDeduction.value = newVal;
+    const slip = deductionModalSlip.value;
+    if (!slip) return;
+    const autoTotal = fixedDeductionTotal.value + latePenaltyTotal.value;
+    const totalDed = autoTotal + newVal;
+    slip.deductions = totalDed;
+    slip.total_salary = Math.max(0, (slip.base_salary || 0) + (slip.bonus || 0) + (slip.commission || 0)
+        + (slip.allowances || 0) + (slip.ot_pay || 0) - totalDed);
+    slip.remaining = Math.max(0, slip.total_salary - (slip.paid_amount || 0));
+    slip._dirty = true;
+    try {
+        const psId = paysheets.value.find(p => p.id === expandedId.value)?.id;
+        await axios.put(`/api/paysheets/${psId}/payslips/${slip.id}`, { deductions: totalDed });
+        slip._dirty = false;
+    } catch (e) {
+        console.error('Update deduction failed:', e);
+    }
+};
 
 const toggleSlipDetail = (slipId) => {
     expandedSlipId.value = expandedSlipId.value === slipId ? null : slipId;
@@ -1818,10 +2040,6 @@ const paySelected = async (ps) => {
 };
 
 // ===== Helpers =====
-const formatMoney = (v) => {
-    if (!v && v !== 0) return "0";
-    return Number(v).toLocaleString("vi-VN");
-};
 
 const formatDate = (d) => {
     if (!d) return "";

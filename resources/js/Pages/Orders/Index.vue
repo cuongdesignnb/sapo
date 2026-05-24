@@ -1,15 +1,20 @@
-<script setup>
-import { ref, watch, computed, onMounted, onBeforeUnmount } from "vue";
-import { Head, router, Link } from "@inertiajs/vue3";
+﻿<script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { Head, router, Link, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     orders: Object,
     branches: Array,
     employees: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
 const salesChannels = [
@@ -34,22 +39,84 @@ const updateOrder = (orderId, field, value) => {
     );
 };
 
-const search = ref(props.filters?.search || "");
-const statusFilters = ref(props.filters?.status || []);
-const activeBranch = ref(props.filters?.branch_id || "");
-const dateFilter = ref(props.filters?.date_filter || "this_month");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/orders",
+    defaults: { date_filter: "all" },
+});
+
+const sidebarConfig = computed(() => [
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Thời gian",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+        zone: "quick",
+    },
+    {
+        key: "branch_id",
+        type: "select",
+        label: "Chi nhánh",
+        options: (props.filterOptions?.branches || []).map((b) => ({
+            value: String(b.id),
+            label: b.name,
+        })),
+        placeholder: "-- Tất cả chi nhánh --",
+        zone: "quick",
+    },
+    {
+        key: "status",
+        type: "checkbox",
+        label: "Trạng thái",
+        options: props.filterOptions?.statuses || [],
+        zone: "main",
+    },
+    {
+        key: "is_delivery",
+        type: "select",
+        label: "Loại đơn",
+        options: props.filterOptions?.deliveryOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "has_debt",
+        type: "select",
+        label: "Đặt cọc / công nợ",
+        options: props.filterOptions?.debtOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "sales_channel",
+        type: "select",
+        label: "Kênh bán",
+        options: props.filterOptions?.salesChannels || [],
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+    {
+        key: "created_by",
+        type: "select",
+        label: "Người tạo",
+        options: (props.filterOptions?.creators || []).map((u) => ({
+            value: u.id,
+            label: u.name,
+        })),
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+]);
 
 // Bảng trạng thái
-const allStatuses = [
+const allStatuses = computed(() => props.filterOptions?.statuses || [
     { value: "draft", label: "Phiếu tạm" },
     { value: "confirmed", label: "Đã xác nhận" },
     { value: "delivering", label: "Đang giao hàng" },
     { value: "completed", label: "Hoàn thành" },
     { value: "cancelled", label: "Đã hủy" },
     { value: "return", label: "Trả hàng" },
-];
+]);
 
 // Status transition map - từ trạng thái nào có thể chuyển sang trạng thái nào
 const statusTransitions = {
@@ -63,7 +130,7 @@ const statusTransitions = {
 
 const getAvailableStatuses = (currentStatus) => {
     const allowed = statusTransitions[currentStatus] || [currentStatus];
-    return allStatuses.filter((s) => allowed.includes(s.value));
+    return allStatuses.value.filter((s) => allowed.includes(s.value));
 };
 
 const buildAddress = (order) => {
@@ -109,55 +176,7 @@ onBeforeUnmount(() =>
     document.removeEventListener("click", handleClickOutside),
 );
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/orders",
-        {
-            search: search.value,
-            status: statusFilters.value,
-            branch_id: activeBranch.value,
-            date_filter: dateFilter.value,
-            sort_by: field,
-            sort_direction: direction,
-        },
-        { preserveState: true, replace: true },
-    );
-};
-
-let searchTimeout;
-const updateFilters = () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/orders",
-            {
-                search: search.value,
-                status: statusFilters.value,
-                branch_id: activeBranch.value,
-                date_filter: dateFilter.value,
-                sort_by: sortBy.value,
-                sort_direction: sortDirection.value,
-            },
-            {
-                preserveState: true,
-                replace: true,
-            },
-        );
-    }, 500);
-};
-
-watch([search, statusFilters, activeBranch, dateFilter], updateFilters, {
-    deep: true,
-});
-
-const removeStatusFilter = (val) => {
-    const idx = statusFilters.value.indexOf(val);
-    if (idx > -1) {
-        statusFilters.value.splice(idx, 1);
-    }
-};
+const handleSort = (field, direction) => setSort(field, direction);
 
 const expandedRows = ref([]);
 const toggleExpand = (id) => {
@@ -170,9 +189,9 @@ const toggleExpand = (id) => {
 };
 const isExpanded = (id) => expandedRows.value.includes(id);
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
+
 const formatStatus = (val) => {
-    const s = allStatuses.find((x) => x.value === val);
+    const s = allStatuses.value.find((x) => x.value === val);
     return s ? s.label : val;
 };
 
@@ -184,205 +203,63 @@ const cancelOrder = (order) => {
     if (!confirm("Bạn có chắc muốn hủy đơn hàng này?")) return;
     updateOrder(order.id, "status", "cancelled");
 };
+
+// Xử lý đơn hàng → Invoice
+const showProcessModal = ref(false);
+const processingOrder = ref(null);
+const processAmountPaid = ref(0);
+const processPaymentMethod = ref('cash');
+const isProcessing = ref(false);
+
+const openProcessModal = (order) => {
+    processingOrder.value = order;
+    processAmountPaid.value = order.total_payment;
+    processPaymentMethod.value = 'cash';
+    processError.value = '';
+    showProcessModal.value = true;
+};
+
+const processError = ref('');
+const processPage = usePage();
+const submitProcessOrder = () => {
+    if (!processingOrder.value) return;
+    isProcessing.value = true;
+    processError.value = '';
+    router.post(`/orders/${processingOrder.value.id}/process`, {
+        amount_paid: Number(processAmountPaid.value) || 0,
+        payment_method: processPaymentMethod.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            const flashErr = processPage.props?.flash?.error;
+            if (flashErr) {
+                // Backend rolled back via back()->with('error', ...) — Inertia treats this as success.
+                processError.value = flashErr;
+                isProcessing.value = false;
+                return;
+            }
+            showProcessModal.value = false;
+            processingOrder.value = null;
+            isProcessing.value = false;
+        },
+        onError: (errors) => {
+            const firstErr = errors && typeof errors === 'object' ? Object.values(errors)[0] : null;
+            processError.value = firstErr || 'Có lỗi khi xử lý đơn hàng.';
+            isProcessing.value = false;
+        },
+    });
+};
 </script>
 
 <template>
     <Head title="Đặt hàng - KiotViet Clone" />
     <AppLayout>
         <template #sidebar>
-            <!-- Lọc CHI NHÁNH -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Chi nhánh xử lý</label
-                >
-                <div class="relative">
-                    <select
-                        v-model="activeBranch"
-                        class="w-full border border-gray-300 rounded p-1.5 pl-3 pr-8 text-sm outline-none bg-blue-600 text-white font-medium appearance-none h-[32px]"
-                    >
-                        <option value="">Tất cả chi nhánh</option>
-                        <option
-                            v-for="branch in branches"
-                            :key="branch.id"
-                            :value="branch.id"
-                        >
-                            {{ branch.name }}
-                        </option>
-                    </select>
-                    <div
-                        class="absolute inset-y-0 right-2 flex items-center pointer-events-none"
-                    >
-                        <svg
-                            class="w-4 h-4 text-white"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M19 9l-7 7-7-7"
-                            ></path>
-                        </svg>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Lọc THỜI GIAN -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Thời gian</label
-                >
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            v-model="dateFilter"
-                            value="this_month"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Tháng này
-                        <svg
-                            class="w-3 h-3 ml-auto text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M9 5l7 7-7 7"
-                            ></path>
-                        </svg>
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-gray-500"
-                    >
-                        <input
-                            type="radio"
-                            v-model="dateFilter"
-                            value="custom"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Tùy chỉnh
-                        <svg
-                            class="w-4 h-4 ml-auto"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            ></path>
-                        </svg>
-                    </label>
-                </div>
-            </div>
-
-            <!-- Lọc TRẠNG THÁI -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Trạng thái</label
-                >
-                <div class="flex flex-wrap gap-2 text-[12px]">
-                    <div
-                        v-for="status in statusFilters"
-                        :key="status"
-                        class="bg-blue-600 text-white px-2 py-1 rounded flex items-center gap-1 cursor-pointer"
-                    >
-                        {{ formatStatus(status) }}
-                        <span
-                            @click.stop="removeStatusFilter(status)"
-                            class="pl-1 border-l border-blue-400 font-bold hover:text-gray-200 ml-1"
-                            >&times;</span
-                        >
-                    </div>
-                </div>
-                <div class="mt-2 space-y-1">
-                    <label
-                        v-for="s in allStatuses"
-                        :key="s.value"
-                        class="flex items-center gap-2 cursor-pointer text-sm text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            :value="s.value"
-                            v-model="statusFilters"
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        {{ s.label }}
-                    </label>
-                </div>
-            </div>
-
-            <!-- Đối tác giao hàng -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Đối tác giao hàng</label
-                >
-                <input
-                    type="text"
-                    placeholder="Chọn đối tác giao hàng"
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700 bg-gray-50"
-                />
-            </div>
-
-            <!-- Thời gian giao hàng -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Thời gian giao hàng</label
-                >
-                <div class="space-y-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="radio"
-                            value="all_time"
-                            name="delivery_time"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            checked
-                        />
-                        Toàn thời gian
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-gray-500"
-                    >
-                        <input
-                            type="radio"
-                            value="custom"
-                            name="delivery_time"
-                            class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Tùy chỉnh
-                    </label>
-                </div>
-            </div>
-
-            <!-- Khu vực giao hàng -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Khu vực giao hàng</label
-                >
-                <input
-                    type="text"
-                    placeholder="Chọn Tỉnh/TP - Quận/Huyện"
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700 bg-gray-50"
-                />
-            </div>
-
-            <!-- Phương thức thanh toán -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-sm font-bold text-gray-800 mb-2"
-                    >Phương thức thanh toán</label
-                >
-                <input
-                    type="text"
-                    placeholder="Chọn phương thức thanh toán..."
-                    class="w-full border border-gray-300 rounded p-1.5 text-sm outline-none text-gray-700 bg-gray-50"
+            <div class="p-3">
+                <SidebarFilter
+                    v-model="filters"
+                    :config="sidebarConfig"
+                    @reset="reset"
                 />
             </div>
         </template>
@@ -409,8 +286,8 @@ const cancelOrder = (order) => {
                     </svg>
                     <input
                         type="text"
-                        v-model="search"
-                        placeholder="Theo mã phiếu đặt"
+                        v-model="filters.search"
+                        placeholder="Theo mã phiếu đặt, khách hàng, SĐT..."
                         class="w-full pl-9 pr-8 py-1.5 focus:outline-none border border-gray-300 rounded text-sm placeholder-gray-400"
                     />
                     <svg
@@ -540,12 +417,12 @@ const cancelOrder = (order) => {
                                     ></path>
                                 </svg>
                             </th>
-                            <SortableHeader label="Mã đặt hàng" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Mã đặt hàng" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Khách hàng</th>
-                            <SortableHeader label="Khách cần trả" field="total_payment" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Khách đã trả" field="amount_paid" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" class="px-4 py-2" @sort="handleSort" />
+                            <SortableHeader label="Khách cần trả" field="total_payment" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Khách đã trả" field="amount_paid" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-2" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
@@ -1300,6 +1177,17 @@ const cancelOrder = (order) => {
                                                                         ?.name ||
                                                                     "—"
                                                                 }}
+                                                                <div
+                                                                    v-if="item.selected_serials && item.selected_serials.length"
+                                                                    class="mt-1 flex flex-wrap gap-1"
+                                                                >
+                                                                    <span class="text-gray-500 text-xs mr-1">Serial/IMEI đã chọn:</span>
+                                                                    <span
+                                                                        v-for="s in item.selected_serials"
+                                                                        :key="s.id"
+                                                                        class="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded"
+                                                                    >{{ s.serial_number || ('#' + s.id) }}</span>
+                                                                </div>
                                                             </td>
                                                             <td
                                                                 class="px-3 py-2 text-right"
@@ -1784,6 +1672,14 @@ const cancelOrder = (order) => {
                                                     Đóng
                                                 </button>
                                                 <button
+                                                    v-if="order.status === 'draft' || order.status === 'confirmed'"
+                                                    @click.stop="openProcessModal(order)"
+                                                    class="bg-green-600 text-white px-4 py-1.5 rounded font-bold hover:bg-green-700 shadow-sm flex items-center gap-1"
+                                                >
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                                                    Xử lý đơn hàng
+                                                </button>
+                                                <button
                                                     v-if="
                                                         order.status !==
                                                             'cancelled' &&
@@ -1855,6 +1751,48 @@ const cancelOrder = (order) => {
                             v-html="link.label"
                         ></span>
                     </template>
+                </div>
+            </div>
+        </div>
+        <!-- Xử lý đơn hàng Modal -->
+        <div v-if="showProcessModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="showProcessModal = false">
+            <div class="bg-white rounded-lg shadow-xl w-[420px] max-w-full">
+                <div class="px-5 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">Xử lý đơn hàng → Hóa đơn</h3>
+                    <p class="text-sm text-gray-500 mt-1">Đơn {{ processingOrder?.code }} — {{ formatCurrency(processingOrder?.total_payment) }}</p>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Khách thanh toán</label>
+                        <MoneyInput v-model="processAmountPaid" :min="0" input-class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none text-right" />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Phương thức</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" v-model="processPaymentMethod" value="cash" class="text-blue-600" /> Tiền mặt
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" v-model="processPaymentMethod" value="transfer" class="text-blue-600" /> Chuyển khoản
+                            </label>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-600 bg-blue-50 p-3 rounded">
+                        <p>Còn nợ: <strong class="text-red-600">{{ formatCurrency((processingOrder?.total_payment || 0) - processAmountPaid) }}</strong></p>
+                    </div>
+                    <div v-if="processError" class="text-sm bg-red-50 border border-red-200 text-red-700 p-3 rounded space-y-1">
+                        <p class="font-semibold">Không thể xử lý đơn:</p>
+                        <p>{{ processError }}</p>
+                        <p v-if="processError.toLowerCase().includes('serial')" class="text-xs text-red-600">
+                            Đơn hàng có sản phẩm Serial/IMEI nhưng chưa chọn Serial/IMEI. Vui lòng bổ sung Serial/IMEI cho đơn trước khi xử lý.
+                        </p>
+                    </div>
+                </div>
+                <div class="px-5 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+                    <button @click="showProcessModal = false" class="px-4 py-2 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-100">Hủy</button>
+                    <button @click="submitProcessOrder" :disabled="isProcessing" class="px-4 py-2 text-sm bg-green-600 text-white rounded font-medium hover:bg-green-700 disabled:opacity-50">
+                        {{ isProcessing ? 'Đang xử lý...' : 'Tạo hóa đơn' }}
+                    </button>
                 </div>
             </div>
         </div>

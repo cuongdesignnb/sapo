@@ -1,26 +1,128 @@
 <script setup>
-import { ref, watch, reactive } from "vue";
+import { formatVND as formatCurrency } from '@/utils/money';
+import { ref, reactive, computed } from "vue";
 import { Head, router, Link } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
+import { useFilters } from "@/composables/useFilters.js";
 import axios from "axios";
 
 const props = defineProps({
     invoices: Object,
-    branches: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
-const search = ref(props.filters?.search || "");
-const sortBy = ref(props.filters?.sort_by || "");
-const sortDirection = ref(props.filters?.sort_direction || "");
+// Standardized sidebar filter state
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters || {},
+    route: "/invoices",
+    defaults: { date_filter: "all" },
+});
+
+const sidebarConfig = computed(() => [
+    {
+        key: "date",
+        type: "dateRange",
+        label: "Thời gian",
+        fields: { filter: "date_filter", from: "date_from", to: "date_to" },
+        zone: "quick",
+    },
+    {
+        key: "branch_id",
+        type: "select",
+        label: "Chi nhánh",
+        options: (props.filterOptions?.branches || []).map((b) => ({
+            value: String(b.id),
+            label: b.name,
+        })),
+        placeholder: "-- Tất cả chi nhánh --",
+        zone: "quick",
+    },
+    {
+        key: "status",
+        type: "checkbox",
+        label: "Trạng thái hóa đơn",
+        options: props.filterOptions?.statuses || [],
+        zone: "main",
+    },
+    {
+        key: "is_delivery",
+        type: "select",
+        label: "Loại hóa đơn",
+        options: props.filterOptions?.deliveryOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "has_debt",
+        type: "select",
+        label: "Công nợ",
+        options: props.filterOptions?.debtOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "payment_method",
+        type: "select",
+        label: "Hình thức thanh toán",
+        options: props.filterOptions?.paymentMethods || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "seller_key",
+        type: "select",
+        label: "Người bán",
+        options: (props.filterOptions?.sellers || []).map((s) => ({
+            value: s.key,
+            label: s.display_name || s.name,
+        })),
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "creator_key",
+        type: "select",
+        label: "Người tạo",
+        options: (props.filterOptions?.creators || []).map((c) => ({
+            value: c.key,
+            label: c.display_name || c.name,
+        })),
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+    {
+        key: "sales_channel",
+        type: "select",
+        label: "Kênh bán",
+        options: props.filterOptions?.salesChannels || [],
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+    {
+        key: "delivery_partner",
+        type: "select",
+        label: "Đối tác giao hàng",
+        options: [], // populated when partner list is available
+        placeholder: "-- Tất cả --",
+        zone: "advanced",
+    },
+]);
+
 const expandedRows = ref([]);
 const invoiceTabs = reactive({}); // { invoiceId: 'info' | 'payment' }
 const paymentHistoryData = reactive({});
 const paymentLoading = reactive({});
 
 const getInvoiceTab = (id) => invoiceTabs[id] || "info";
+const isInvoiceCancelled = (invoice) => invoice?.status === 'Đã hủy';
+const effectiveCustomerPaid = (invoice) => {
+    if (isInvoiceCancelled(invoice)) return 0;
+    return Number(invoice?.customer_paid || 0);
+};
 const setInvoiceTab = (id, tab) => {
     invoiceTabs[id] = tab;
     if (tab === "payment" && !paymentHistoryData[id]) loadPaymentHistory(id);
@@ -39,29 +141,7 @@ const loadPaymentHistory = async (invoiceId) => {
     paymentLoading[invoiceId] = false;
 };
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    router.get(
-        "/invoices",
-        { search: search.value, sort_by: field, sort_direction: direction },
-        { preserveState: true, replace: true },
-    );
-};
-
-let searchTimeout;
-const updateFilters = () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        router.get(
-            "/invoices",
-            { search: search.value, sort_by: sortBy.value, sort_direction: sortDirection.value },
-            { preserveState: true, replace: true },
-        );
-    }, 500);
-};
-
-watch(search, updateFilters);
+const handleSort = (field, direction) => setSort(field, direction);
 
 const toggleExpand = (id) => {
     const index = expandedRows.value.indexOf(id);
@@ -74,11 +154,63 @@ const toggleExpand = (id) => {
 
 const isExpanded = (id) => expandedRows.value.includes(id);
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString("vi-VN");
+
+// HOTFIX 24.3C — proper cancel modal that handles the time-lock override flow.
+// Native window.confirm couldn't collect time_lock_override_reason, so users
+// with override permission hit "Cần nhập lý do override" and were stuck.
+const showCancelModal = ref(false);
+const cancellingInvoice = ref(null);
+const cancelReason = ref('');
+const cancelError = ref('');
+const cancelSubmitting = ref(false);
 
 const cancelInvoice = (invoice) => {
-    if (!confirm(`Bạn có chắc muốn hủy hóa đơn ${invoice.code}?`)) return;
-    router.delete(`/invoices/${invoice.id}`, { preserveScroll: true });
+    cancellingInvoice.value = invoice;
+    cancelReason.value = '';
+    cancelError.value = '';
+    showCancelModal.value = true;
+};
+
+const closeCancelInvoiceModal = () => {
+    if (cancelSubmitting.value) return;
+    showCancelModal.value = false;
+    cancellingInvoice.value = null;
+    cancelReason.value = '';
+    cancelError.value = '';
+};
+
+const submitCancelInvoice = () => {
+    const inv = cancellingInvoice.value;
+    if (!inv) return;
+    if (inv.cancel_block_reason) return; // UI guard; backend also enforces
+    if (inv.requires_override_reason) {
+        const trimmed = (cancelReason.value || '').trim();
+        if (trimmed.length < 5) {
+            cancelError.value = 'Vui lòng nhập lý do override (ít nhất 5 ký tự).';
+            return;
+        }
+    }
+    cancelError.value = '';
+    cancelSubmitting.value = true;
+    router.delete(`/invoices/${inv.id}`, {
+        data: inv.requires_override_reason
+            ? { time_lock_override_reason: cancelReason.value.trim() }
+            : {},
+        preserveScroll: true,
+        onSuccess: () => {
+            showCancelModal.value = false;
+            cancellingInvoice.value = null;
+            cancelReason.value = '';
+        },
+        onError: (errors) => {
+            // Inertia surfaces validation errors; flash error comes via page props.
+            const flashErr = errors?.error || errors?.message;
+            cancelError.value = flashErr || 'Không thể hủy hóa đơn. Vui lòng kiểm tra lại.';
+        },
+        onFinish: () => {
+            cancelSubmitting.value = false;
+        },
+    });
 };
 
 const printInvoice = (invoice) => {
@@ -88,200 +220,56 @@ const printInvoice = (invoice) => {
         "width=400,height=600",
     );
 };
+
+// HOTFIX 24.30 — Change seller for an invoice
+const sellerUpdating = reactive({});
+const invoiceSellerOptions = computed(() => props.filterOptions?.invoiceSellerOptions || []);
+
+const currentSellerKey = (invoice) => {
+    if (invoice.seller_key) return invoice.seller_key;
+    if (invoice.created_by) return `employee:${invoice.created_by}`;
+    return '';
+};
+
+const changeSeller = async (invoice, newSellerKey) => {
+    if (!newSellerKey || sellerUpdating[invoice.id]) return;
+    if (newSellerKey === currentSellerKey(invoice)) return;
+
+    const oldName = invoice.seller_name || 'Chưa xác định';
+    const newOpt = invoiceSellerOptions.value.find(o => o.key === newSellerKey);
+    const newName = newOpt?.display_name || newOpt?.name || newSellerKey;
+
+    const confirmed = window.confirm(
+        `Bạn có chắc muốn đổi người bán của hóa đơn ${invoice.code} từ "${oldName}" sang "${newName}"?\n\nThay đổi này sẽ ảnh hưởng báo cáo doanh số/lợi nhuận theo nhân viên.`
+    );
+    if (!confirmed) return;
+
+    sellerUpdating[invoice.id] = true;
+    try {
+        const { data } = await axios.patch(`/invoices/${invoice.id}/seller`, {
+            seller_key: newSellerKey,
+        });
+        invoice.created_by = data.created_by;
+        invoice.seller_name = data.seller_name;
+        invoice.seller_key = data.seller_key;
+    } catch (e) {
+        const msg = e.response?.data?.message || 'Không thể đổi người bán. Vui lòng thử lại.';
+        alert(msg);
+    }
+    sellerUpdating[invoice.id] = false;
+};
 </script>
 
 <template>
     <Head title="Hóa đơn - KiotViet Clone" />
     <AppLayout>
         <template #sidebar>
-            <!-- Lọc CHI NHÁNH -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Chi nhánh</label
-                >
-                <div class="flex items-center">
-                    <select
-                        class="w-full border border-gray-300 rounded p-1.5 text-[13px] outline-none text-gray-700 font-medium"
-                    >
-                        <option
-                            v-for="branch in branches"
-                            :key="branch.id"
-                            :value="branch.id"
-                        >
-                            {{ branch.name }}
-                        </option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Lọc THỜI GIAN -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <div class="flex items-center justify-between mb-2">
-                    <label class="block text-[13px] font-bold text-gray-800"
-                        >Thời gian</label
-                    >
-                    <svg
-                        class="w-3.5 h-3.5 text-blue-600 cursor-pointer"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                    >
-                        <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M19 9l-7 7-7-7"
-                        ></path>
-                    </svg>
-                </div>
-                <div class="space-y-2 text-[13px] text-gray-700">
-                    <label
-                        class="flex items-center justify-between gap-2 cursor-pointer p-1.5 border border-gray-300 rounded hover:border-blue-500"
-                    >
-                        <div class="flex items-center gap-2">
-                            <input
-                                type="radio"
-                                value="last_year"
-                                name="time"
-                                checked
-                                class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Năm trước (âm lịch)
-                        </div>
-                        <svg
-                            class="w-4 h-4 text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M9 5l7 7-7 7"
-                            ></path>
-                        </svg>
-                    </label>
-                    <label
-                        class="flex items-center justify-between gap-2 cursor-pointer p-1.5 border border-gray-300 rounded hover:border-blue-500 text-gray-500"
-                    >
-                        <div class="flex items-center gap-2">
-                            <input
-                                type="radio"
-                                value="custom"
-                                name="time"
-                                class="text-blue-600 focus:ring-blue-500 w-4 h-4"
-                            />
-                            Tùy chỉnh
-                        </div>
-                        <svg
-                            class="w-4 h-4 text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            ></path>
-                        </svg>
-                    </label>
-                </div>
-            </div>
-
-            <!-- LOẠI HÓA ĐƠN -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Loại hóa đơn</label
-                >
-                <div class="space-y-1.5">
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Không giao hàng
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Giao hàng
-                    </label>
-                </div>
-            </div>
-
-            <!-- Lọc TRẠNG THÁI -->
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Trạng thái hóa đơn</label
-                >
-                <div class="space-y-1.5">
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Đang xử lý
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            checked
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Hoàn thành
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Không giao được
-                    </label>
-                    <label
-                        class="flex items-center gap-2 cursor-pointer text-[13px] text-gray-700"
-                    >
-                        <input
-                            type="checkbox"
-                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        Đã hủy
-                    </label>
-                </div>
-            </div>
-
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Trạng thái giao hàng</label
-                >
-                <select
-                    class="w-full border border-gray-300 rounded p-1.5 text-[13px] outline-none text-gray-500"
-                >
-                    <option value="">Chọn trạng thái</option>
-                </select>
-            </div>
-
-            <div class="px-3 py-4 border-b border-gray-200">
-                <label class="block text-[13px] font-bold text-gray-800 mb-2"
-                    >Đối tác giao hàng</label
-                >
+            <div class="p-3">
+                <SidebarFilter
+                    v-model="filters"
+                    :config="sidebarConfig"
+                    @reset="reset"
+                />
             </div>
         </template>
 
@@ -307,7 +295,7 @@ const printInvoice = (invoice) => {
                     </svg>
                     <input
                         type="text"
-                        v-model="search"
+                        v-model="filters.search"
                         placeholder="Theo mã hóa đơn, mã KH, tên KH, sđt..."
                         class="w-full pl-9 pr-8 py-1.5 focus:outline-none border border-gray-300 rounded text-sm placeholder-gray-400"
                     />
@@ -375,13 +363,13 @@ const printInvoice = (invoice) => {
                                     class="rounded border-gray-300"
                                 />
                             </th>
-                            <SortableHeader label="Mã hóa đơn" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
-                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Mã hóa đơn" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
+                            <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Khách hàng</th>
-                            <SortableHeader label="Tổng tiền hàng" field="subtotal" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Giảm giá" field="discount" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Tổng sau giảm giá" field="total" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Khách đã trả" field="customer_paid" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng tiền hàng" field="subtotal" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Giảm giá" field="discount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Tổng sau giảm giá" field="total" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Khách đã trả" field="customer_paid" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
@@ -479,7 +467,17 @@ const printInvoice = (invoice) => {
                                     {{ formatCurrency(invoice.total) }}
                                 </td>
                                 <td class="px-4 py-2 text-right">
-                                    {{ formatCurrency(invoice.customer_paid) }}
+                                    <div class="text-right">
+                                        <div>
+                                            {{ formatCurrency(effectiveCustomerPaid(invoice)) }}
+                                        </div>
+                                        <div
+                                            v-if="isInvoiceCancelled(invoice) && Number(invoice.customer_paid || 0) > 0"
+                                            class="text-[11px] text-gray-400 font-normal"
+                                        >
+                                            Trước hủy: {{ formatCurrency(invoice.customer_paid) }}
+                                        </div>
+                                    </div>
                                 </td>
                             </tr>
                             <tr
@@ -602,7 +600,7 @@ const printInvoice = (invoice) => {
                                                             class="text-gray-800"
                                                             >{{
                                                                 invoice.created_by_name ||
-                                                                "Trần Văn Tiến"
+                                                                "Không rõ"
                                                             }}</span
                                                         >
                                                     </div>
@@ -615,12 +613,20 @@ const printInvoice = (invoice) => {
                                                         >
                                                         <select
                                                             class="border border-gray-300 rounded px-2 py-0.5 outline-none flex-1"
+                                                            :class="{ 'opacity-50': sellerUpdating[invoice.id] }"
+                                                            :disabled="sellerUpdating[invoice.id] || invoice.status === 'Đã hủy'"
+                                                            :value="currentSellerKey(invoice)"
+                                                            @change="changeSeller(invoice, $event.target.value)"
                                                         >
-                                                            <option>
-                                                                {{
-                                                                    invoice.seller_name ||
-                                                                    "Trần Văn Tiến"
-                                                                }}
+                                                            <option value="" disabled>
+                                                                {{ invoice.seller_name || "Chưa xác định người bán" }}
+                                                            </option>
+                                                            <option
+                                                                v-for="opt in invoiceSellerOptions"
+                                                                :key="opt.key"
+                                                                :value="opt.key"
+                                                            >
+                                                                {{ opt.display_name || opt.name }}
                                                             </option>
                                                         </select>
                                                     </div>
@@ -934,22 +940,21 @@ const printInvoice = (invoice) => {
                                                                 }}</span
                                                             >
                                                         </div>
-                                                        <div
-                                                            class="flex justify-between py-1.5 text-gray-500"
-                                                        >
-                                                            <span
-                                                                >Khách đã
-                                                                trả</span
-                                                            >
-                                                            <span
-                                                                class="text-gray-800 font-medium"
-                                                                >{{
-                                                                    formatCurrency(
-                                                                        invoice.customer_paid,
-                                                                    )
-                                                                }}</span
-                                                            >
-                                                        </div>
+                                                        <div class="flex justify-between py-1.5 text-gray-500">
+                                                             <span>
+                                                                 {{ isInvoiceCancelled(invoice) ? 'Khách đã trả hiệu lực' : 'Khách đã trả' }}
+                                                             </span>
+                                                             <span class="text-gray-800 font-medium">
+                                                                 {{ formatCurrency(effectiveCustomerPaid(invoice)) }}
+                                                             </span>
+                                                         </div>
+                                                         <div
+                                                             v-if="isInvoiceCancelled(invoice) && Number(invoice.customer_paid || 0) > 0"
+                                                             class="flex justify-between py-1 text-xs text-gray-400 font-normal"
+                                                         >
+                                                             <span>Đã trả trước hủy</span>
+                                                             <span>{{ formatCurrency(invoice.customer_paid) }}</span>
+                                                         </div>
                                                     </div>
                                                 </div>
 
@@ -1075,6 +1080,12 @@ const printInvoice = (invoice) => {
                                                     "
                                                 >
                                                     <div
+                                                        v-if="invoice.status === 'Đã hủy' && Number(invoice.customer_paid || 0) > 0"
+                                                        class="mb-3 text-xs text-yellow-600 bg-yellow-50 p-2.5 border border-yellow-200 rounded font-medium"
+                                                    >
+                                                        Hóa đơn đã hủy. Khoản đã trả trước hủy chỉ còn là snapshot, không còn hiệu lực trong sổ quỹ.
+                                                    </div>
+                                                    <div
                                                         v-if="
                                                             !paymentHistoryData[
                                                                 invoice.id
@@ -1130,9 +1141,16 @@ const printInvoice = (invoice) => {
                                                                 :key="p.id"
                                                             >
                                                                 <td
-                                                                    class="px-3 py-2 text-blue-600"
+                                                                    class="px-3 py-2 text-blue-600 font-medium"
+                                                                    :class="{ 'text-gray-400 line-through': p.is_cancelled || p.status === 'cancelled' }"
                                                                 >
                                                                     {{ p.code }}
+                                                                    <span
+                                                                        v-if="p.status === 'cancelled' || p.is_cancelled"
+                                                                        class="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-600 inline-block"
+                                                                    >
+                                                                        Đã hủy
+                                                                    </span>
                                                                 </td>
                                                                 <td
                                                                     class="px-3 py-2 text-gray-500"
@@ -1155,6 +1173,7 @@ const printInvoice = (invoice) => {
                                                                 </td>
                                                                 <td
                                                                     class="px-3 py-2 text-right font-medium"
+                                                                    :class="p.is_cancelled || p.status === 'cancelled' ? 'text-gray-400 line-through' : 'text-gray-800'"
                                                                 >
                                                                     {{
                                                                         formatCurrency(
@@ -1228,6 +1247,92 @@ const printInvoice = (invoice) => {
                             v-html="link.label"
                         ></span>
                     </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- HOTFIX 24.3C — Cancel invoice modal (replaces window.confirm) -->
+        <div
+            v-if="showCancelModal && cancellingInvoice"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+        >
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-lg">
+                <div class="flex items-center justify-between px-6 py-4 border-b">
+                    <h3 class="text-lg font-bold text-gray-800">Hủy hóa đơn</h3>
+                    <button
+                        @click="closeCancelInvoiceModal"
+                        class="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+                        :disabled="cancelSubmitting"
+                    >&times;</button>
+                </div>
+
+                <div class="px-6 py-4 space-y-3 text-sm">
+                    <div class="grid grid-cols-2 gap-y-1 gap-x-4">
+                        <div class="text-gray-500">Mã hóa đơn</div>
+                        <div class="font-semibold text-gray-800">{{ cancellingInvoice.code }}</div>
+                        <div class="text-gray-500">Khách hàng</div>
+                        <div class="text-gray-800">{{ cancellingInvoice.customer?.name || 'Khách lẻ' }}</div>
+                        <div class="text-gray-500">Tổng tiền</div>
+                        <div class="text-gray-800 tabular-nums">{{ Number(cancellingInvoice.total || 0).toLocaleString('vi-VN') }} ₫</div>
+                        <div class="text-gray-500">Trạng thái</div>
+                        <div class="text-gray-800">{{ cancellingInvoice.status }}</div>
+                    </div>
+
+                    <div class="px-3 py-2 bg-amber-50 border border-amber-200 rounded text-amber-800 text-xs">
+                        Hủy hóa đơn sẽ đảo tồn kho, serial/IMEI, công nợ, dòng tiền và báo cáo liên quan.
+                    </div>
+
+                    <div
+                        v-if="cancellingInvoice.cancel_block_reason"
+                        class="px-3 py-2 bg-red-50 border border-red-200 rounded text-red-700 text-sm"
+                    >
+                        {{ cancellingInvoice.cancel_block_reason }}
+                    </div>
+
+                    <template v-else>
+                        <div
+                            v-if="cancellingInvoice.is_time_locked"
+                            class="px-3 py-2 bg-orange-50 border border-orange-200 rounded text-orange-800 text-xs"
+                        >
+                            Hóa đơn đã quá thời gian cho phép hủy ({{ cancellingInvoice.order_change_time_hours }} giờ — đã trôi {{ cancellingInvoice.lock_age_hours }} giờ). Cần lý do override.
+                        </div>
+
+                        <div v-if="cancellingInvoice.requires_override_reason">
+                            <label class="block text-xs font-medium text-gray-700 mb-1">
+                                Lý do override <span class="text-red-500">*</span>
+                            </label>
+                            <textarea
+                                v-model="cancelReason"
+                                rows="3"
+                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                placeholder="Nhập lý do hủy quá hạn (ít nhất 5 ký tự)"
+                                :disabled="cancelSubmitting"
+                            ></textarea>
+                            <p class="mt-1 text-xs text-gray-400">Tối thiểu 5 ký tự. Sẽ ghi vào nhật ký hệ thống.</p>
+                        </div>
+                    </template>
+
+                    <div
+                        v-if="cancelError"
+                        class="px-3 py-2 bg-red-50 border border-red-200 rounded text-red-700 text-sm"
+                    >
+                        {{ cancelError }}
+                    </div>
+                </div>
+
+                <div class="px-6 py-3 border-t bg-gray-50 flex items-center justify-end gap-2 rounded-b-lg">
+                    <button
+                        @click="closeCancelInvoiceModal"
+                        :disabled="cancelSubmitting"
+                        class="px-4 py-2 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                    >Đóng</button>
+                    <button
+                        @click="submitCancelInvoice"
+                        :disabled="cancelSubmitting || !!cancellingInvoice.cancel_block_reason"
+                        class="px-5 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {{ cancelSubmitting ? 'Đang hủy...' : 'Xác nhận hủy' }}
+                    </button>
                 </div>
             </div>
         </div>

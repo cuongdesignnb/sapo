@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 
 const page = usePage();
@@ -8,7 +9,7 @@ const props = defineProps({
 
 const ret = props.purchaseReturn;
 
-const formatCurrency = (val) => Number(val || 0).toLocaleString('vi-VN');
+
 const getReturnedSerials = (item) => (ret.returned_serials || []).filter(s => s.product_id === item.product_id);
 const formatStatus = (status) => {
     const map = { completed: 'Đã trả hàng', draft: 'Phiếu tạm', cancelled: 'Đã hủy' };
@@ -65,8 +66,8 @@ const cancelReturn = () => {
                             <div class="font-medium">{{ ret.user?.name || '—' }}</div>
                         </div>
                         <div>
-                            <div class="text-gray-400 mb-1">Nhân viên trả</div>
-                            <div class="font-medium">{{ ret.employee?.name || '—' }}</div>
+                            <div class="text-gray-400 mb-1">Người trả hàng</div>
+                            <div class="font-medium">{{ ret.employee?.name || ret.user?.name || '—' }}</div>
                         </div>
                         <div>
                             <div class="text-gray-400 mb-1">Nhà cung cấp</div>

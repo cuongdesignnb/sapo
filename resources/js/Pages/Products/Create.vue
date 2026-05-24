@@ -4,6 +4,7 @@ import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import MediaLibrary from '../../Components/MediaLibrary.vue';
+import MoneyInput from '../../Components/MoneyInput.vue';
 
 const props = defineProps({
     type: {
@@ -39,7 +40,37 @@ const form = useForm({
     base_unit_name: '',
     units: [],
     variants: [],
+    // Step 24.9 — warranty / maintenance config
+    warranty_months: 0,
+    warranty_policies: [],
+    maintenance_policies: [],
 });
+
+// Step 24.9 — warranty/maintenance row helpers + active product tab
+const productActiveTab = ref('info'); // 'info' | 'warranty'
+const addWarrantyPolicy = () => {
+    form.warranty_policies.push({
+        name: form.warranty_policies.length === 0 ? 'Toàn bộ sản phẩm' : '',
+        duration_value: 1,
+        duration_unit: 'month',
+        is_default: form.warranty_policies.length === 0,
+    });
+};
+const removeWarrantyPolicy = (i) => {
+    form.warranty_policies.splice(i, 1);
+    if (form.warranty_policies.length && !form.warranty_policies.some((r) => r.is_default)) {
+        form.warranty_policies[0].is_default = true;
+    }
+};
+const setDefaultWarrantyPolicy = (i) => {
+    form.warranty_policies.forEach((r, idx) => { r.is_default = idx === i; });
+};
+const addMaintenancePolicy = () => {
+    form.maintenance_policies.push({ name: '', duration_value: 1, duration_unit: 'month' });
+};
+const removeMaintenancePolicy = (i) => {
+    form.maintenance_policies.splice(i, 1);
+};
 
 // Reactive local copies for inline creation
 const localCategories = ref([...(props.categories || [])]);
@@ -302,7 +333,22 @@ const generateVariants = () => {
                     <!-- Cột Phải: Thông tin chi tiết -->
                     <div class="w-3/4">
                         <div class="bg-white rounded border border-gray-200 shadow-sm overflow-hidden pointer-events-auto">
-                            <div class="p-6">
+                            <!-- Step 24.9 — Tab strip: Thông tin / Bảo hành, bảo trì -->
+                            <div class="flex items-center border-b border-gray-200 bg-gray-50 px-4">
+                                <button
+                                    type="button"
+                                    @click="productActiveTab = 'info'"
+                                    :class="productActiveTab === 'info' ? 'text-blue-600 border-b-2 border-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                                    class="px-4 py-3 text-sm transition-colors"
+                                >Thông tin</button>
+                                <button
+                                    type="button"
+                                    @click="productActiveTab = 'warranty'"
+                                    :class="productActiveTab === 'warranty' ? 'text-blue-600 border-b-2 border-blue-600 font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                                    class="px-4 py-3 text-sm transition-colors"
+                                >Bảo hành, bảo trì</button>
+                            </div>
+                            <div v-show="productActiveTab === 'info'" class="p-6">
                                 <div class="grid grid-cols-2 gap-x-8 gap-y-6">
                                     <!-- Tên hàng -->
                                     <div class="col-span-2">
@@ -402,7 +448,7 @@ const generateVariants = () => {
                                                 </div>
                                                 <div class="col-span-2">
                                                     <label class="block text-[11px] text-gray-500 uppercase font-bold mb-1">Giá bán đơn vị</label>
-                                                    <input type="number" v-model="unit.retail_price" class="w-full border border-gray-300 rounded p-1.5 text-sm text-right">
+                                                    <MoneyInput v-model="unit.retail_price" input-class="w-full border border-gray-300 rounded p-1.5 text-sm text-right" />
                                                 </div>
                                                 <div class="col-span-1 flex justify-center pb-1.5">
                                                     <button type="button" @click="removeUnit(index)" class="text-red-500 hover:text-red-700">
@@ -418,41 +464,35 @@ const generateVariants = () => {
                                     <!-- Giá vốn & Giá bán -->
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.cost_price" 
+                                        <MoneyInput v-model="form.cost_price" suffix
                                                    :disabled="($page.props.app_settings?.inventory_costing_method === 'average')"
-                                                   :class="{'bg-gray-50 text-gray-400 cursor-not-allowed': ($page.props.app_settings?.inventory_costing_method === 'average')}"
-                                                   class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                                   :input-class="'w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold' + (($page.props.app_settings?.inventory_costing_method === 'average') ? ' bg-gray-50 text-gray-400 cursor-not-allowed' : '')"
+                                        />
                                         <p v-if="$page.props.app_settings?.inventory_costing_method === 'average'" class="text-[11px] text-gray-400 mt-1 italic">Tự động tính theo Giá vốn trung bình</p>
                                         <span v-if="form.errors.cost_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.cost_price }}</span>
                                     </div>
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán <span class="text-red-500">*</span></label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.retail_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base text-blue-700 font-bold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.retail_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base text-blue-700 font-bold"
+                                        />
                                         <span v-if="form.errors.retail_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.retail_price }}</span>
                                     </div>
 
                                     <!-- Giá bán lẻ (conditional) -->
                                     <div v-if="showRetailPrice">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán lẻ</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.retail_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.retail_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-right text-base font-semibold"
+                                        />
                                     </div>
 
                                     <!-- Giá thợ (conditional) -->
                                     <div v-if="showTechnicianPrice">
                                         <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
-                                        <div class="relative">
-                                            <input type="number" v-model="form.technician_price" class="w-full border border-gray-300 rounded p-2 pr-10 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none transition-shadow text-right text-base font-semibold text-purple-700">
-                                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">₫</span>
-                                        </div>
+                                        <MoneyInput v-model="form.technician_price" suffix
+                                                   input-class="w-full border border-gray-300 rounded p-2 pr-7 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none transition-shadow text-right text-base font-semibold text-purple-700"
+                                        />
                                         <span v-if="form.errors.technician_price" class="text-red-500 text-xs mt-1 block">{{ form.errors.technician_price }}</span>
                                     </div>
 
@@ -528,8 +568,8 @@ const generateVariants = () => {
                                                             <tr v-for="(v, vi) in form.variants" :key="vi" class="border-t border-gray-100">
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.name" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
                                                                 <td class="px-2 py-1"><input type="text" v-model="v.sku" placeholder="Tự động" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm"></td>
-                                                                <td class="px-2 py-1"><input type="number" v-model="v.cost_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
-                                                                <td class="px-2 py-1"><input type="number" v-model="v.retail_price" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
+                                                                <td class="px-2 py-1"><MoneyInput v-model="v.cost_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
+                                                                <td class="px-2 py-1"><MoneyInput v-model="v.retail_price" input-class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right" /></td>
                                                                 <td class="px-2 py-1"><input type="number" v-model="v.stock_quantity" class="w-full border border-gray-200 rounded px-1.5 py-1 text-sm text-right"></td>
                                                             </tr>
                                                         </tbody>
@@ -558,6 +598,104 @@ const generateVariants = () => {
                                         </div>
                                     </template>
                                 </div>
+                            </div>
+
+                            <!-- ════ Step 24.9 — Bảo hành, bảo trì tab ════ -->
+                            <div v-show="productActiveTab === 'warranty'" class="p-6 space-y-8">
+                                <!-- Bảo hành -->
+                                <section>
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h3 class="text-sm font-bold text-gray-800 uppercase tracking-wide">Bảo hành</h3>
+                                        <button type="button" @click="addWarrantyPolicy" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                                            Thêm mốc
+                                        </button>
+                                    </div>
+                                    <div v-if="form.warranty_policies.length === 0" class="border border-dashed border-gray-300 rounded p-6 text-center text-gray-400 text-sm">
+                                        Chưa có bảo hành nào. Bấm "+ Thêm mốc" để cấu hình.
+                                    </div>
+                                    <table v-else class="w-full text-sm border border-gray-200 rounded overflow-hidden">
+                                        <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">Bảo hành</th>
+                                                <th class="px-3 py-2 text-center w-40">Thời hạn bảo hành</th>
+                                                <th class="px-3 py-2 text-center w-24">Mặc định</th>
+                                                <th class="px-3 py-2 w-12"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-gray-100">
+                                            <tr v-for="(p, i) in form.warranty_policies" :key="'w-' + i">
+                                                <td class="px-3 py-2">
+                                                    <input v-model="p.name" type="text" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Toàn bộ sản phẩm" />
+                                                </td>
+                                                <td class="px-3 py-2">
+                                                    <div class="flex items-center gap-1">
+                                                        <input v-model.number="p.duration_value" type="number" min="0" max="1200" class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                                                        <select v-model="p.duration_unit" class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                                            <option value="day">Ngày</option>
+                                                            <option value="month">Tháng</option>
+                                                            <option value="year">Năm</option>
+                                                        </select>
+                                                    </div>
+                                                </td>
+                                                <td class="px-3 py-2 text-center">
+                                                    <input type="radio" :checked="p.is_default" @change="setDefaultWarrantyPolicy(i)" name="warranty_default_create" class="w-4 h-4 text-blue-600 focus:ring-blue-500" />
+                                                </td>
+                                                <td class="px-3 py-2 text-center">
+                                                    <button type="button" @click="removeWarrantyPolicy(i)" class="text-gray-400 hover:text-red-600" title="Xóa">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                    <p class="mt-2 text-xs text-gray-400">Mốc mặc định được dùng để tính ngày kết thúc bảo hành cho mỗi hóa đơn bán. Các mốc khác lưu cùng để in/hiển thị chính sách.</p>
+                                </section>
+
+                                <!-- Bảo trì -->
+                                <section>
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h3 class="text-sm font-bold text-gray-800 uppercase tracking-wide">Bảo trì định kỳ</h3>
+                                        <button type="button" @click="addMaintenancePolicy" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                                            Thêm mốc
+                                        </button>
+                                    </div>
+                                    <div v-if="form.maintenance_policies.length === 0" class="border border-dashed border-gray-300 rounded p-6 text-center text-gray-400 text-sm">
+                                        Chưa có bảo trì nào.
+                                    </div>
+                                    <table v-else class="w-full text-sm border border-gray-200 rounded overflow-hidden">
+                                        <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">Bảo trì định kỳ</th>
+                                                <th class="px-3 py-2 text-center w-40">Thời gian bảo trì</th>
+                                                <th class="px-3 py-2 w-12"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-gray-100">
+                                            <tr v-for="(p, i) in form.maintenance_policies" :key="'m-' + i">
+                                                <td class="px-3 py-2">
+                                                    <input v-model="p.name" type="text" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Vệ sinh định kỳ" />
+                                                </td>
+                                                <td class="px-3 py-2">
+                                                    <div class="flex items-center gap-1">
+                                                        <input v-model.number="p.duration_value" type="number" min="1" max="1200" class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                                                        <select v-model="p.duration_unit" class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                                            <option value="day">Ngày</option>
+                                                            <option value="month">Tháng</option>
+                                                            <option value="year">Năm</option>
+                                                        </select>
+                                                    </div>
+                                                </td>
+                                                <td class="px-3 py-2 text-center">
+                                                    <button type="button" @click="removeMaintenancePolicy(i)" class="text-gray-400 hover:text-red-600" title="Xóa">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </section>
                             </div>
                         </div>
                     </div>

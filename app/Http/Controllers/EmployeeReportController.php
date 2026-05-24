@@ -3,27 +3,37 @@
 namespace App\Http\Controllers;
 
 use App\Models\Branch;
-use App\Models\Employee;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\OrderReturn;
+use App\Support\Reports\SellerResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
+/**
+ * HOTFIX 24.26 — Refactored to use SellerResolver for all seller-related logic.
+ * All aggregation now uses prefixed seller keys (employee:N, user:N, orphan:Name)
+ * to avoid ambiguity between employees.id and users.id.
+ */
 class EmployeeReportController extends Controller
 {
+    private SellerResolver $sellers;
+
+    public function __construct()
+    {
+        $this->sellers = new SellerResolver();
+    }
+
     public function index(Request $request)
     {
-        $concern     = $request->input('concern', 'sales');       // sales | profit | items
-        $period      = $request->input('period', 'this_month');
-        $dateFrom    = $request->input('date_from');
-        $dateTo      = $request->input('date_to');
-        $branchId    = $request->input('branch_id');
-        $employeeId  = $request->input('employee_id');
+        $concern      = $request->input('concern', 'sales');       // sales | profit | items
+        $period       = $request->input('period', 'this_month');
+        $dateFrom     = $request->input('date_from');
+        $dateTo       = $request->input('date_to');
+        $branchId     = $request->input('branch_id');
+        $employeeId   = $request->input('employee_id');
         $salesChannel = $request->input('sales_channel');
-        $viewMode    = $request->input('view', 'chart');
+        $viewMode     = $request->input('view', 'chart');
 
         [$startDate, $endDate, $periodLabel] = $this->resolvePeriod($period, $dateFrom, $dateTo);
 
@@ -32,14 +42,26 @@ class EmployeeReportController extends Controller
             ->where('status', '!=', 'Đã hủy');
         if ($branchId) $invoiceQ->where('branch_id', $branchId);
         if ($salesChannel) $invoiceQ->where('sales_channel', $salesChannel);
+
+        // HOTFIX 24.26 — filter by seller using SellerResolver
         if ($employeeId) {
-            $invoiceQ->where('created_by', $employeeId);
+            $invoiceQ = $this->sellers->filterBySeller($invoiceQ, $employeeId);
         }
 
         // Returns query
         $returnQ = OrderReturn::whereBetween('created_at', [$startDate, $endDate])
             ->where('status', '!=', 'Đã hủy');
         if ($branchId) $returnQ->where('branch_id', $branchId);
+
+        // HOTFIX 24.31 — scope returns by the same seller and sales_channel
+        // as the invoice query. Otherwise returns of seller B leak into a
+        // report filtered for seller A and create phantom negative rows.
+        if ($employeeId) {
+            $returnQ = $this->sellers->filterReturnsBySeller($returnQ, $employeeId);
+        }
+        if ($salesChannel) {
+            $returnQ = $this->sellers->filterReturnsByInvoiceSalesChannel($returnQ, $salesChannel);
+        }
 
         // Build data
         switch ($concern) {
@@ -60,11 +82,11 @@ class EmployeeReportController extends Controller
         $summary = $this->buildSummary($reportRows);
 
         // Filter options (dynamic)
-        $branches     = Branch::orderBy('name')->get(['id', 'name']);
-        $employees    = Employee::orderBy('name')->get(['id', 'name', 'code']);
+        $branches      = Branch::orderBy('name')->get(['id', 'name']);
+        $employees     = $this->sellers->buildSellerFilterOptions();
         $salesChannels = Invoice::whereNotNull('sales_channel')
             ->distinct()->pluck('sales_channel')->filter()->values();
-        $branchName   = $branchId ? (Branch::find($branchId)?->name ?? 'N/A') : 'Tất cả chi nhánh';
+        $branchName    = $branchId ? (Branch::find($branchId)?->name ?? 'N/A') : 'Tất cả chi nhánh';
 
         return Inertia::render('Reports/EmployeeReport', [
             'filters' => [
@@ -95,22 +117,22 @@ class EmployeeReportController extends Controller
     // ═══════════════════════════════════════
     private function buildSalesData($invoiceQ, $returnQ)
     {
-        $empRevenue = $this->getRevenueByEmployee(clone $invoiceQ);
-        $empReturns = $this->getReturnsByEmployee(clone $returnQ);
+        $empRevenue = $this->sellers->aggregateBySeller(clone $invoiceQ, 'SUM(total)');
+        $empReturns = $this->sellers->aggregateReturnsBySeller(clone $returnQ, 'SUM(total)');
 
         $merged = [];
-        foreach ($empRevenue as $empId => $rev) {
-            $ret = $empReturns[$empId] ?? 0;
-            $merged[$empId] = $rev - $ret;
+        $allKeys = array_unique(array_merge(array_keys($empRevenue), array_keys($empReturns)));
+        foreach ($allKeys as $key) {
+            $merged[$key] = ($empRevenue[$key] ?? 0) - ($empReturns[$key] ?? 0);
         }
         arsort($merged);
         $top = array_slice($merged, 0, 10, true);
 
+        $sellerMeta = $this->sellers->sellerMeta(array_keys($top));
         $labels = [];
         $data   = [];
-        $empNames = Employee::whereIn('id', array_keys($top))->pluck('name', 'id');
-        foreach ($top as $empId => $net) {
-            $labels[] = $empNames[$empId] ?? "NV #{$empId}";
+        foreach ($top as $key => $net) {
+            $labels[] = $sellerMeta[$key]['display_name'] ?? $sellerMeta[$key]['name'] ?? $key;
             $data[]   = $net;
         }
 
@@ -124,91 +146,111 @@ class EmployeeReportController extends Controller
 
     private function buildSalesReportRows($invoiceQ, $returnQ)
     {
-        $empRevenue = $this->getRevenueByEmployee(clone $invoiceQ);
-        $empReturns = $this->getReturnsByEmployee(clone $returnQ);
+        $empRevenue = $this->sellers->aggregateBySeller(clone $invoiceQ, 'SUM(total)');
+        $empReturns = $this->sellers->aggregateReturnsBySeller(clone $returnQ, 'SUM(total)');
 
-        $allIds = array_unique(array_merge(array_keys($empRevenue), array_keys($empReturns)));
-        $employees = Employee::whereIn('id', $allIds)->get(['id', 'name', 'code'])->keyBy('id');
+        $allKeys   = array_unique(array_merge(array_keys($empRevenue), array_keys($empReturns)));
+        $sellerMeta = $this->sellers->sellerMeta($allKeys);
 
         $rows = [];
-        foreach ($allIds as $empId) {
-            $emp = $employees[$empId] ?? null;
-            $rev = $empRevenue[$empId] ?? 0;
-            $ret = $empReturns[$empId] ?? 0;
+        foreach ($allKeys as $key) {
+            $meta = $sellerMeta[$key] ?? null;
+            $rev  = $empRevenue[$key] ?? 0;
+            $ret  = $empReturns[$key] ?? 0;
             $rows[] = [
-                'id'      => $empId,
-                'code'    => $emp?->code ?? "NV{$empId}",
-                'name'    => $emp?->name ?? "Nhân viên #{$empId}",
-                'revenue' => $rev,
-                'returns' => $ret,
-                'net'     => $rev - $ret,
+                'id'           => $key,
+                'seller_key'   => $key,
+                'code'         => $meta['code'] ?? 'UNK',
+                'name'         => $meta['display_name'] ?? $meta['name'] ?? $key,
+                'seller_type'  => $meta['type'] ?? 'unknown',
+                'seller_code'  => $meta['code'] ?? 'UNK',
+                'seller_name'  => $meta['name'] ?? $key,
+                'revenue'      => $rev,
+                'returns'      => $ret,
+                'net'          => $rev - $ret,
             ];
         }
-        usort($rows, fn($a, $b) => $b['net'] <=> $a['net']);
+        usort($rows, fn ($a, $b) => $b['net'] <=> $a['net']);
         return $rows;
     }
 
     // ═══════════════════════════════════════
-    // Profit: Revenue minus cost per employee
+    // Profit: KiotViet 8-column report per employee
     // ═══════════════════════════════════════
     private function buildProfitData($invoiceQ, $returnQ)
     {
-        $empRevenue = $this->getRevenueByEmployee(clone $invoiceQ);
-        $empCosts   = $this->getCostByEmployee(clone $invoiceQ);
-        $empReturns = $this->getReturnsByEmployee(clone $returnQ);
+        $rows = $this->buildProfitReportRows($invoiceQ, $returnQ);
 
-        $merged = [];
-        $allIds = array_unique(array_merge(array_keys($empRevenue), array_keys($empCosts)));
-        foreach ($allIds as $empId) {
-            $rev  = $empRevenue[$empId] ?? 0;
-            $cost = $empCosts[$empId] ?? 0;
-            $ret  = $empReturns[$empId] ?? 0;
-            $merged[$empId] = ($rev - $ret) - $cost;
-        }
-        arsort($merged);
-        $top = array_slice($merged, 0, 10, true);
+        usort($rows, fn ($a, $b) => $b['gross_profit'] <=> $a['gross_profit']);
+        $top = array_slice($rows, 0, 10);
 
         $labels = [];
         $data   = [];
-        $empNames = Employee::whereIn('id', array_keys($top))->pluck('name', 'id');
-        foreach ($top as $empId => $profit) {
-            $labels[] = $empNames[$empId] ?? "NV #{$empId}";
-            $data[]   = $profit;
+        foreach ($top as $row) {
+            $labels[] = $row['name']; // already display_name from buildProfitReportRows
+            $data[]   = $row['gross_profit'];
         }
 
         return [
             'title'    => 'Top 10 nhân viên lợi nhuận cao nhất',
             'labels'   => $labels,
-            'datasets' => [['label' => 'Lợi nhuận', 'data' => $data]],
+            'datasets' => [['label' => 'Lợi nhuận gộp', 'data' => $data]],
             'type'     => 'horizontal_bar',
         ];
     }
 
     private function buildProfitReportRows($invoiceQ, $returnQ)
     {
-        $empRevenue = $this->getRevenueByEmployee(clone $invoiceQ);
-        $empCosts   = $this->getCostByEmployee(clone $invoiceQ);
-        $empReturns = $this->getReturnsByEmployee(clone $returnQ);
+        $empGrossRevenue     = $this->sellers->aggregateBySeller(clone $invoiceQ, 'SUM(subtotal)');
+        $empInvoiceDiscount  = $this->sellers->aggregateBySeller(clone $invoiceQ, 'SUM(discount)');
+        $empReturnSubtotal   = $this->sellers->aggregateReturnsBySeller(clone $returnQ, 'SUM(subtotal)');
+        $empCogsSold         = $this->sellers->cogsSoldBySeller(clone $invoiceQ);
+        $empCogsReturned     = $this->sellers->cogsReturnedBySeller(clone $returnQ);
 
-        $allIds = array_unique(array_merge(array_keys($empRevenue), array_keys($empCosts)));
-        $employees = Employee::whereIn('id', $allIds)->get(['id', 'name', 'code'])->keyBy('id');
+        $allKeys = array_unique(array_merge(
+            array_keys($empGrossRevenue), array_keys($empInvoiceDiscount),
+            array_keys($empCogsSold), array_keys($empReturnSubtotal),
+            array_keys($empCogsReturned)
+        ));
+        $sellerMeta = $this->sellers->sellerMeta($allKeys);
 
         $rows = [];
-        foreach ($allIds as $empId) {
-            $emp  = $employees[$empId] ?? null;
-            $rev  = $empRevenue[$empId] ?? 0;
-            $ret  = $empReturns[$empId] ?? 0;
-            $cost = $empCosts[$empId] ?? 0;
+        foreach ($allKeys as $key) {
+            $meta = $sellerMeta[$key] ?? null;
+
+            $grossRevenue          = $empGrossRevenue[$key] ?? 0;
+            $invoiceDiscount       = $empInvoiceDiscount[$key] ?? 0;
+            $revenueAfterDiscount  = $grossRevenue - $invoiceDiscount;
+            $returnValue           = $empReturnSubtotal[$key] ?? 0;
+            $netRevenue            = $revenueAfterDiscount - $returnValue;
+            $cogsSold              = $empCogsSold[$key] ?? 0;
+            $cogsReturned          = $empCogsReturned[$key] ?? 0;
+            $totalCogs             = $cogsSold - $cogsReturned;
+            $grossProfit           = $netRevenue - $totalCogs;
+
             $rows[] = [
-                'id'      => $empId,
-                'code'    => $emp?->code ?? "NV{$empId}",
-                'name'    => $emp?->name ?? "Nhân viên #{$empId}",
-                'revenue' => $rev - $ret,
-                'returns' => $cost,
-                'net'     => ($rev - $ret) - $cost,
+                'id'                     => $key,
+                'seller_key'             => $key,
+                'code'                   => $meta['code'] ?? 'UNK',
+                'name'                   => $meta['display_name'] ?? $meta['name'] ?? $key,
+                'seller_type'            => $meta['type'] ?? 'unknown',
+                'seller_code'            => $meta['code'] ?? 'UNK',
+                'seller_name'            => $meta['name'] ?? $key,
+                // 8-field KiotViet profit row
+                'gross_revenue'          => $grossRevenue,
+                'invoice_discount'       => $invoiceDiscount,
+                'revenue_after_discount' => $revenueAfterDiscount,
+                'return_value'           => $returnValue,
+                'net_revenue'            => $netRevenue,
+                'total_cogs'             => $totalCogs,
+                'gross_profit'           => $grossProfit,
+                // Backward compatibility aliases
+                'revenue'                => $netRevenue,
+                'returns'                => $totalCogs,
+                'net'                    => $grossProfit,
             ];
         }
-        usort($rows, fn($a, $b) => $b['net'] <=> $a['net']);
+        usort($rows, fn ($a, $b) => $b['gross_profit'] <=> $a['gross_profit']);
         return $rows;
     }
 
@@ -217,27 +259,16 @@ class EmployeeReportController extends Controller
     // ═══════════════════════════════════════
     private function buildItemsData($invoiceQ)
     {
-        $invoiceIds = (clone $invoiceQ)->pluck('id');
+        $byKey = $this->sellers->aggregateItemsBySeller(clone $invoiceQ, 'SUM(invoice_items.quantity)');
+        arsort($byKey);
+        $top = array_slice($byKey, 0, 10, true);
 
-        $empItems = DB::table('invoice_items')
-            ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
-            ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->select(
-                DB::raw('invoices.created_by as emp_id'),
-                DB::raw('SUM(invoice_items.quantity) as total_qty')
-            )
-            ->whereNotNull('invoices.created_by')
-            ->groupBy('emp_id')
-            ->orderByDesc('total_qty')
-            ->limit(10)
-            ->get();
-
-        $empNames = Employee::whereIn('id', $empItems->pluck('emp_id'))->pluck('name', 'id');
+        $sellerMeta = $this->sellers->sellerMeta(array_keys($top));
         $labels = [];
         $data   = [];
-        foreach ($empItems as $row) {
-            $labels[] = $empNames[$row->emp_id] ?? "NV #{$row->emp_id}";
-            $data[]   = (int) $row->total_qty;
+        foreach ($top as $key => $qty) {
+            $labels[] = $sellerMeta[$key]['display_name'] ?? $sellerMeta[$key]['name'] ?? $key;
+            $data[]   = (int) $qty;
         }
 
         return [
@@ -250,36 +281,29 @@ class EmployeeReportController extends Controller
 
     private function buildItemsReportRows($invoiceQ)
     {
-        $invoiceIds = (clone $invoiceQ)->pluck('id');
+        $qtyByKey   = $this->sellers->aggregateItemsBySeller(clone $invoiceQ, 'SUM(invoice_items.quantity)');
+        $valueByKey = $this->sellers->aggregateItemsBySeller(clone $invoiceQ, 'SUM(invoice_items.quantity * invoice_items.price)');
 
-        $empItems = DB::table('invoice_items')
-            ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
-            ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->select(
-                DB::raw('invoices.created_by as emp_id'),
-                DB::raw('SUM(invoice_items.quantity) as total_qty'),
-                DB::raw('SUM(invoice_items.quantity * invoice_items.price) as total_value')
-            )
-            ->whereNotNull('invoices.created_by')
-            ->groupBy('emp_id')
-            ->orderByDesc('total_qty')
-            ->get();
-
-        $empNames = Employee::whereIn('id', $empItems->pluck('emp_id'))
-            ->get(['id', 'name', 'code'])->keyBy('id');
+        $allKeys    = array_unique(array_merge(array_keys($qtyByKey), array_keys($valueByKey)));
+        $sellerMeta = $this->sellers->sellerMeta($allKeys);
 
         $rows = [];
-        foreach ($empItems as $row) {
-            $emp = $empNames[$row->emp_id] ?? null;
+        foreach ($allKeys as $key) {
+            $meta = $sellerMeta[$key] ?? null;
             $rows[] = [
-                'id'      => $row->emp_id,
-                'code'    => $emp?->code ?? "NV{$row->emp_id}",
-                'name'    => $emp?->name ?? "Nhân viên #{$row->emp_id}",
-                'revenue' => (float) $row->total_value,
-                'returns' => (int) $row->total_qty,
-                'net'     => (float) $row->total_value,
+                'id'           => $key,
+                'seller_key'   => $key,
+                'code'         => $meta['code'] ?? 'UNK',
+                'name'         => $meta['display_name'] ?? $meta['name'] ?? $key,
+                'seller_type'  => $meta['type'] ?? 'unknown',
+                'seller_code'  => $meta['code'] ?? 'UNK',
+                'seller_name'  => $meta['name'] ?? $key,
+                'revenue'      => (float) ($valueByKey[$key] ?? 0),
+                'returns'      => (int) ($qtyByKey[$key] ?? 0),
+                'net'          => (float) ($valueByKey[$key] ?? 0),
             ];
         }
+        usort($rows, fn ($a, $b) => $b['returns'] <=> $a['returns']);
         return $rows;
     }
 
@@ -288,67 +312,25 @@ class EmployeeReportController extends Controller
     // ═══════════════════════════════════════
     private function buildSummary(array $rows): array
     {
-        return [
+        $summary = [
             'count'        => count($rows),
             'totalRevenue' => array_sum(array_column($rows, 'revenue')),
             'totalReturns' => array_sum(array_column($rows, 'returns')),
             'totalNet'     => array_sum(array_column($rows, 'net')),
         ];
-    }
 
-    // ═══════════════════════════════════════
-    // Helper: Revenue by employee
-    // ═══════════════════════════════════════
-    private function getRevenueByEmployee($query): array
-    {
-        $byCreatedBy = (clone $query)->whereNotNull('created_by')
-            ->select('created_by as emp_id', DB::raw('SUM(total) as total'))
-            ->groupBy('created_by')
-            ->pluck('total', 'emp_id')
-            ->toArray();
-
-        $byEmployeeId = [];
-
-        $merged = [];
-        foreach (array_merge(array_keys($byCreatedBy), array_keys($byEmployeeId)) as $id) {
-            $merged[$id] = ($byCreatedBy[$id] ?? 0) + ($byEmployeeId[$id] ?? 0);
+        // Extended profit summary (8-field KiotViet)
+        if (!empty($rows) && array_key_exists('gross_revenue', $rows[0])) {
+            $summary['gross_revenue']          = array_sum(array_column($rows, 'gross_revenue'));
+            $summary['invoice_discount']       = array_sum(array_column($rows, 'invoice_discount'));
+            $summary['revenue_after_discount'] = array_sum(array_column($rows, 'revenue_after_discount'));
+            $summary['return_value']           = array_sum(array_column($rows, 'return_value'));
+            $summary['net_revenue']            = array_sum(array_column($rows, 'net_revenue'));
+            $summary['total_cogs']             = array_sum(array_column($rows, 'total_cogs'));
+            $summary['gross_profit']           = array_sum(array_column($rows, 'gross_profit'));
         }
-        return $merged;
-    }
 
-    // ═══════════════════════════════════════
-    // Helper: Returns by employee
-    // ═══════════════════════════════════════
-    private function getReturnsByEmployee($query): array
-    {
-        return (clone $query)->whereNotNull('created_by')
-            ->select('created_by as emp_id', DB::raw('SUM(total) as total'))
-            ->groupBy('created_by')
-            ->pluck('total', 'emp_id')
-            ->toArray();
-    }
-
-    // ═══════════════════════════════════════
-    // Helper: Cost by employee
-    // ═══════════════════════════════════════
-    private function getCostByEmployee($query): array
-    {
-        $invoiceIds = (clone $query)->pluck('id');
-
-        $costs = DB::table('invoice_items')
-            ->join('invoices', 'invoice_items.invoice_id', '=', 'invoices.id')
-            ->join('products', 'invoice_items.product_id', '=', 'products.id')
-            ->whereIn('invoice_items.invoice_id', $invoiceIds)
-            ->select(
-                DB::raw('invoices.created_by as emp_id'),
-                DB::raw('SUM(invoice_items.quantity * products.cost_price) as total_cost')
-            )
-            ->whereNotNull('invoices.created_by')
-            ->groupBy('emp_id')
-            ->pluck('total_cost', 'emp_id')
-            ->toArray();
-
-        return $costs;
+        return $summary;
     }
 
     // ═══════════════════════════════════════

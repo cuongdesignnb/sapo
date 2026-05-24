@@ -12,97 +12,83 @@ use App\Models\Product;
 use App\Models\Customer;
 use App\Models\CashFlow;
 use App\Models\SerialImei;
+use App\Enums\PaymentMethod;
+use App\Enums\PurchaseStatus;
+use App\Support\Filters\FilterableIndex;
+use App\Services\LockPeriodService;
+use App\Services\StockMovementService;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use App\Services\DebtOffsetService;
 
 class PurchaseController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configurePurchaseFilters(): void
+    {
+        $this->searchable = ['code', 'note'];
+        $this->searchableRelations = [
+            'supplier' => ['name', 'code', 'phone'],
+            'items'    => ['product_name'],
+        ];
+        $this->sortable = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'debt_amount', 'status', 'purchase_date'];
+        $this->dateColumn = \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'purchase_date')
+            ? \Illuminate\Support\Facades\DB::raw('COALESCE(purchases.purchase_date, purchases.created_at)')
+            : 'created_at';
+        $this->creatorColumn = 'employee_id';
+        $this->scalarFilters = ['branch_id', 'supplier_id', 'warehouse_id', 'payment_method'];
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
-        $statuses = $request->input('status');
-        $dateFilter = $request->input('date_filter');
-        $dateFrom = $request->input('date_from');
-        $dateTo = $request->input('date_to');
-        $supplierId = $request->input('supplier_id');
-        $createdBy = $request->input('created_by');
+        $this->configurePurchaseFilters();
 
-        $query = Purchase::with(['supplier:id,code,name', 'items']);
-
-        if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('code', 'LIKE', "%{$search}%")
-                    ->orWhereHas('supplier', function ($sq) use ($search) {
-                        $sq->where('name', 'LIKE', "%{$search}%")
-                           ->orWhere('code', 'LIKE', "%{$search}%");
+        $query = Purchase::with(['supplier:id,code,name', 'items'])
+            ->when($request->filled('has_debt'), function ($q) use ($request) {
+                if ((string) $request->input('has_debt') === '1') {
+                    $q->where('debt_amount', '>', 0);
+                } else {
+                    $q->where(function ($qq) {
+                        $qq->whereNull('debt_amount')->orWhere('debt_amount', '<=', 0);
                     });
+                }
+            })
+            ->when($request->filled('sort_by') && in_array($request->sort_by, ['need_pay', 'purchase_date']), function ($q) use ($request) {
+                $dir = ($request->sort_dir ?? $request->sort_direction) === 'asc' ? 'asc' : 'desc';
+                if ($request->sort_by === 'need_pay') {
+                    $q->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
+                } elseif ($request->sort_by === 'purchase_date') {
+                    $expr = \Illuminate\Support\Facades\Schema::hasColumn('purchases', 'purchase_date')
+                        ? "COALESCE(purchase_date, created_at) $dir"
+                        : "created_at $dir";
+                    $q->orderByRaw($expr);
+                }
             });
-        }
 
-        if ($statuses && is_array($statuses) && count($statuses) > 0) {
-            $query->whereIn('status', $statuses);
+        // Only apply standard sort if not using computed sort
+        if (!in_array($request->sort_by, ['need_pay', 'purchase_date'])) {
+            $this->applyFilters($query, $request);
+        } else {
+            // Apply everything except sort
+            $originalSortable = $this->sortable;
+            $this->sortable = [];
+            $this->applyFilters($query, $request);
+            $this->sortable = $originalSortable;
         }
-
-        if ($supplierId) {
-            $query->where('supplier_id', $supplierId);
-        }
-
-        if ($createdBy) {
-            $query->where('employee_id', $createdBy);
-        }
-
-        if ($dateFilter === 'this_month') {
-            $query->whereMonth('created_at', now()->month)
-                ->whereYear('created_at', now()->year);
-        } elseif ($dateFilter === 'custom' && $dateFrom && $dateTo) {
-            $query->whereDate('created_at', '>=', $dateFrom)
-                ->whereDate('created_at', '<=', $dateTo);
-        }
-
-        $query->when($request->filled('sort_by'), function ($q) use ($request) {
-            $allowed = ['code', 'created_at', 'total_amount', 'discount', 'paid_amount', 'status'];
-            $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-            if ($request->sort_by === 'need_pay') {
-                $q->orderByRaw("(total_amount - COALESCE(discount, 0)) $dir");
-            } elseif ($request->sort_by === 'purchase_date') {
-                $q->orderByRaw("COALESCE(purchase_date, created_at) $dir");
-            } elseif (in_array($request->sort_by, $allowed)) {
-                $q->orderBy($request->sort_by, $dir);
-            } else {
-                $q->orderBy('created_at', $dir);
-            }
-        }, function ($q) {
-            $q->latest();
-        });
 
         $purchases = $query->paginate(20)->withQueryString();
 
-        // Summary based on filtered query (clone before paginate)
+        // Summary using same filters
         $summaryQuery = Purchase::query();
-        if ($search) {
-            $summaryQuery->where(function ($q) use ($search) {
-                $q->where('code', 'LIKE', "%{$search}%")
-                    ->orWhereHas('supplier', fn($sq) => $sq->where('name', 'LIKE', "%{$search}%")->orWhere('code', 'LIKE', "%{$search}%"));
-            });
-        }
-        if ($statuses && is_array($statuses) && count($statuses) > 0) {
-            $summaryQuery->whereIn('status', $statuses);
-        }
-        if ($supplierId) $summaryQuery->where('supplier_id', $supplierId);
-        if ($createdBy) $summaryQuery->where('employee_id', $createdBy);
-        if ($dateFilter === 'this_month') {
-            $summaryQuery->whereMonth('purchases.created_at', now()->month)->whereYear('purchases.created_at', now()->year);
-        } elseif ($dateFilter === 'custom' && $dateFrom && $dateTo) {
-            $summaryQuery->whereDate('purchases.created_at', '>=', $dateFrom)->whereDate('purchases.created_at', '<=', $dateTo);
-        }
+        $this->applyFilters($summaryQuery, $request);
 
         $summary = [
-            'total_amount' => $summaryQuery->sum('total_amount'),
-            'total_discount' => $summaryQuery->sum('discount'),
-            'total_paid' => $summaryQuery->sum('paid_amount'),
-            'total_debt' => $summaryQuery->sum('debt_amount'),
-            'total_count' => $summaryQuery->count(),
+            'total_amount' => (clone $summaryQuery)->sum('total_amount'),
+            'total_discount' => (clone $summaryQuery)->sum('discount'),
+            'total_paid' => (clone $summaryQuery)->sum('paid_amount'),
+            'total_debt' => (clone $summaryQuery)->sum('debt_amount'),
+            'total_count' => (clone $summaryQuery)->count(),
             'total_items' => (clone $summaryQuery)->join('purchase_items', 'purchases.id', '=', 'purchase_items.purchase_id')->sum('purchase_items.quantity'),
         ];
 
@@ -111,16 +97,40 @@ class PurchaseController extends Controller
 
         return Inertia::render('Purchases/Index', [
             'purchases' => $purchases,
-            'filters' => $request->only(['search', 'status', 'date_filter', 'date_from', 'date_to', 'supplier_id', 'created_by', 'sort_by', 'sort_direction']),
+            'filters' => $this->currentFilters($request) + [
+                'has_debt' => $request->input('has_debt', ''),
+            ],
             'summary' => $summary,
             'suppliers' => $suppliers,
             'employees' => $employees,
+            'filterOptions' => [
+                'branches' => \App\Models\Branch::select('id', 'name')->get(),
+                'statuses' => PurchaseStatus::options(),
+                'suppliers' => $suppliers->map(fn($s) => ['value' => $s->id, 'label' => $s->name]),
+                'employees' => $employees->map(fn($e) => ['value' => $e->id, 'label' => $e->name]),
+                'paymentMethods' => PaymentMethod::basicOptions(),
+                'debtOptions' => [
+                    ['value' => '1', 'label' => 'Còn nợ NCC'],
+                    ['value' => '0', 'label' => 'Đã trả đủ'],
+                ],
+            ],
         ]);
     }
 
     public function create(Request $request)
     {
-        $suppliers = Customer::where('is_supplier', true)->get();
+        // HOTFIX 24.19 — only active suppliers may be picked when
+        // creating a purchase. Deactivated rows stay on /suppliers
+        // (admin view) but the Nhập hàng selector must hide them so
+        // operators can't open new debt against a stopped vendor.
+        // Customer.status defaults to 'active' (migration
+        // 2026_02_28_063352_add_supplier_fields_to_customers_table);
+        // we also accept NULL to be tolerant of any pre-default rows.
+        $suppliers = Customer::where('is_supplier', true)
+            ->where(function ($q) {
+                $q->where('status', 'active')->orWhereNull('status');
+            })
+            ->get();
         $products = Product::where('is_active', true)->get();
 
         $purchaseOrderInfo = null;
@@ -187,31 +197,63 @@ class PurchaseController extends Controller
             'bank_account_info' => 'nullable|string',
         ]);
 
-        // Validate serial products have quantity matching serials count
+        // ── Step 23.3: Validate serial cho hàng has_serial khi nhập ──
+        // BUG-1: count(serials) phải === quantity (không cho phiếu nhập 5 mà chỉ liệt 2 serial).
+        // BUG-2: chống trùng serial trong cùng request (chống user dán nhầm 2 lần).
+        // EXISTING: chống serial đã tồn tại trong DB (giữ nguyên).
+        $globalSeenSerials = [];
         foreach ($request->items as $i => $item) {
             $product = Product::find($item['product_id']);
-            if ($product && $product->has_serial) {
-                $serials = $item['serials'] ?? [];
-                if (count($serials) === 0) {
-                    return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" y\u00eau c\u1ea7u nh\u1eadp s\u1ed1 Serial/IMEI."]);
+            if (!$product || !$product->has_serial) continue;
+
+            $serials = array_values(array_filter(array_map(
+                fn($s) => is_string($s) ? trim($s) : '',
+                (array) ($item['serials'] ?? [])
+            ), fn($s) => $s !== ''));
+            $qty = (int) ($item['quantity'] ?? 0);
+
+            if (count($serials) === 0) {
+                return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" y\u00eau c\u1ea7u nh\u1eadp s\u1ed1 Serial/IMEI."]);
+            }
+            if (count($serials) !== $qty) {
+                return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" c\u1ea7n nh\u1eadp \u0111\u1ee7 {$qty} serial (\u0111ang nh\u1eadp " . count($serials) . ")."]);
+            }
+            // Duplicate trong cùng item
+            if (count($serials) !== count(array_unique($serials))) {
+                return back()->withErrors(["items.{$i}.serials" => "S\u1ea3n ph\u1ea9m \"{$product->name}\" c\u00f3 serial b\u1ecb tr\u00f9ng trong c\u00f9ng phi\u1ebfu nh\u1eadp."]);
+            }
+            // Duplicate cross-item
+            foreach ($serials as $sn) {
+                if (isset($globalSeenSerials[$sn])) {
+                    return back()->withErrors(["items.{$i}.serials" => "Serial \"{$sn}\" b\u1ecb nh\u1eadp tr\u00f9ng \u1edf nhi\u1ec1u d\u00f2ng s\u1ea3n ph\u1ea9m."]);
                 }
-                // Check for duplicates in DB
-                $existing = SerialImei::whereIn('serial_number', $serials)->first();
-                if ($existing) {
-                    return back()->withErrors(["items.{$i}.serials" => "Serial/IMEI \"{$existing->serial_number}\" \u0111\u00e3 t\u1ed3n t\u1ea1i trong h\u1ec7 th\u1ed1ng."]);
-                }
+                $globalSeenSerials[$sn] = true;
+            }
+            // Đã tồn tại trong DB
+            $existing = SerialImei::whereIn('serial_number', $serials)->first();
+            if ($existing) {
+                return back()->withErrors(["items.{$i}.serials" => "Serial/IMEI \"{$existing->serial_number}\" \u0111\u00e3 t\u1ed3n t\u1ea1i trong h\u1ec7 th\u1ed1ng."]);
             }
         }
 
         try {
             DB::beginTransaction();
 
+            // Lock period check
+            $txDate = $request->purchase_date ? \Carbon\Carbon::parse($request->purchase_date) : now();
+            app(LockPeriodService::class)->assertNotLocked($txDate, 'purchase_create');
+
             $total_amount = collect($request->items)->sum(function ($item) {
                 return $item['quantity'] * $item['price'] - ($item['discount'] ?? 0);
             });
 
             $discount = $request->discount ?? 0;
-            $pay_amount = $total_amount - $discount; // Total to pay
+
+            // Chi phí nhập khác
+            $otherCosts = $request->other_costs ?? [];
+            $otherCostsTotal = collect($otherCosts)->sum(fn($c) => (float)($c['amount'] ?? 0));
+
+            $pay_amount = $total_amount - $discount + $otherCostsTotal; // Total to pay
             $paid_amount = $request->paid_amount ?? 0;
             $debt_amount = $pay_amount - $paid_amount; // Current debt for this order
 
@@ -222,6 +264,8 @@ class PurchaseController extends Controller
                 'employee_id' => $request->employee_id,
                 'total_amount' => $total_amount,
                 'discount' => $discount,
+                'other_costs' => !empty($otherCosts) ? $otherCosts : null,
+                'other_costs_total' => $otherCostsTotal,
                 'paid_amount' => $paid_amount,
                 'debt_amount' => $debt_amount,
                 'note' => $request->note,
@@ -239,6 +283,15 @@ class PurchaseController extends Controller
                     ? ($purchase->purchase_date ?? now())->copy()->addMonths($warrantyMonths)->toDateString()
                     : null;
 
+                // Phân bổ phí nhập (other_costs) theo tỉ lệ subtotal của dòng hiện tại
+                $itemSubtotal = $item['quantity'] * $item['price'] - ($item['discount'] ?? 0);
+                $allocatedFee = ($otherCostsTotal > 0 && $total_amount > 0)
+                    ? ($otherCostsTotal * $itemSubtotal / $total_amount)
+                    : 0.0;
+                $unitCostAllocated = $item['quantity'] > 0
+                    ? round(($itemSubtotal + $allocatedFee) / $item['quantity'], 2)
+                    : (float) $item['price'];
+
                 // Add item
                 $purchase->items()->create([
                     'product_id' => $product->id,
@@ -247,34 +300,26 @@ class PurchaseController extends Controller
                     'quantity' => $item['quantity'],
                     'price' => $item['price'],
                     'discount' => $item['discount'] ?? 0,
-                    'subtotal' => $item['quantity'] * $item['price'] - ($item['discount'] ?? 0),
+                    'subtotal' => $itemSubtotal,
+                    'unit_cost_allocated' => $unitCostAllocated,
                     'warranty_months' => $warrantyMonths,
                     'warranty_expires_at' => $warrantyExpiresAt,
                 ]);
 
                 if ($purchase->status === 'completed') {
-                    $newStock = $product->stock_quantity + $item['quantity'];
-
-                    // Update last purchase price
-                    $product->last_purchase_price = $item['price'];
-
-                    // Only update cost price if method is 'average'
-                    $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
-                    if ($costingMethod === 'average') {
-                        $totalCurrentValue = $product->stock_quantity * $product->cost_price;
-                        $totalNewValue = $item['quantity'] * $item['price'];
-                        $newCostPrice = $newStock > 0 ? ($totalCurrentValue + $totalNewValue) / $newStock : $item['price'];
-                        $product->cost_price = $newCostPrice;
-                    }
-
-                    $product->stock_quantity = $newStock;
+                    // BQ DI ĐỘNG: gọi service áp dụng nhập hàng (cập nhật stock + cost_price + inventory_total_cost)
+                    \App\Services\MovingAvgCostingService::applyPurchase(
+                        $product,
+                        (int) $item['quantity'],
+                        (float) $unitCostAllocated
+                    );
+                    $product->refresh();
 
                     // Update retail_price if provided
                     if (isset($item['retail_price']) && $item['retail_price'] > 0) {
                         $product->retail_price = $item['retail_price'];
+                        $product->save();
                     }
-
-                    $product->save();
 
                     // Update technician_price in active price books if provided
                     if (isset($item['technician_price']) && $item['technician_price'] > 0) {
@@ -296,9 +341,31 @@ class PurchaseController extends Controller
                                 'serial_number' => trim($serialNumber),
                                 'status' => 'in_stock',
                                 'purchase_id' => $purchase->id,
+                                'cost_price' => $unitCostAllocated,
+                                'original_cost' => $unitCostAllocated,
                             ]);
                         }
                     }
+
+                    // Sync stock_quantity với serial in_stock count (audit, không đụng cost)
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
+                    }
+
+                    // Phase 4 — Ghi sổ cái tồn kho
+                    StockMovementService::record(
+                        $product,
+                        StockMovementService::TYPE_IN_PURCHASE,
+                        (int) $item['quantity'],
+                        (float) $unitCostAllocated,
+                        $purchase,
+                        [
+                            'branch_id' => $purchase->branch_id ?? null,
+                            'ref_code' => $purchase->code,
+                            'moved_at' => $purchase->purchase_date ?? now(),
+                            'note' => 'Nhập hàng từ phiếu ' . $purchase->code,
+                        ]
+                    );
                 }
             }
 
@@ -306,6 +373,11 @@ class PurchaseController extends Controller
                 // Update Supplier Debt & Total Bought
                 $supplier = Customer::find($request->supplier_id);
                 if ($supplier) {
+                    // Auto-enable dual-role: buying from a customer makes them also a supplier
+                    if ($supplier->is_customer && !$supplier->is_supplier) {
+                        $supplier->is_supplier = true;
+                    }
+
                     $supplier->supplier_debt_amount += $debt_amount;
                     $supplier->total_bought += $total_amount;
                     $supplier->save();
@@ -327,13 +399,18 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                // Tự động đối trừ công nợ NCC↔KH
-                if ($supplier) {
-                    DebtOffsetService::offsetDebts($supplier);
-                }
+                // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
             }
 
             DB::commit();
+
+            // Step 24.0: audit log purchase create
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_PURCHASE_CREATE,
+                "Tạo phiếu nhập hàng {$purchase->code}",
+                $purchase,
+                ['total' => (float) ($purchase->total ?? 0)]
+            );
 
             return redirect()->route('purchases.index')->with('success', 'Tạo đơn nhập hàng thành công!');
         } catch (\Exception $e) {
@@ -419,32 +496,148 @@ class PurchaseController extends Controller
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
             'employee_id' => 'nullable|exists:employees,id',
+            'status' => 'nullable|string|in:draft,completed',
+            'items' => 'nullable|array',
+            'items.*.product_id' => 'required_with:items|exists:products,id',
+            'items.*.quantity' => 'required_with:items|integer|min:0',
+            'items.*.price' => 'required_with:items|numeric|min:0',
         ]);
+
+        $isDraftToComplete = $purchase->status === 'draft' && ($request->status ?? $purchase->status) === 'completed';
 
         try {
             DB::beginTransaction();
+
+            // Nếu draft → completed: cập nhật items trước khi tính tổng
+            if ($isDraftToComplete && $request->has('items')) {
+                $purchase->items()->delete();
+                $totalAmount = 0;
+                foreach ($request->items as $item) {
+                    $product = Product::find($item['product_id']);
+                    $qty = $item['quantity'] ?? 0;
+                    $price = $item['price'] ?? 0;
+                    $itemDiscount = $item['discount'] ?? 0;
+                    $subtotal = $qty * $price - $itemDiscount;
+                    $totalAmount += $subtotal;
+
+                    $purchase->items()->create([
+                        'product_id' => $product->id,
+                        'product_name' => $product->name,
+                        'product_code' => $product->sku,
+                        'quantity' => $qty,
+                        'price' => $price,
+                        'discount' => $itemDiscount,
+                        'subtotal' => $subtotal,
+                        'warranty_months' => $item['warranty_months'] ?? 0,
+                    ]);
+                }
+                $purchase->total_amount = $totalAmount;
+            }
 
             $oldPaidAmount = $purchase->paid_amount;
             $oldDebt = $purchase->debt_amount;
 
             $discount = $request->discount ?? $purchase->discount;
             $paidAmount = $request->paid_amount ?? $purchase->paid_amount;
-            $payAmount = $purchase->total_amount - $discount;
+
+            // Chi phí nhập khác
+            $otherCosts = $request->other_costs ?? $purchase->other_costs ?? [];
+            $otherCostsTotal = collect($otherCosts)->sum(fn($c) => (float)($c['amount'] ?? 0));
+
+            $payAmount = $purchase->total_amount - $discount + $otherCostsTotal;
             $debtAmount = $payAmount - $paidAmount;
 
             $purchase->update([
                 'note' => $request->note ?? $purchase->note,
                 'purchase_date' => $request->purchase_date ?? $purchase->purchase_date,
                 'discount' => $discount,
+                'other_costs' => !empty($otherCosts) ? $otherCosts : null,
+                'other_costs_total' => $otherCostsTotal,
                 'paid_amount' => $paidAmount,
                 'debt_amount' => $debtAmount,
                 'payment_method' => $request->payment_method ?? $purchase->payment_method,
                 'bank_account_info' => $request->bank_account_info,
                 'employee_id' => $request->employee_id ?? $purchase->employee_id,
+                'status' => $isDraftToComplete ? 'completed' : $purchase->status,
             ]);
 
-            // Update supplier debt if paid amount changed
-            if ($paidAmount != $oldPaidAmount && $purchase->supplier) {
+            // ── Draft → Completed: cộng tồn kho + ghi nợ ──
+            if ($isDraftToComplete) {
+                $costingMethod = \App\Models\Setting::get('inventory_costing_method', 'average');
+                $goodsTotal = (float) $purchase->total_amount;
+
+                foreach ($purchase->items as $item) {
+                    $product = Product::find($item->product_id);
+                    if (!$product) continue;
+
+                    // Phân bổ phí nhập theo tỉ lệ subtotal
+                    $itemSubtotal = (float) $item->subtotal;
+                    $allocatedFee = ($otherCostsTotal > 0 && $goodsTotal > 0)
+                        ? ($otherCostsTotal * $itemSubtotal / $goodsTotal)
+                        : 0.0;
+                    $unitCostAllocated = $item->quantity > 0
+                        ? round(($itemSubtotal + $allocatedFee) / $item->quantity, 2)
+                        : (float) $item->price;
+                    $item->unit_cost_allocated = $unitCostAllocated;
+                    $item->save();
+
+                    // BQ DI ĐỘNG: áp dụng nhập hàng
+                    \App\Services\MovingAvgCostingService::applyPurchase(
+                        $product,
+                        (int) $item->quantity,
+                        (float) $unitCostAllocated
+                    );
+                    $product->refresh();
+
+                    // Create Serial/IMEI records if applicable
+                    if ($product->has_serial && !empty($item->serials)) {
+                        foreach ($item->serials as $serialNumber) {
+                            SerialImei::create([
+                                'product_id' => $product->id,
+                                'serial_number' => trim(is_string($serialNumber) ? $serialNumber : $serialNumber['serial_number'] ?? ''),
+                                'status' => 'in_stock',
+                                'purchase_id' => $purchase->id,
+                                'cost_price' => $unitCostAllocated,
+                                'original_cost' => $unitCostAllocated,
+                            ]);
+                        }
+                    }
+
+                    if ($product->has_serial) {
+                        $product->recomputeFromSerials();
+                    }
+                }
+
+                // Supplier debt
+                $supplier = Customer::find($purchase->supplier_id);
+                if ($supplier) {
+                    if ($supplier->is_customer && !$supplier->is_supplier) {
+                        $supplier->is_supplier = true;
+                    }
+                    $supplier->supplier_debt_amount += $debtAmount;
+                    $supplier->total_bought += $purchase->total_amount;
+                    $supplier->save();
+                }
+
+                // CashFlow
+                if ($paidAmount > 0) {
+                    CashFlow::create([
+                        'code' => 'PC' . date('YmdHis'),
+                        'type' => 'payment',
+                        'amount' => $paidAmount,
+                        'time' => now(),
+                        'category' => 'Chi tiền trả NCC',
+                        'target_type' => 'Nhà cung cấp',
+                        'target_name' => $supplier->name ?? 'Nhà cung cấp',
+                        'reference_type' => 'Purchase',
+                        'reference_code' => $purchase->code,
+                        'description' => 'Chi tiền trả NCC cho phiếu ' . $purchase->code,
+                    ]);
+                }
+            }
+
+            // Update supplier debt if paid amount changed (ONLY for non-draft→completed updates)
+            if (!$isDraftToComplete && $paidAmount != $oldPaidAmount && $purchase->supplier) {
                 $debtDiff = $debtAmount - $oldDebt;
                 $purchase->supplier->supplier_debt_amount += $debtDiff;
                 $purchase->supplier->save();
@@ -466,8 +659,7 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                // Tự động đối trừ công nợ NCC↔KH
-                DebtOffsetService::offsetDebts($purchase->supplier);
+                // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
             }
 
             DB::commit();
@@ -480,6 +672,9 @@ class PurchaseController extends Controller
 
     public function destroy(Purchase $purchase)
     {
+        // Lock period check
+        app(LockPeriodService::class)->assertNotLocked($purchase->purchase_date ?? $purchase->created_at, 'purchase_cancel');
+
         if ($purchase->status === 'cancelled') {
             return back()->with('error', 'Phiếu này đã bị hủy trước đó.');
         }
@@ -516,41 +711,67 @@ class PurchaseController extends Controller
                 $currentStock = $product->stock_quantity;
                 $newStock = max(0, $currentStock - $item->quantity);
 
-                // Reverse cost price (average costing)
-                if ($costingMethod === 'average' && $currentStock > 0) {
-                    $totalCurrentValue = $currentStock * $product->cost_price;
-                    $removedValue = $item->quantity * $item->price;
-                    $product->cost_price = $newStock > 0
-                        ? ($totalCurrentValue - $removedValue) / $newStock
-                        : 0;
-                }
-
-                $product->stock_quantity = $newStock;
-                $product->save();
+                // BQ DI ĐỘNG: rút khỏi tồn theo cost lúc nhập (snapshot unit_cost_allocated)
+                $unitCostAtPurchase = (float) ($item->unit_cost_allocated ?: $item->price);
+                \App\Services\MovingAvgCostingService::applyPurchaseReturn(
+                    $product,
+                    (int) $item->quantity,
+                    $unitCostAtPurchase
+                );
+                $product->refresh();
 
                 // Delete serials
                 SerialImei::where('purchase_id', $purchase->id)
                     ->where('product_id', $item->product_id)
                     ->delete();
-            }
 
-            // Reverse supplier debt & total bought
+                if ($product->has_serial) {
+                    $product->recomputeFromSerials();
+                }
+
+                // Phase 4 — Ghi sổ cái: hoàn nhập (out)
+                StockMovementService::record(
+                    $product,
+                    StockMovementService::TYPE_OUT_PURCHASE_RETURN,
+                    (int) $item->quantity,
+                    $unitCostAtPurchase,
+                    $purchase,
+                    [
+                        'branch_id' => $purchase->branch_id ?? null,
+                        'ref_code' => $purchase->code,
+                        'moved_at' => now(),
+                        'note' => 'Hủy phiếu nhập ' . $purchase->code,
+                    ]
+                );
+            }
             if ($purchase->supplier) {
                 $purchase->supplier->supplier_debt_amount -= $purchase->debt_amount;
                 $purchase->supplier->total_bought -= $purchase->total_amount;
                 $purchase->supplier->save();
             }
 
-            // Delete related cash flows (payments to supplier)
+            // Cancel related cash flows (payments to supplier)
+            CashFlow::where('reference_type', 'Purchase')
+                ->where('reference_code', $purchase->code)
+                ->update(['status' => 'cancelled']);
             CashFlow::where('reference_type', 'Purchase')
                 ->where('reference_code', $purchase->code)
                 ->delete();
 
-            $purchase->items()->delete();
+            // Giữ items cho audit trail (không xóa)
             $purchase->status = 'cancelled';
             $purchase->save();
 
             DB::commit();
+
+            // Step 24.0: audit log purchase cancel
+            \App\Models\ActivityLog::log(
+                \App\Models\ActivityLog::ACTION_PURCHASE_DELETE,
+                "Hủy phiếu nhập hàng {$purchase->code}",
+                $purchase,
+                ['total' => (float) ($purchase->total ?? 0)]
+            );
+
             return redirect()->route('purchases.index')->with('success', 'Đã hủy phiếu nhập hàng. Tồn kho, giá vốn và công nợ đã được hoàn lại.');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -560,9 +781,10 @@ class PurchaseController extends Controller
 
     public function export(Request $request)
     {
-        $purchases = \App\Models\Purchase::with('supplier')
-            ->when($request->search, fn($q, $s) => $q->where('code', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configurePurchaseFilters();
+        $query = Purchase::with('supplier');
+        $this->applyFilters($query, $request);
+        $purchases = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã nhập hàng', 'Thời gian', 'Nhà cung cấp', 'Tổng cộng', 'Giảm giá', 'Đã trả NCC', 'Còn nợ NCC', 'Trạng thái', 'Ghi chú'],

@@ -15,9 +15,11 @@ class Paysheet extends Model
         'pay_period',
         'period_start',
         'period_end',
+        'standard_working_days',
         'branch_id',
         'scope',
         'status',
+        'needs_recalc',
         'total_salary',
         'total_paid',
         'total_remaining',
@@ -35,6 +37,9 @@ class Paysheet extends Model
         'total_salary' => 'integer',
         'total_paid' => 'integer',
         'total_remaining' => 'integer',
+        'needs_recalc' => 'boolean',
+        // Step 24.12 — float so the UI can show "26" or "25.5" without trailing zeros.
+        'standard_working_days' => 'float',
     ];
 
     public function branch()

@@ -44,6 +44,7 @@ class Customer extends Model
         'total_bought',
         'status',
         'branch_id',
+        'created_by',
     ];
 
     protected $casts = [
@@ -73,5 +74,15 @@ class Customer extends Model
     public function purchases()
     {
         return $this->hasMany(Purchase::class, 'supplier_id');
+    }
+
+    public function deliveryAddresses()
+    {
+        return $this->hasMany(CustomerDeliveryAddress::class);
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 }

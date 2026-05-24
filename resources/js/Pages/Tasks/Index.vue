@@ -1,8 +1,10 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import DateTimePicker from "@/Components/DateTimePicker.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -29,6 +31,7 @@ const filters = ref({
 });
 
 // ── Create modal ──
+// createType: 'general' | 'repair' (internal) | 'repair-external' (Step 23.8F)
 const showCreateModal = ref(false);
 const createType = ref("general");
 const createForm = ref({
@@ -42,8 +45,44 @@ const createForm = ref({
     deadline: "",
     notes: "",
     employee_ids: [],
+    // External repair (Step 23.8F)
+    customer_id: null,
+    customer_name: "",
+    customer_phone: "",
+    product_id: null,
+    received_at: "",
 });
 const createError = ref("");
+
+// External repair customer search (Step 23.8F)
+const customerSearch = ref("");
+const customerResults = ref([]);
+const selectedCustomer = ref(null);
+let customerSearchTimeout;
+watch(customerSearch, (val) => {
+    clearTimeout(customerSearchTimeout);
+    if (!val || val.length < 2) { customerResults.value = []; return; }
+    customerSearchTimeout = setTimeout(async () => {
+        try {
+            const res = await axios.get("/api/pos/customers", { params: { q: val } });
+            customerResults.value = res.data || [];
+        } catch (e) { customerResults.value = []; }
+    }, 300);
+});
+const selectCustomer = (c) => {
+    selectedCustomer.value = c;
+    createForm.value.customer_id = c.id;
+    createForm.value.customer_name = c.name;
+    createForm.value.customer_phone = c.phone || "";
+    customerSearch.value = c.name;
+    customerResults.value = [];
+};
+const clearCustomer = () => {
+    selectedCustomer.value = null;
+    createForm.value.customer_id = null;
+    customerSearch.value = "";
+    customerResults.value = [];
+};
 const serialSearch = ref("");
 const serialResults = ref([]);
 const selectedSerial = ref(null);
@@ -157,7 +196,26 @@ const openCreateModal = (type = "general") => {
     productSearch.value = "";
     productSerials.value = [];
     selectedSerialIds.value = [];
-    createForm.value = { title: "", description: "", serial_imei_id: null, issue_description: "", category_id: null, priority: "normal", branch_id: null, deadline: "", notes: "", employee_ids: [] };
+    selectedCustomer.value = null;
+    customerSearch.value = "";
+    customerResults.value = [];
+    createForm.value = {
+        title: "",
+        description: "",
+        serial_imei_id: null,
+        issue_description: "",
+        category_id: null,
+        priority: "normal",
+        branch_id: null,
+        deadline: "",
+        notes: "",
+        employee_ids: [],
+        customer_id: null,
+        customer_name: "",
+        customer_phone: "",
+        product_id: null,
+        received_at: "",
+    };
     showCreateModal.value = true;
 };
 
@@ -183,8 +241,21 @@ const submitCreate = async () => {
             return;
         }
 
-        const payload = { type: createType.value };
-        if (createType.value === "repair") {
+        // Step 23.8F: external repair payload (no internal serial required)
+        const isExternal = createType.value === "repair-external";
+        const payload = isExternal
+            ? { type: "repair", external: true }
+            : { type: createType.value };
+
+        if (isExternal) {
+            payload.customer_id = createForm.value.customer_id || null;
+            payload.customer_name = createForm.value.customer_name || null;
+            payload.customer_phone = createForm.value.customer_phone || null;
+            payload.product_id = createForm.value.product_id || null;
+            payload.issue_description = createForm.value.issue_description;
+            payload.title = createForm.value.title || null;
+            payload.received_at = createForm.value.received_at || null;
+        } else if (createType.value === "repair") {
             payload.serial_imei_id = createForm.value.serial_imei_id;
             payload.issue_description = createForm.value.issue_description;
             payload.title = createForm.value.title;
@@ -242,7 +313,16 @@ const toggleAssignEmployee = (empId) => {
 
 // ── Helpers ──
 const goPage = (page) => { filters.value.page = page; loadTasks(); };
-const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
+const formatDate = (d) => {
+    if (!d) return "-";
+    const dt = new Date(d);
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const yy = dt.getFullYear();
+    const hh = String(dt.getHours()).padStart(2, "0");
+    const mi = String(dt.getMinutes()).padStart(2, "0");
+    return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+};
 
 const statusBadge = (status) => {
     const map = {
@@ -360,7 +440,8 @@ loadTasks();
                         <button class="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition">+ Tạo mới</button>
                         <div class="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                             <button @click="openCreateModal('general')" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50">Công việc chung</button>
-                            <button @click="openCreateModal('repair')" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50">Phiếu sửa chữa</button>
+                            <button @click="openCreateModal('repair')" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50">Sửa chữa nội bộ</button>
+                            <button @click="openCreateModal('repair-external')" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50">Sửa chữa khách ngoài</button>
                         </div>
                     </div>
                 </div>
@@ -409,6 +490,7 @@ loadTasks();
                     <thead class="bg-gray-50 text-gray-600 uppercase text-xs">
                         <tr>
                             <SortableHeader label="Mã" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
+                            <SortableHeader label="Ngày tạo" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
                             <SortableHeader label="Tiêu đề" field="title" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3 text-left" @sort="handleSort" />
                             <th class="px-4 py-3 text-left">Tên máy</th>
                             <th class="px-4 py-3 text-left">Serial</th>
@@ -423,10 +505,11 @@ loadTasks();
                     </thead>
                     <tbody>
                         <tr v-if="!tasks.data?.length">
-                            <td colspan="11" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
+                            <td colspan="12" class="text-center py-8 text-gray-400">Chưa có công việc nào.</td>
                         </tr>
                         <tr v-for="t in tasks.data" :key="t.id" class="border-t hover:bg-gray-50 cursor-pointer" @click="router.visit(`/tasks/${t.id}`)">
                             <td class="px-4 py-3 font-semibold text-blue-600">{{ t.code }}</td>
+                            <td class="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{{ formatDate(t.created_at) }}</td>
                             <td class="px-4 py-3">
                                 <div>{{ t.title || t.code }}</div>
                                 <div v-if="t.category" class="text-xs mt-0.5">
@@ -542,7 +625,9 @@ loadTasks();
         <div v-if="showCreateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
             <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
                 <div class="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white z-10">
-                    <h2 class="text-lg font-bold">{{ createType === 'repair' ? 'Tạo phiếu sửa chữa' : 'Tạo công việc mới' }}</h2>
+                    <h2 class="text-lg font-bold">
+                        {{ createType === 'repair-external' ? 'Tạo phiếu sửa chữa khách ngoài' : (createType === 'repair' ? 'Tạo phiếu sửa chữa nội bộ' : 'Tạo công việc mới') }}
+                    </h2>
                     <button @click="showCreateModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
@@ -550,8 +635,50 @@ loadTasks();
 
                     <!-- Type tabs -->
                     <div class="flex bg-gray-100 rounded-lg p-0.5">
-                        <button @click="createType = 'general'" :class="createType === 'general' ? 'bg-white shadow' : ''" class="flex-1 py-2 text-sm font-semibold rounded-md">Công việc chung</button>
-                        <button @click="createType = 'repair'" :class="createType === 'repair' ? 'bg-white shadow' : ''" class="flex-1 py-2 text-sm font-semibold rounded-md">Sửa chữa</button>
+                        <button @click="createType = 'general'" :class="createType === 'general' ? 'bg-white shadow' : ''" class="flex-1 py-2 text-xs font-semibold rounded-md">Công việc</button>
+                        <button @click="createType = 'repair'" :class="createType === 'repair' ? 'bg-white shadow' : ''" class="flex-1 py-2 text-xs font-semibold rounded-md">Sửa chữa nội bộ</button>
+                        <button @click="createType = 'repair-external'" :class="createType === 'repair-external' ? 'bg-white shadow' : ''" class="flex-1 py-2 text-xs font-semibold rounded-md">Sửa chữa khách ngoài</button>
+                    </div>
+
+                    <!-- External repair fields (Step 23.8F) -->
+                    <div v-if="createType === 'repair-external'" class="space-y-3 p-3 bg-purple-50/40 rounded-lg border border-purple-100">
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Khách hàng</label>
+                            <div class="relative">
+                                <input v-model="customerSearch" type="text" placeholder="Tìm khách hàng theo tên/SĐT..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none" />
+                                <div v-if="customerResults.length" class="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-auto">
+                                    <div v-for="c in customerResults" :key="c.id" @click="selectCustomer(c)" class="px-3 py-2 hover:bg-purple-50 cursor-pointer text-sm flex justify-between">
+                                        <span>{{ c.name }}</span>
+                                        <span class="text-gray-400">{{ c.phone }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="selectedCustomer" class="mt-1 text-xs text-purple-700 flex items-center gap-2">
+                                ✓ {{ selectedCustomer.name }} ({{ selectedCustomer.phone || 'không SĐT' }})
+                                <button @click="clearCustomer" type="button" class="text-red-500 hover:underline">Bỏ chọn</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block font-semibold text-sm mb-1">Tên khách (snapshot) *</label>
+                                <input v-model="createForm.customer_name" type="text" placeholder="VD: Anh Nam" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none" />
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-sm mb-1">SĐT khách</label>
+                                <input v-model="createForm.customer_phone" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none" />
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-sm mb-1">Ngày tiếp nhận</label>
+                            <DateTimePicker
+                                v-model="createForm.received_at"
+                                placeholder="dd/MM/yyyy HH:mm"
+                                input-class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none"
+                            />
+                        </div>
+                        <p class="text-[11px] text-gray-500">
+                            Phiếu sửa chữa khách ngoài không trừ tồn kho nội bộ. Sau khi hoàn thành sẽ tạo hóa đơn sửa chữa stock-neutral.
+                        </p>
                     </div>
 
                     <!-- Title (general) -->
@@ -587,7 +714,7 @@ loadTasks();
                                 </div>
                             </div>
                             <div v-if="selectedSerial" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                                <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}đ
+                                <strong>{{ selectedSerial.serial_number }}</strong> — {{ selectedSerial.product?.name }} — Giá vốn: {{ formatCurrency(selectedSerial.cost_price || selectedSerial.product?.cost_price) }}
                             </div>
                         </div>
 
@@ -630,7 +757,7 @@ loadTasks();
                                             class="accent-blue-600"
                                         />
                                         <span class="text-sm font-medium text-blue-700">{{ s.serial_number }}</span>
-                                        <span class="text-xs text-gray-400 ml-auto">GV: {{ Number(s.cost_price || 0).toLocaleString() }}đ</span>
+                                        <span class="text-xs text-gray-400 ml-auto">GV: {{ formatCurrency(s.cost_price || 0) }}đ</span>
                                     </label>
                                 </div>
                                 <p v-if="selectedSerialIds.length" class="text-xs text-blue-600 mt-1">Đã chọn {{ selectedSerialIds.length }} serial</p>
@@ -725,7 +852,13 @@ loadTasks();
                     <button @click="showCreateModal = false" class="px-5 py-2 border rounded-lg text-sm font-semibold">Hủy</button>
                     <button
                         @click="submitCreate"
-                        :disabled="createType === 'repair' ? (batchMode ? selectedSerialIds.length === 0 : !createForm.serial_imei_id) : !createForm.title"
+                        :disabled="
+                            createType === 'repair-external'
+                                ? (!createForm.customer_name?.trim() || !createForm.issue_description?.trim())
+                                : createType === 'repair'
+                                    ? (batchMode ? selectedSerialIds.length === 0 : !createForm.serial_imei_id)
+                                    : !createForm.title
+                        "
                         class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
                     >{{ batchMode && createType === 'repair' ? `Tạo ${selectedSerialIds.length} phiếu` : 'Tạo' }}</button>
                 </div>

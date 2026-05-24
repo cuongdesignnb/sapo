@@ -1,7 +1,14 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { formatVND as formatCurrency } from '@/utils/money';
+import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
-import axios from 'axios';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
+import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
+// STEP 24.13-FIX — use the full customer modal in supplier mode so the form
+// matches the standalone /suppliers create page (4 accordions: basic, address,
+// group, invoice info). The previous simple modal was too sparse.
+import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
 
 const page = usePage();
 
@@ -22,33 +29,9 @@ const props = defineProps({
 const allProducts = ref([...(props.products || [])]);
 const localSuppliers = ref([...(props.suppliers || [])]);
 
-// Quick Create Supplier
+// STEP 24.13-FIX — supplier modal owns its own state; page just toggles
+// `showCreateSupplierModal` and consumes the `created` event.
 const showCreateSupplierModal = ref(false);
-const creatingSupplier = ref(false);
-const newSupplier = ref({ name: '', phone: '', email: '', address: '' });
-
-const submitCreateSupplier = async () => {
-    if (!newSupplier.value.name.trim()) return;
-    creatingSupplier.value = true;
-    try {
-        const res = await axios.post('/api/suppliers/quick-store', {
-            name: newSupplier.value.name.trim(),
-            phone: newSupplier.value.phone || null,
-            email: newSupplier.value.email || null,
-            address: newSupplier.value.address || null,
-        });
-        if (res.data.success && res.data.supplier) {
-            localSuppliers.value.push(res.data.supplier);
-            selectedSupplierId.value = res.data.supplier.id;
-            showCreateSupplierModal.value = false;
-            newSupplier.value = { name: '', phone: '', email: '', address: '' };
-        }
-    } catch (e) {
-        alert(e.response?.data?.message || 'Có lỗi khi tạo nhà cung cấp');
-    } finally {
-        creatingSupplier.value = false;
-    }
-};
 
 const searchQuery = ref('');
 const showSuggestions = ref(false);
@@ -56,6 +39,47 @@ const showCreateDropdown = ref(false);
 const items = ref([]);
 
 const selectedSupplierId = ref('');
+const supplierQuery = ref('');
+const showSupplierDropdown = ref(false);
+
+const selectedSupplierObj = computed(() => {
+    if (!selectedSupplierId.value) return null;
+    return localSuppliers.value.find(s => s.id == selectedSupplierId.value);
+});
+
+const filteredSuppliers = computed(() => {
+    const q = (supplierQuery.value || '').toLowerCase().trim();
+    if (!q) return localSuppliers.value.slice(0, 20);
+    return localSuppliers.value.filter(s =>
+        (s.name && s.name.toLowerCase().includes(q)) ||
+        (s.code && s.code.toLowerCase().includes(q)) ||
+        (s.phone && s.phone.includes(q))
+    ).slice(0, 20);
+});
+
+let supplierSearchTimeout;
+const handleSupplierSearch = () => {
+    clearTimeout(supplierSearchTimeout);
+    supplierSearchTimeout = setTimeout(() => {
+        showSupplierDropdown.value = true;
+    }, 100);
+};
+
+const hideSupplierDropdown = () => {
+    setTimeout(() => { showSupplierDropdown.value = false; }, 200);
+};
+
+const pickSupplier = (supplier) => {
+    selectedSupplierId.value = supplier.id;
+    supplierQuery.value = '';
+    showSupplierDropdown.value = false;
+};
+
+const clearSupplier = () => {
+    selectedSupplierId.value = '';
+    supplierQuery.value = '';
+};
+
 const selectedEmployeeId = ref('');
 // Use local time (not UTC) for datetime-local input
 const pad = (n) => String(n).padStart(2, '0');
@@ -70,12 +94,185 @@ const submitRef = ref(false);
 const paymentMethod = ref('cash');
 const bankAccountInfo = ref('');
 
+// Chi phí nhập khác
+const otherCosts = ref([]);
+const showOtherCosts = ref(false);
+const newCostName = ref('');
+const newCostAmount = ref(0);
+
+const addOtherCost = () => {
+    if (!newCostName.value.trim()) return;
+    otherCosts.value.push({
+        id: Date.now(),
+        name: newCostName.value.trim(),
+        amount: Number(newCostAmount.value) || 0,
+    });
+    newCostName.value = '';
+    newCostAmount.value = 0;
+};
+const removeOtherCost = (index) => {
+    otherCosts.value.splice(index, 1);
+};
+const totalOtherCosts = computed(() => otherCosts.value.reduce((s, c) => s + (Number(c.amount) || 0), 0));
+
+const PURCHASE_DRAFT_KEY = 'kiot.purchase.create.draft.v1';
+
+const isRestoringDraft = ref(false);
+const lastDraftSavedAt = ref(null);
+const showRestoreDraftBanner = ref(false);
+const pendingDraft = ref(null);
+
+const buildDraftSnapshot = () => ({
+    version: 1,
+    saved_at: new Date().toISOString(),
+    purchaseCode: props.purchaseCode,
+    selectedSupplierId: selectedSupplierId.value || '',
+    supplierQuery: supplierQuery.value || '',
+    selectedEmployeeId: selectedEmployeeId.value || '',
+    purchaseDate: purchaseDate.value || '',
+    status: status.value || 'completed',
+    discount: Number(discount.value) || 0,
+    paidAmount: Number(paidAmount.value) || 0,
+    note: note.value || '',
+    paymentMethod: paymentMethod.value || 'cash',
+    bankAccountInfo: bankAccountInfo.value || '',
+    otherCosts: Array.isArray(otherCosts.value) ? otherCosts.value : [],
+    items: items.value.map((item) => ({
+        product_id: item.product_id,
+        sku: item.sku,
+        name: item.name,
+        has_serial: !!item.has_serial,
+        quantity: Number(item.quantity) || 0,
+        price: Number(item.price) || 0,
+        retail_price: Number(item.retail_price) || 0,
+        technician_price: Number(item.technician_price) || 0,
+        discount: Number(item.discount) || 0,
+        stock_quantity: Number(item.stock_quantity) || 0,
+        serials: Array.isArray(item.serials) ? [...item.serials] : [],
+        serialInput: item.serialInput || '',
+        showSerialArea: !!item.showSerialArea,
+        warranty_months: Number(item.warranty_months) || 0,
+    })),
+});
+
+const hasMeaningfulDraft = computed(() =>
+    items.value.length > 0 ||
+    !!selectedSupplierId.value ||
+    !!note.value ||
+    Number(discount.value) > 0 ||
+    Number(paidAmount.value) > 0 ||
+    otherCosts.value.length > 0
+);
+
+const saveBrowserDraft = (silent = false) => {
+    if (!hasMeaningfulDraft.value) return;
+
+    const snapshot = buildDraftSnapshot();
+    localStorage.setItem(PURCHASE_DRAFT_KEY, JSON.stringify(snapshot));
+    lastDraftSavedAt.value = new Date();
+
+    if (!silent) {
+        alert('Đã lưu nháp phiếu nhập trên trình duyệt.');
+    }
+};
+
+const clearBrowserDraft = () => {
+    localStorage.removeItem(PURCHASE_DRAFT_KEY);
+    pendingDraft.value = null;
+    showRestoreDraftBanner.value = false;
+    lastDraftSavedAt.value = null;
+};
+
+const restoreDraft = (draft) => {
+    if (!draft || draft.version !== 1) return;
+
+    isRestoringDraft.value = true;
+
+    selectedSupplierId.value = draft.selectedSupplierId || '';
+    supplierQuery.value = draft.supplierQuery || '';
+    selectedEmployeeId.value = draft.selectedEmployeeId || '';
+    purchaseDate.value = draft.purchaseDate || purchaseDate.value;
+    status.value = draft.status || 'completed';
+    discount.value = Number(draft.discount) || 0;
+    paidAmount.value = Number(draft.paidAmount) || 0;
+    note.value = draft.note || '';
+    paymentMethod.value = draft.paymentMethod || 'cash';
+    bankAccountInfo.value = draft.bankAccountInfo || '';
+    otherCosts.value = Array.isArray(draft.otherCosts) ? draft.otherCosts : [];
+    items.value = Array.isArray(draft.items) ? draft.items : [];
+
+    showRestoreDraftBanner.value = false;
+    pendingDraft.value = null;
+
+    setTimeout(() => {
+        isRestoringDraft.value = false;
+    }, 0);
+};
+
+let draftSaveTimer = null;
+
+watch(
+    [
+        items,
+        selectedSupplierId,
+        selectedEmployeeId,
+        purchaseDate,
+        status,
+        discount,
+        paidAmount,
+        note,
+        paymentMethod,
+        bankAccountInfo,
+        otherCosts,
+    ],
+    () => {
+        if (isRestoringDraft.value) return;
+        if (!hasMeaningfulDraft.value) return;
+
+        clearTimeout(draftSaveTimer);
+        draftSaveTimer = setTimeout(() => {
+            saveBrowserDraft(true);
+        }, 800);
+    },
+    { deep: true }
+);
+
+const beforeUnloadHandler = (e) => {
+    if (!hasMeaningfulDraft.value || submitRef.value) return;
+
+    saveBrowserDraft(true);
+    e.preventDefault();
+    e.returnValue = '';
+};
+
 onMounted(() => {
     if (props.purchaseOrderInfo) {
         selectedSupplierId.value = props.purchaseOrderInfo.supplier_id || '';
         discount.value = props.purchaseOrderInfo.discount || 0;
         items.value = props.purchaseOrderInfo.items || [];
     }
+
+    const rawDraft = localStorage.getItem(PURCHASE_DRAFT_KEY);
+    if (rawDraft) {
+        try {
+            const draft = JSON.parse(rawDraft);
+
+            if (draft?.items?.length || draft?.selectedSupplierId || draft?.note) {
+                pendingDraft.value = draft;
+                showRestoreDraftBanner.value = true;
+            }
+        } catch (e) {
+            console.warn('Invalid purchase draft, clearing', e);
+            localStorage.removeItem(PURCHASE_DRAFT_KEY);
+        }
+    }
+
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+});
+
+onBeforeUnmount(() => {
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    if (draftSaveTimer) clearTimeout(draftSaveTimer);
 });
 
 const filteredProducts = computed(() => {
@@ -150,8 +347,39 @@ const getItemTotal = (item) => {
 };
 
 const totalAmount = computed(() => items.value.reduce((sum, item) => sum + getItemTotal(item), 0));
-const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value)));
-const debtAmount = computed(() => Math.max(0, totalPayment.value - Number(paidAmount.value)));
+const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(discount.value) + totalOtherCosts.value));
+
+// HOTFIX 24.21 — surface supplier balance + overpayment instead of clamping at 0.
+// `currentPurchaseBalance` is `cần trả − đã trả`:
+//   > 0 → operator still owes the supplier (Còn nợ)
+//   < 0 → operator overpaid; |balance| is the change the supplier should refund
+//          (Tiền thừa). The legacy `debtAmount` computed clamps to 0 so the UI
+//          previously had no signal for the overpaid branch.
+const currentPurchaseBalance = computed(
+    () => Number(totalPayment.value || 0) - Number(paidAmount.value || 0)
+);
+const currentPurchaseDebt = computed(() => Math.max(0, currentPurchaseBalance.value));
+const purchaseOverpaidAmount = computed(() => Math.max(0, -currentPurchaseBalance.value));
+
+const oldSupplierBalance = computed(
+    () => Number(selectedSupplierObj.value?.supplier_debt_amount || 0)
+);
+const oldSupplierDebt = computed(() => Math.max(0, oldSupplierBalance.value));
+const oldSupplierCredit = computed(() => Math.max(0, -oldSupplierBalance.value));
+
+// Sau khi lưu phiếu này, công nợ NCC sẽ thay đổi bằng đúng
+// `currentPurchaseBalance` (backend cộng debt_amount = pay − paid vào
+// supplier_debt_amount). Hiển thị dự kiến để operator không phải tự nhẩm.
+const projectedSupplierBalance = computed(
+    () => oldSupplierBalance.value + currentPurchaseBalance.value
+);
+const projectedSupplierDebt = computed(() => Math.max(0, projectedSupplierBalance.value));
+const projectedSupplierCredit = computed(() => Math.max(0, -projectedSupplierBalance.value));
+
+// Backward-compat: nhiều chỗ trong template đang đọc `debtAmount` — giữ alias
+// nhưng map sang `currentPurchaseDebt` để vẫn clamp ≥ 0 (đúng với label
+// "Tính vào công nợ" cũ).
+const debtAmount = currentPurchaseDebt;
 
 const save = () => {
     if (items.value.length === 0) {
@@ -172,21 +400,25 @@ const save = () => {
         employee_id: selectedEmployeeId.value || null,
         purchase_date: purchaseDate.value || null,
         note: note.value,
-        discount: discount.value,
-        paid_amount: paidAmount.value,
+        discount: Number(discount.value) || 0,
+        other_costs: otherCosts.value.map(c => ({ name: c.name, amount: Number(c.amount) || 0 })),
+        paid_amount: Number(paidAmount.value) || 0,
         payment_method: paymentMethod.value,
         bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
         items: items.value.map(item => ({
             product_id: item.product_id,
             quantity: item.has_serial ? (item.serials?.length || 0) : (parseInt(item.quantity) || 0),
-            price: item.price,
-            retail_price: item.retail_price || 0,
-            technician_price: item.technician_price || 0,
-            discount: item.discount,
+            price: Number(item.price) || 0,
+            retail_price: Number(item.retail_price) || 0,
+            technician_price: Number(item.technician_price) || 0,
+            discount: Number(item.discount) || 0,
             serials: item.serials || [],
             warranty_months: item.warranty_months || 0,
         }))
     }, {
+        onSuccess: () => {
+            clearBrowserDraft();
+        },
         onError: (errors) => {
             const firstError = Object.values(errors)[0];
             if (firstError) alert(firstError);
@@ -197,171 +429,15 @@ const save = () => {
     });
 };
 
-const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
-// Format input hiển thị giá Việt Nam (8.000.000) nhưng lưu số thật
-const parseCurrencyInput = (str) => {
-    if (!str && str !== 0) return 0;
-    return Number(String(str).replace(/\./g, '').replace(/,/g, '')) || 0;
-};
-const formatCurrencyInput = (val) => {
-    const num = Number(val) || 0;
-    return num.toLocaleString('vi-VN');
-};
-const onCurrencyInput = (obj, field, event) => {
-    const raw = event.target.value;
-    obj[field] = parseCurrencyInput(raw);
-    event.target.value = formatCurrencyInput(obj[field]);
-};
-const onCurrencyFocus = (event) => {
-    const val = parseCurrencyInput(event.target.value);
-    if (val === 0) event.target.value = '';
-    else event.target.value = String(val);
-};
-const onCurrencyBlur = (obj, field, event) => {
-    const val = parseCurrencyInput(event.target.value);
-    obj[field] = val;
-    event.target.value = formatCurrencyInput(val);
-};
 
-// === Quick Create Product Modal ===
+// STEP 24.13 — page now just toggles the shared product modal.
 const showCreateProductModal = ref(false);
-const creatingProduct = ref(false);
-const createProductErrors = ref({});
-const newProduct = ref({
-    name: '',
-    sku: '',
-    barcode: '',
-    category_id: '',
-    brand_id: '',
-    cost_price: 0,
-    retail_price: 0,
-    technician_price: 0,
-    has_serial: false,
-});
+const openCreateProductModal = () => { showCreateProductModal.value = true; };
 
-const openCreateProductModal = () => {
-    newProduct.value = {
-        name: '',
-        sku: '',
-        barcode: '',
-        category_id: '',
-        brand_id: '',
-        cost_price: 0,
-        retail_price: 0,
-        technician_price: 0,
-        has_serial: false,
-    };
-    createProductErrors.value = {};
-    showCreateProductModal.value = true;
-};
-
-const closeCreateProductModal = () => {
-    showCreateProductModal.value = false;
-};
-
-const submitCreateProduct = async () => {
-    if (!newProduct.value.name) {
-        createProductErrors.value = { name: 'Tên hàng hóa là bắt buộc' };
-        return;
-    }
-    creatingProduct.value = true;
-    createProductErrors.value = {};
-    try {
-        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-        const res = await axios.post('/products/quick-store', newProduct.value, {
-            headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' }
-        });
-        if (res.data.success && res.data.product) {
-            const created = res.data.product;
-            allProducts.value.push(created);
-            // Auto-add to purchase items
-            selectProduct(created);
-            closeCreateProductModal();
-        }
-    } catch (e) {
-        if (e.response?.status === 422 && e.response.data?.errors) {
-            createProductErrors.value = {};
-            for (const [key, msgs] of Object.entries(e.response.data.errors)) {
-                createProductErrors.value[key] = Array.isArray(msgs) ? msgs[0] : msgs;
-            }
-        } else {
-            alert('Có lỗi xảy ra khi tạo sản phẩm.');
-        }
-    } finally {
-        creatingProduct.value = false;
-    }
-};
-
-// === Quick Create Category / Brand (inline in modal) ===
 const localCategories = ref([...(props.categories || [])]);
 const localBrands = ref([...(props.brands || [])]);
 
-// Flatten tree categories for <select> display
-const flattenTree = (nodes, prefix = '') => {
-    let result = [];
-    for (const node of nodes) {
-        result.push({ id: node.id, name: prefix + node.name, parent_id: node.parent_id });
-        if (node.children && node.children.length) {
-            result = result.concat(flattenTree(node.children, prefix + '── '));
-        }
-    }
-    return result;
-};
-const flatCategories = computed(() => flattenTree(localCategories.value));
-
-const showNewCategory = ref(false);
-const newCategoryName = ref('');
-const newCategoryParentId = ref('');
-const creatingCategory = ref(false);
-const showNewBrand = ref(false);
-const newBrandName = ref('');
-const creatingBrand = ref(false);
-
-const quickCreateCategory = async () => {
-    if (!newCategoryName.value.trim()) return;
-    creatingCategory.value = true;
-    try {
-        const payload = { name: newCategoryName.value.trim() };
-        if (newCategoryParentId.value) payload.parent_id = newCategoryParentId.value;
-        const res = await axios.post('/categories/quick-store', payload);
-        if (res.data.success) {
-            const cat = res.data.category;
-            if (cat.parent_id) {
-                const addChild = (nodes) => {
-                    for (const n of nodes) {
-                        if (n.id === cat.parent_id) { if (!n.children) n.children = []; n.children.push({ ...cat, children: [] }); return true; }
-                        if (n.children && addChild(n.children)) return true;
-                    }
-                    return false;
-                };
-                addChild(localCategories.value);
-            } else {
-                localCategories.value.push({ ...cat, children: [] });
-            }
-            newProduct.value.category_id = cat.id;
-            newCategoryName.value = '';
-            newCategoryParentId.value = '';
-            showNewCategory.value = false;
-        }
-    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo nhóm hàng'); }
-    creatingCategory.value = false;
-};
-
-const quickCreateBrand = async () => {
-    if (!newBrandName.value.trim()) return;
-    creatingBrand.value = true;
-    try {
-        const res = await axios.post('/brands/quick-store', { name: newBrandName.value.trim() });
-        if (res.data.success) {
-            localBrands.value.push(res.data.brand);
-            newProduct.value.brand_id = res.data.brand.id;
-            newBrandName.value = '';
-            showNewBrand.value = false;
-        }
-    } catch (e) { alert(e.response?.data?.message || 'Lỗi tạo thương hiệu'); }
-    creatingBrand.value = false;
-};
 
 </script>
 
@@ -377,6 +453,21 @@ const quickCreateBrand = async () => {
         <div v-if="page.props.flash?.success" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 text-sm flex items-center gap-2">
             <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
             {{ page.props.flash.success }}
+        </div>
+
+        <!-- Restore Draft Banner -->
+        <div v-if="showRestoreDraftBanner && pendingDraft" class="bg-yellow-50 border-b border-yellow-200 px-4 py-3 text-[13px] text-yellow-800 flex items-center justify-between gap-3">
+            <div>
+                Có phiếu nhập nháp chưa lưu <span v-if="pendingDraft.saved_at" class="font-semibold">({{ new Date(pendingDraft.saved_at).toLocaleString('vi-VN') }})</span> — gồm {{ pendingDraft.items?.length || 0 }} dòng hàng.
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" class="rounded bg-yellow-600 px-3 py-1.5 text-white font-semibold hover:bg-yellow-700" @click="restoreDraft(pendingDraft)">
+                    Khôi phục
+                </button>
+                <button type="button" class="rounded border border-yellow-300 px-3 py-1.5 text-yellow-800 hover:bg-yellow-100" @click="clearBrowserDraft">
+                    Bỏ qua
+                </button>
+            </div>
         </div>
 
         <!-- Header -->
@@ -468,16 +559,16 @@ const quickCreateBrand = async () => {
                                     <span v-else class="font-medium text-gray-700">{{ item.serials.length }}</span>
                                 </td>
                                 <td class="p-3 w-[120px]">
-                                    <input type="text" :value="formatCurrencyInput(item.price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide">
+                                    <MoneyInput v-model="item.price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50 font-medium tracking-wide" />
                                 </td>
                                 <td v-if="showRetailPrice" class="p-3 w-[120px]">
-                                    <input type="text" :value="formatCurrencyInput(item.retail_price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'retail_price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide">
+                                    <MoneyInput v-model="item.retail_price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-blue-500 text-[13px] hover:bg-blue-50 font-medium tracking-wide" />
                                 </td>
                                 <td v-if="showTechnicianPrice" class="p-3 w-[120px]">
-                                    <input type="text" :value="formatCurrencyInput(item.technician_price)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'technician_price', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide">
+                                    <MoneyInput v-model="item.technician_price" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-purple-500 text-[13px] hover:bg-purple-50 font-medium tracking-wide" />
                                 </td>
                                 <td class="p-3 w-[100px]">
-                                    <input type="text" :value="formatCurrencyInput(item.discount)" @focus="onCurrencyFocus" @blur="onCurrencyBlur(item, 'discount', $event)" class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50">
+                                    <MoneyInput v-model="item.discount" :min="0" input-class="w-full border-b border-dashed border-gray-400 py-1 text-right outline-none focus:border-green-500 text-[13px] hover:bg-green-50" />
                                 </td>
                                 <td class="p-3 w-[80px] text-center">
                                     <input type="number" v-model.number="item.warranty_months" min="0" class="w-full border-b border-dashed border-gray-400 py-1 text-center outline-none focus:border-orange-500 text-[13px] hover:bg-orange-50" placeholder="0">
@@ -534,7 +625,13 @@ const quickCreateBrand = async () => {
                             <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
                         </select>
                     </div>
-                    <input type="datetime-local" v-model="purchaseDate" class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 w-[170px]" />
+                    <DateTimePicker
+                        v-model="purchaseDate"
+                        naked
+                        compact
+                        placeholder="dd/MM/yyyy HH:mm"
+                        input-class="text-[13px] text-gray-500 bg-transparent border-b border-dashed border-gray-300 outline-none focus:border-green-500 py-0.5 w-[170px]"
+                    />
                 </div>
 
                 <div class="flex-1 overflow-auto bg-white flex flex-col pt-2">
@@ -542,13 +639,43 @@ const quickCreateBrand = async () => {
                         <div class="relative mb-3">
                             <div class="flex items-center border-b border-gray-300 pb-1">
                                 <svg class="w-4 h-4 text-gray-400 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                                <select v-model="selectedSupplierId" class="flex-1 py-1 outline-none text-[13px] text-gray-800 bg-transparent appearance-none">
-                                    <option value="">Tìm nhà cung cấp *</option>
-                                    <option v-for="supplier in localSuppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option>
-                                </select>
+                                <!-- Selected supplier display -->
+                                <div v-if="selectedSupplierId && selectedSupplierObj" class="flex-1 flex items-center justify-between">
+                                    <span class="text-[13px] text-gray-800 font-medium">{{ selectedSupplierObj.name }}</span>
+                                    <button type="button" @click="clearSupplier" class="text-gray-400 hover:text-red-500 ml-1" title="Bỏ chọn">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    </button>
+                                </div>
+                                <!-- Search input -->
+                                <input
+                                    v-else
+                                    v-model="supplierQuery"
+                                    @input="handleSupplierSearch"
+                                    @focus="showSupplierDropdown = true; handleSupplierSearch()"
+                                    @blur="hideSupplierDropdown"
+                                    type="text"
+                                    class="flex-1 py-1 outline-none text-[13px] text-gray-800 bg-transparent"
+                                    placeholder="Tìm nhà cung cấp (tên, SĐT, mã) *"
+                                >
                                 <button type="button" @click="showCreateSupplierModal = true" class="text-green-600 hover:text-green-700 font-bold text-lg leading-none ml-1" title="Thêm nhà cung cấp">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                                 </button>
+                            </div>
+                            <!-- Supplier search results dropdown -->
+                            <div v-if="showSupplierDropdown && !selectedSupplierId" class="absolute left-0 right-0 top-full mt-1 bg-white shadow-xl rounded border border-gray-200 z-50 max-h-[200px] overflow-auto">
+                                <div v-if="filteredSuppliers.length === 0" class="px-3 py-3 text-sm text-gray-400 text-center">
+                                    Không tìm thấy "{{ supplierQuery }}"
+                                    <button @mousedown.prevent="showCreateSupplierModal = true" class="block mx-auto mt-1 text-green-600 font-semibold hover:underline text-xs">+ Tạo NCC mới</button>
+                                </div>
+                                <div v-for="s in filteredSuppliers" :key="s.id"
+                                    @mousedown.prevent="pickSupplier(s)"
+                                    class="flex items-center justify-between px-3 py-2 hover:bg-green-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors text-[13px]">
+                                    <div>
+                                        <div class="font-semibold text-gray-800">{{ s.name }}</div>
+                                        <div class="text-[11px] text-gray-500">{{ s.code }} | {{ s.phone || '—' }}</div>
+                                    </div>
+                                    <div v-if="s.supplier_debt_amount > 0" class="text-[11px] text-red-500 font-semibold">Nợ: {{ formatCurrency(s.supplier_debt_amount) }}</div>
+                                </div>
                             </div>
                         </div>
 
@@ -573,7 +700,28 @@ const quickCreateBrand = async () => {
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Giảm giá</label>
-                                <input type="text" :value="formatCurrencyInput(discount)" @focus="onCurrencyFocus" @blur="(e) => { discount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(discount); }" class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50">
+                                <MoneyInput v-model="discount" :min="0" input-class="w-[150px] border-b border-dashed border-gray-300 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50" />
+                            </div>
+
+                            <!-- Chi phí nhập khác -->
+                            <div class="flex justify-between items-center text-[13px]">
+                                <label class="text-gray-700 font-medium">Chi phí nhập khác</label>
+                                <button @click="showOtherCosts = !showOtherCosts" class="flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium">
+                                    <span>→</span>
+                                    <span>{{ formatCurrency(totalOtherCosts) }}</span>
+                                </button>
+                            </div>
+                            <div v-if="showOtherCosts" class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-[13px] space-y-2">
+                                <div v-for="(cost, ci) in otherCosts" :key="cost.id" class="flex items-center gap-2">
+                                    <input type="text" v-model="cost.name" class="flex-1 border border-gray-300 rounded px-2 py-1 text-[12px] outline-none focus:border-green-500" />
+                                    <MoneyInput v-model="cost.amount" :min="0" input-class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" />
+                                    <button @click="removeOtherCost(ci)" class="text-red-400 hover:text-red-600 text-sm">✕</button>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <input type="text" v-model="newCostName" @keydown.enter="addOtherCost" class="flex-1 border border-gray-300 rounded px-2 py-1 text-[12px] outline-none focus:border-green-500" placeholder="Tên chi phí (VD: Ship hàng)" />
+                                    <MoneyInput v-model="newCostAmount" :min="0" placeholder="Số tiền" input-class="w-[100px] border border-gray-300 rounded px-2 py-1 text-right text-[12px] outline-none focus:border-green-500" />
+                                    <button @click="addOtherCost" class="text-green-600 hover:text-green-700 text-sm font-bold">+</button>
+                                </div>
                             </div>
 
                             <div class="flex justify-between items-center text-[13px] pt-2">
@@ -583,12 +731,48 @@ const quickCreateBrand = async () => {
 
                             <div class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium">Tiền trả nhà cung cấp</label>
-                                <input type="text" :value="formatCurrencyInput(paidAmount)" @focus="onCurrencyFocus" @blur="(e) => { paidAmount = parseCurrencyInput(e.target.value); e.target.value = formatCurrencyInput(paidAmount); }" class="w-[150px] border-b border-gray-400 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50 font-bold text-blue-600">
+                                <MoneyInput v-model="paidAmount" :min="0" input-class="w-[150px] border-b border-gray-400 text-right pr-2 py-0.5 outline-none focus:border-green-500 hover:bg-green-50 font-bold text-blue-600" />
                             </div>
 
-                            <div class="flex justify-between items-center text-[13px]">
+                            <!-- HOTFIX 24.21 — show overpayment when the operator paid
+                                 more than the invoice asks for; previously the surplus
+                                 silently disappeared. -->
+                            <div v-if="currentPurchaseDebt > 0" class="flex justify-between items-center text-[13px]">
+                                <label class="text-gray-700 font-medium">Còn nợ phiếu này</label>
+                                <div class="w-[150px] text-right font-bold text-red-500 tracking-wide">{{ formatCurrency(currentPurchaseDebt) }}</div>
+                            </div>
+                            <div v-else-if="purchaseOverpaidAmount > 0" class="flex justify-between items-center text-[13px]">
+                                <label class="text-gray-700 font-medium">Tiền thừa</label>
+                                <div class="w-[150px] text-right font-bold text-green-600 tracking-wide">{{ formatCurrency(purchaseOverpaidAmount) }}</div>
+                            </div>
+                            <div v-else class="flex justify-between items-center text-[13px]">
                                 <label class="text-gray-700 font-medium text-gray-500">Tính vào công nợ</label>
-                                 <div class="w-[150px] text-right font-bold text-gray-500 tracking-wide">{{ formatCurrency(debtAmount) }}</div>
+                                <div class="w-[150px] text-right font-bold text-gray-500 tracking-wide">{{ formatCurrency(debtAmount) }}</div>
+                            </div>
+
+                            <!-- HOTFIX 24.21 — old supplier balance + projected balance after this purchase. -->
+                            <div v-if="selectedSupplierObj" class="mt-1 pt-2 border-t border-dashed border-gray-200 space-y-1">
+                                <div class="flex justify-between items-center text-[12px]">
+                                    <label class="text-gray-500">
+                                        <template v-if="oldSupplierCredit > 0">Số dư cũ NCC</template>
+                                        <template v-else>Nợ cũ NCC</template>
+                                    </label>
+                                    <div class="w-[150px] text-right font-semibold tracking-wide"
+                                         :class="oldSupplierCredit > 0 ? 'text-green-600' : oldSupplierDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                        {{ formatCurrency(oldSupplierCredit > 0 ? oldSupplierCredit : oldSupplierDebt) }}
+                                    </div>
+                                </div>
+                                <div class="flex justify-between items-center text-[12px]">
+                                    <label class="text-gray-500">
+                                        <template v-if="projectedSupplierCredit > 0">Dự kiến NCC còn dư sau phiếu này</template>
+                                        <template v-else-if="projectedSupplierDebt > 0">Dự kiến còn nợ NCC sau phiếu này</template>
+                                        <template v-else>Dự kiến công nợ NCC sau phiếu này</template>
+                                    </label>
+                                    <div class="w-[150px] text-right font-bold tracking-wide"
+                                         :class="projectedSupplierCredit > 0 ? 'text-green-600' : projectedSupplierDebt > 0 ? 'text-red-500' : 'text-gray-500'">
+                                        {{ formatCurrency(projectedSupplierCredit > 0 ? projectedSupplierCredit : projectedSupplierDebt) }}
+                                    </div>
+                                </div>
                             </div>
 
                             <!-- Payment Method -->
@@ -625,7 +809,15 @@ const quickCreateBrand = async () => {
                 </div>
 
                 <!-- Action Button -->
-                <div class="p-4 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
+                <div class="p-4 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] space-y-2">
+                    <button
+                        type="button"
+                        @click="saveBrowserDraft(false)"
+                        :disabled="!hasMeaningfulDraft"
+                        class="w-full bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 font-bold py-2.5 rounded text-[14px] transition-colors disabled:opacity-50"
+                    >
+                        Lưu nháp
+                    </button>
                     <button @click="save" :disabled="submitRef" class="w-full bg-[#2ebc5b] hover:bg-[#209644] text-white font-bold py-3 rounded text-[15px] uppercase tracking-wide transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Hoàn thành
                     </button>
@@ -636,152 +828,35 @@ const quickCreateBrand = async () => {
             </div>
         </div>
 
-        <!-- Quick Create Product Modal -->
-        <div v-if="showCreateProductModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="closeCreateProductModal">
-            <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                <!-- Modal Header -->
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white z-10">
-                    <h2 class="text-lg font-bold text-gray-800">Tạo hàng hóa mới</h2>
-                    <button @click="closeCreateProductModal" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                </div>
+        <!-- STEP 24.13 — Shared QuickCreateProductModal (replaces inline modal). -->
+        <QuickCreateProductModal
+            :show="showCreateProductModal"
+            :categories="localCategories"
+            :brands="localBrands"
+            :show-retail-price="showRetailPrice"
+            :show-technician-price="showTechnicianPrice"
+            @close="showCreateProductModal = false"
+            @created="(p) => { allProducts.push(p); selectProduct(p); }"
+        />
 
-                <!-- Modal Body -->
-                <form @submit.prevent="submitCreateProduct" class="p-6">
-                    <div class="grid grid-cols-2 gap-x-6 gap-y-4">
-                        <!-- Tên hàng -->
-                        <div class="col-span-2">
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Tên hàng <span class="text-red-500">*</span></label>
-                            <input type="text" v-model="newProduct.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập tên hàng hóa">
-                            <span v-if="createProductErrors.name" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.name }}</span>
-                        </div>
+        <QuickCreateCustomerModal
+            :show="showCreateSupplierModal"
+            api-url="/api/suppliers/quick-store"
+            entity-label="nhà cung cấp"
+            :is-supplier="true"
+            @close="showCreateSupplierModal = false"
+            @created="(s) => {
+                const exists = localSuppliers.some((item) => item.id === s.id);
+                if (!exists) localSuppliers.push(s);
 
-                        <!-- Mã hàng -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã hàng</label>
-                            <input type="text" v-model="newProduct.sku" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Tự động">
-                            <span v-if="createProductErrors.sku" class="text-red-500 text-xs mt-1 block">{{ createProductErrors.sku }}</span>
-                        </div>
+                selectedSupplierId = s.id;
+                supplierQuery = '';
+                showSupplierDropdown = false;
+                showCreateSupplierModal = false;
 
-                        <!-- Mã vạch -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Mã vạch</label>
-                            <input type="text" v-model="newProduct.barcode" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Nhập mã vạch">
-                        </div>
+                saveBrowserDraft(true);
+            }"
+        />
 
-                        <!-- Nhóm hàng -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Nhóm hàng</label>
-                            <div class="flex gap-1">
-                                <select v-model="newProduct.category_id" class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
-                                    <option value="">-- Chọn nhóm hàng --</option>
-                                    <option v-for="cat in flatCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                                </select>
-                                <button type="button" @click="showNewCategory = !showNewCategory" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm nhóm hàng">+</button>
-                            </div>
-                            <div v-if="showNewCategory" class="mt-1 space-y-1 bg-blue-50 border border-blue-200 rounded p-2">
-                                <select v-model="newCategoryParentId" class="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white outline-none focus:ring-1 focus:ring-blue-500">
-                                    <option value="">-- Nhóm cha (không chọn = nhóm gốc) --</option>
-                                    <option v-for="cat in flatCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                                </select>
-                                <div class="flex gap-1">
-                                    <input type="text" v-model="newCategoryName" @keyup.enter="quickCreateCategory" placeholder="Tên nhóm hàng mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
-                                    <button type="button" @click="quickCreateCategory" :disabled="creatingCategory" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Thương hiệu -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Thương hiệu</label>
-                            <div class="flex gap-1">
-                                <select v-model="newProduct.brand_id" class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
-                                    <option value="">-- Chọn thương hiệu --</option>
-                                    <option v-for="brand in localBrands" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
-                                </select>
-                                <button type="button" @click="showNewBrand = !showNewBrand" class="px-2 border border-gray-300 rounded hover:bg-blue-50 hover:border-blue-400 text-blue-600 font-bold text-lg leading-none" title="Thêm thương hiệu">+</button>
-                            </div>
-                            <div v-if="showNewBrand" class="mt-1 flex gap-1">
-                                <input type="text" v-model="newBrandName" @keyup.enter="quickCreateBrand" placeholder="Tên thương hiệu mới" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none">
-                                <button type="button" @click="quickCreateBrand" :disabled="creatingBrand" class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">Lưu</button>
-                            </div>
-                        </div>
-
-                        <!-- Giá vốn -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá vốn (giá nhập)</label>
-                            <input type="number" v-model.number="newProduct.cost_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Giá bán -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán</label>
-                            <input type="number" v-model.number="newProduct.retail_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Giá bán lẻ -->
-                        <div v-if="showRetailPrice">
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán lẻ</label>
-                            <input type="number" v-model.number="newProduct.retail_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Giá bán thợ -->
-                        <div v-if="showTechnicianPrice">
-                            <label class="block text-sm font-semibold text-gray-700 mb-1">Giá bán thợ</label>
-                            <input type="number" v-model.number="newProduct.technician_price" min="0" step="1000" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-right" placeholder="0">
-                        </div>
-
-                        <!-- Serial/IMEI -->
-                        <div class="col-span-2">
-                            <label class="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
-                                <input type="checkbox" v-model="newProduct.has_serial" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
-                                Quản lý theo Serial/IMEI
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- Modal Footer -->
-                    <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-                        <button type="button" @click="closeCreateProductModal" class="px-5 py-2.5 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50">Bỏ qua</button>
-                        <button type="submit" :disabled="creatingProduct" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2">
-                            <svg v-if="creatingProduct" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                            {{ creatingProduct ? 'Đang lưu...' : 'Lưu' }}
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-
-        <!-- Quick Create Supplier Modal -->
-        <div v-if="showCreateSupplierModal" class="fixed inset-0 bg-black bg-opacity-50 z-[100] flex items-center justify-center p-4" @click.self="showCreateSupplierModal = false">
-            <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                    <h2 class="text-lg font-bold text-gray-800">Thêm nhà cung cấp</h2>
-                    <button @click="showCreateSupplierModal = false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                </div>
-                <form @submit.prevent="submitCreateSupplier" class="p-6 space-y-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Tên nhà cung cấp <span class="text-red-500">*</span></label>
-                        <input type="text" v-model="newSupplier.name" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Nhập tên nhà cung cấp">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Điện thoại</label>
-                        <input type="text" v-model="newSupplier.phone" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Số điện thoại">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
-                        <input type="email" v-model="newSupplier.email" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Email">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1">Địa chỉ</label>
-                        <input type="text" v-model="newSupplier.address" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-green-500 focus:border-green-500 outline-none" placeholder="Địa chỉ">
-                    </div>
-                    <div class="flex justify-end gap-3 pt-2">
-                        <button type="button" @click="showCreateSupplierModal = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-medium text-sm">Hủy</button>
-                        <button type="submit" :disabled="creatingSupplier || !newSupplier.name.trim()" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium text-sm disabled:opacity-50">Lưu</button>
-                    </div>
-                </form>
-            </div>
-        </div>
     </div>
 </template>

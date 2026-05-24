@@ -1,13 +1,18 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
+import DateTimePicker from '@/Components/DateTimePicker.vue';
+import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue';
+import MoneyInput from '@/Components/MoneyInput.vue';
 
 const props = defineProps({
     customers: Array,
     branches: Array,
     priceBooks: Array,
     invoice: Object,
+    action: { type: String, default: 'edit' },
 });
 
 const currentTime = computed(() => {
@@ -42,6 +47,7 @@ const createInitialTab = (index) => ({
     
     status: 'draft',
     invoice_id: null,
+    editing_invoice_id: null, // ID of invoice being edited
     discount: 0,
     otherFees: 0,
     amountPaid: 0,
@@ -133,6 +139,101 @@ watch(() => [activeTab.value?.searchQuery, activeTab.value?.selectedPriceBookId]
     }, 300);
 });
 
+// Step 22.2E: AJAX customer typeahead. Trước đây Orders/Create render tất cả props.customers
+// (Customer::all) làm dropdown đứng yên, không filter. Giờ gọi /api/customers/search,
+// debounce 250ms, hiển thị 4 trạng thái (loading / lỗi+retry / rỗng / list).
+const customerResults = ref([]);
+const customerLoading = ref(false);
+const customerError = ref('');
+let customerSearchTimer = null;
+
+const customerDisplay = (c) => {
+    if (!c) return '';
+    return c.display_label || c.name || c.phone || c.code || '';
+};
+
+const selectCustomer = (c) => {
+    if (!activeTab.value) return;
+    activeTab.value.selectedCustomer = c;
+    activeTab.value.searchCustomer = customerDisplay(c);
+    if (!activeTab.value.receiverName) activeTab.value.receiverName = c.name || '';
+    if (!activeTab.value.receiverPhone) activeTab.value.receiverPhone = c.phone || '';
+    activeTab.value.showCustomerDropdown = false;
+    customerResults.value = [];
+    customerError.value = '';
+};
+
+// STEP 24.13-FIX — quick-create customer modal for the "+" next to the
+// customer search box. Re-uses the full POS customer modal so the form
+// matches the standalone /customers create page (was a no-op button).
+const showNewCustomerModal = ref(false);
+const newCustomerInitialName = ref('');
+const openNewCustomerModal = () => {
+    newCustomerInitialName.value = activeTab.value?.searchCustomer || '';
+    showNewCustomerModal.value = true;
+};
+const onCustomerCreated = (customer) => {
+    showNewCustomerModal.value = false;
+    if (customer) selectCustomer(customer);
+};
+
+const fetchCustomers = async (query) => {
+    customerLoading.value = true;
+    customerError.value = '';
+    try {
+        const { data, headers } = await axios.get('/api/customers/search', {
+            params: { search: query },
+            timeout: 8000,
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const ct = (headers && (headers['content-type'] || headers['Content-Type'])) || '';
+        if (typeof data === 'string' || ct.includes('text/html')) {
+            customerResults.value = [];
+            customerError.value = 'Phiên đăng nhập có thể đã hết hạn. Vui lòng tải lại trang.';
+        } else {
+            customerResults.value = Array.isArray(data) ? data : [];
+        }
+    } catch (e) {
+        customerResults.value = [];
+        const status = e?.response?.status;
+        if (e?.code === 'ECONNABORTED') customerError.value = 'Tìm kiếm bị quá thời gian. Thử lại.';
+        else if (status === 401 || status === 419) customerError.value = 'Phiên đăng nhập đã hết hạn. Tải lại trang.';
+        else if (status === 403) customerError.value = 'Bạn không có quyền tìm khách hàng.';
+        else if (status === 404) customerError.value = 'Không tìm thấy API tìm khách hàng.';
+        else customerError.value = 'Lỗi tìm khách hàng. Thử lại.';
+    } finally {
+        customerLoading.value = false;
+    }
+};
+
+const retryCustomerSearch = () => {
+    const q = (activeTab.value?.searchCustomer || '').trim();
+    if (q) fetchCustomers(q);
+};
+
+watch(() => activeTab.value?.searchCustomer, (query) => {
+    clearTimeout(customerSearchTimer);
+    const q = (query || '').trim();
+    // Nếu user đã chọn KH và text vẫn trùng nhãn hiển thị → không làm gì.
+    const selected = activeTab.value?.selectedCustomer;
+    if (selected && q === customerDisplay(selected)) {
+        customerResults.value = [];
+        customerError.value = '';
+        return;
+    }
+    // Text khác KH đang chọn → coi như user đang chỉnh, bỏ KH cũ.
+    if (selected && q !== customerDisplay(selected)) {
+        activeTab.value.selectedCustomer = null;
+    }
+    if (q.length < 1) {
+        customerResults.value = [];
+        customerError.value = '';
+        customerLoading.value = false;
+        return;
+    }
+    customerSearchTimer = setTimeout(() => fetchCustomers(q), 250);
+});
+
 const handlePriceBookChange = async () => {
     if (!activeTab.value) return;
 
@@ -169,7 +270,7 @@ const handlePriceBookChange = async () => {
 const selectProduct = (product) => {
     const existing = activeTab.value.items.find(i => i.product_id === product.id);
     if (!existing) {
-        activeTab.value.items.unshift({ 
+        const newItem = {
             product_id: product.id,
             sku: product.sku,
             name: product.name,
@@ -177,12 +278,106 @@ const selectProduct = (product) => {
             price: product.selling_price || product.retail_price || product.cost_price || 0,
             discount: 0,
             stock_quantity: product.stock_quantity || 0,
-        });
+            // Step 22.1C: serial selector
+            has_serial: !!product.has_serial,
+            serial_ids: [],
+            available_serials: [],
+            serialLoading: false,
+            serialError: '',
+        };
+        activeTab.value.items.unshift(newItem);
+        // Step 22.2B: load serial bằng REACTIVE proxy reference (activeTab.value.items[0]),
+        // KHÔNG dùng `newItem` plain object — mutation trên plain object không trigger Vue reactivity
+        // nên serialLoading=false sau request không update được UI ⇒ bị treo "Đang tải…".
+        if (product.has_serial) {
+            loadAvailableSerials(activeTab.value.items[0]);
+        }
     } else {
         existing.qty++;
     }
     activeTab.value.searchQuery = '';
     activeTab.value.showSuggestions = false;
+};
+
+// Step 22.1C / 22.2B: lấy danh sách Serial/IMEI khả dụng cho sản phẩm has_serial.
+// 22.2B: hardened — timeout, HTML detection, finally luôn tắt loading,
+// item PHẢI là reactive proxy (activeTab.value.items[index]) để UI re-render.
+const loadAvailableSerials = async (item) => {
+    if (!item || !item.product_id) return;
+
+    item.serialLoading = true;
+    item.serialError = '';
+    item.available_serials = [];
+
+    try {
+        const { data, headers } = await axios.get(`/api/products/${item.product_id}/serials`, {
+            timeout: 8000,
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        });
+
+        const ct = (headers && headers['content-type']) || '';
+        if (typeof data === 'string' || ct.includes('text/html')) {
+            item.serialError = 'Server trả HTML thay vì JSON (có thể bị redirect login). Vui lòng đăng nhập lại.';
+            return;
+        }
+
+        const list = Array.isArray(data)
+            ? data
+            : (Array.isArray(data?.data) ? data.data : null);
+
+        if (list === null) {
+            item.serialError = 'Phản hồi không hợp lệ từ server.';
+            return;
+        }
+
+        item.available_serials = list;
+        // Empty không phải error — để template hiển thị empty state riêng.
+    } catch (e) {
+        const status = e?.response?.status;
+        const ct = e?.response?.headers?.['content-type'] || '';
+        const msg = e?.response?.data?.message;
+
+        if (e?.code === 'ECONNABORTED') {
+            item.serialError = 'Tải Serial/IMEI quá lâu, vui lòng thử lại.';
+        } else if (status === 401 || status === 419) {
+            item.serialError = 'Phiên đăng nhập hết hạn, vui lòng đăng nhập lại.';
+        } else if (status === 403) {
+            item.serialError = 'Không có quyền xem Serial/IMEI.';
+        } else if (status === 404) {
+            item.serialError = 'Endpoint Serial/IMEI không tồn tại (HTTP 404).';
+        } else if (ct.includes('text/html')) {
+            item.serialError = 'Server trả HTML thay vì JSON. Kiểm tra route/login.';
+        } else {
+            item.serialError = msg || `Không tải được Serial/IMEI${status ? ` (HTTP ${status})` : ''}.`;
+        }
+        // eslint-disable-next-line no-console
+        console.debug('[OrderSerials] load failed', { product_id: item.product_id, status, error: e?.message });
+    } finally {
+        item.serialLoading = false;
+    }
+};
+
+// Step 22.2B: retry handler binding cho UI.
+const retryLoadSerials = (index) => {
+    const raw = activeTab.value?.items?.[index];
+    if (raw) loadAvailableSerials(raw);
+};
+
+// Step 22.1C: toggle 1 serial trong selection của item.
+const toggleSerial = (item, serialId) => {
+    const ids = Array.isArray(item.serial_ids) ? [...item.serial_ids] : [];
+    const idx = ids.indexOf(serialId);
+    const qty = parseInt(item.qty) || 0;
+    if (idx >= 0) {
+        ids.splice(idx, 1);
+    } else {
+        if (ids.length >= qty) {
+            alert(`Đã chọn đủ ${qty} Serial/IMEI cho sản phẩm này. Vui lòng tăng số lượng trước khi chọn thêm.`);
+            return;
+        }
+        ids.push(serialId);
+    }
+    item.serial_ids = ids;
 };
 
 const hideSuggestions = () => {
@@ -207,36 +402,91 @@ const itemsComputed = computed(() => {
     });
 });
 
+// Step 22.2B: cắt bớt serial_ids khi qty giảm — chuyển từ computed (side-effect bẩn)
+// sang watch sạch sẽ. Computed không được mutate state.
+watch(
+    () => activeTab.value?.items?.map(i => ({ id: i.product_id, qty: parseInt(i.qty) || 0, has_serial: !!i.has_serial })),
+    () => {
+        const items = activeTab.value?.items || [];
+        items.forEach(item => {
+            if (item.has_serial && Array.isArray(item.serial_ids)) {
+                const qty = parseInt(item.qty) || 0;
+                if (item.serial_ids.length > qty) {
+                    item.serial_ids = item.serial_ids.slice(0, qty);
+                }
+            }
+        });
+    },
+    { deep: true }
+);
+
 const totalAmount = computed(() => itemsComputed.value.reduce((sum, item) => sum + item.subtotal, 0));
 const totalPayment = computed(() => Math.max(0, totalAmount.value - Number(activeTab.value.discount) + Number(activeTab.value.otherFees)));
 const balance = computed(() => activeTab.value.amountPaid - (activeTab.value.isCod ? 0 : totalPayment.value));
+
+// Step 22.2G: BẮT BUỘC chọn đủ Serial/IMEI cho hàng has_serial trước khi lưu.
+// Trước đây tạo Order hàng serial mà bỏ qua tick serial vẫn luồn qua, để dồn lỗi
+// xuống processOrder — sai contract. Frontend chặn + backend chặn + processOrder fail-safe.
+const orderItemsSerialStatus = computed(() => {
+    return (activeTab.value?.items || []).map((item) => {
+        const qty = parseInt(item.qty) || 0;
+        const selected = Array.isArray(item.serial_ids) ? item.serial_ids.length : 0;
+        return {
+            product_id: item.product_id,
+            name: item.name,
+            qty,
+            selected,
+            has_serial: !!item.has_serial,
+            ok: !item.has_serial || selected === qty,
+        };
+    });
+});
+
+const orderHasSerialMissing = computed(() =>
+    orderItemsSerialStatus.value.some((s) => s.has_serial && !s.ok)
+);
+
+function validateOrderSerialSelection() {
+    const invalid = orderItemsSerialStatus.value.filter((s) => s.has_serial && !s.ok);
+    if (invalid.length === 0) return true;
+    const message = invalid
+        .map((i) => `• ${i.name}: đã chọn ${i.selected}/${i.qty} Serial/IMEI`)
+        .join('\n');
+    alert('Vui lòng chọn đủ Serial/IMEI cho các sản phẩm sau trước khi lưu đơn:\n' + message);
+    return false;
+}
 
 const save = async () => {
     if (activeTab.value.items.length === 0) {
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
         return;
     }
+    if (!validateOrderSerialSelection()) return;
     submitRef.value = true;
     try {
         const isReturn = activeTab.value.status === 'return';
-        const endpoint = isReturn ? '/returns' : '/orders';
+        const isEditing = !!activeTab.value.editing_invoice_id;
         const payload = {
             status: activeTab.value.status,
             customer_id: activeTab.value.selectedCustomer?.id || null,
             branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
             note: activeTab.value.note,
-            total_price: totalAmount.value,
-            discount: activeTab.value.discount,
-            total_payment: totalPayment.value,
-            amount_paid: activeTab.value.amountPaid,
+            total_price: Number(totalAmount.value) || 0,
+            discount: Number(activeTab.value.discount) || 0,
+            total_payment: Number(totalPayment.value) || 0,
+            amount_paid: Number(activeTab.value.amountPaid) || 0,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
-            items: itemsComputed.value,
+            items: itemsComputed.value.map(item => ({
+                ...item,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
+            })),
             invoice_id: activeTab.value.invoice_id,
-            subtotal: totalAmount.value,
-            total: totalPayment.value,
-            paid_to_customer: activeTab.value.amountPaid,
-            other_fees: activeTab.value.otherFees,
+            subtotal: Number(totalAmount.value) || 0,
+            total: Number(totalPayment.value) || 0,
+            paid_to_customer: Number(activeTab.value.amountPaid) || 0,
+            other_fees: Number(activeTab.value.otherFees) || 0,
             is_delivery: activeTab.value.isDelivery,
             receiver_name: activeTab.value.receiverName,
             receiver_phone: activeTab.value.receiverPhone,
@@ -245,15 +495,46 @@ const save = async () => {
             receiver_district: activeTab.value.receiverDistrict,
             receiver_city: activeTab.value.receiverCity,
             weight: activeTab.value.weight,
-            delivery_fee: activeTab.value.deliveryFee,
+            delivery_fee: Number(activeTab.value.deliveryFee) || 0,
             delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+            cod_amount: activeTab.value.isCod ? (Number(totalPayment.value) || 0) : 0,
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
             order_date: activeTab.value.orderDate || null,
         };
-        await router.post(endpoint, payload);
+
+        if (isEditing) {
+            // Remap items fields for backend validation (qty → quantity)
+            payload.items = payload.items.map(item => ({
+                product_id: item.product_id,
+                quantity: item.qty || item.quantity,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
+                serial_ids: item.serial_ids || [],
+            }));
+            payload.customer_paid = payload.amount_paid;
+            payload.payment_method = activeTab.value.paymentMethod || 'Tiền mặt';
+            // Update existing invoice — use Inertia callbacks
+            router.put(`/invoices/${activeTab.value.editing_invoice_id}`, payload, {
+                onSuccess: () => {
+                    submitRef.value = false;
+                    // Inertia will redirect to invoices.index via backend
+                },
+                onError: (errors) => {
+                    submitRef.value = false;
+                    const firstError = Object.values(errors)[0];
+                    if (firstError) alert(firstError);
+                },
+                onFinish: () => {
+                    submitRef.value = false;
+                },
+            });
+            return; // Don't reset tab — Inertia handles the redirect
+        } else {
+            const endpoint = isReturn ? '/returns' : '/orders';
+            await router.post(endpoint, payload);
+        }
         if (tabs.value.length > 1) {
             closeTab(activeTabIndex.value);
         } else {
@@ -265,8 +546,6 @@ const save = async () => {
         submitRef.value = false;
     }
 };
-
-const formatCurrency = (val) => Number(val).toLocaleString('vi-VN');
 
 const showReturnModal = ref(false);
 const returnSearch = ref('');
@@ -307,11 +586,39 @@ const selectInvoiceForReturn = (invoice) => {
     showReturnModal.value = false;
 };
 
+const selectInvoiceForEdit = (invoice) => {
+    activeTab.value.selectedCustomer = invoice.customer;
+    activeTab.value.searchCustomer = invoice.customer?.name || '';
+    activeTab.value.name = `Sửa HĐ ${invoice.code}`;
+    activeTab.value.status = 'draft';
+    activeTab.value.editing_invoice_id = invoice.id;
+    activeTab.value.invoice_id = invoice.id;
+    activeTab.value.selectedPriceBookId = null;
+    activeTab.value.selectedPriceBookName = invoice.price_book_name || 'Bảng giá chung';
+    activeTab.value.discount = invoice.discount || 0;
+    activeTab.value.amountPaid = invoice.customer_paid || 0;
+    activeTab.value.note = invoice.note || '';
+    activeTab.value.paymentMethod = invoice.payment_method || 'Tiền mặt';
+    activeTab.value.isDelivery = !!invoice.is_delivery;
+    activeTab.value.deliveryFee = invoice.delivery_fee || 0;
+    activeTab.value.items = (invoice.items || []).map(item => ({
+        product_id: item.product_id,
+        sku: item.product?.sku || '',
+        name: item.product?.name || 'Sản phẩm',
+        qty: item.quantity,
+        price: item.price,
+        discount: item.discount || 0,
+        stock_quantity: item.product?.stock_quantity || 0,
+        subtotal: (item.quantity * item.price) - (item.discount || 0)
+    }));
+};
+
 const saveAndPrint = async () => {
     if (activeTab.value.items.length === 0) {
         alert("Vui lòng chọn ít nhất 1 hàng hóa.");
         return;
     }
+    if (!validateOrderSerialSelection()) return;
     submitRef.value = true;
     try {
         const endpoint = activeTab.value.status === 'return' ? '/returns' : '/orders';
@@ -320,18 +627,22 @@ const saveAndPrint = async () => {
             customer_id: activeTab.value.selectedCustomer?.id || null,
             branch_id: activeTab.value.selectedBranchId || (props.branches?.[0]?.id || null),
             note: activeTab.value.note,
-            total_price: totalAmount.value,
-            discount: activeTab.value.discount,
-            total_payment: totalPayment.value,
-            amount_paid: activeTab.value.amountPaid,
+            total_price: Number(totalAmount.value) || 0,
+            discount: Number(activeTab.value.discount) || 0,
+            total_payment: Number(totalPayment.value) || 0,
+            amount_paid: Number(activeTab.value.amountPaid) || 0,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
-            items: itemsComputed.value,
+            items: itemsComputed.value.map(item => ({
+                ...item,
+                price: Number(item.price) || 0,
+                discount: Number(item.discount) || 0,
+            })),
             invoice_id: activeTab.value.invoice_id,
-            subtotal: totalAmount.value,
-            total: totalPayment.value,
-            paid_to_customer: activeTab.value.amountPaid,
-            other_fees: activeTab.value.otherFees,
+            subtotal: Number(totalAmount.value) || 0,
+            total: Number(totalPayment.value) || 0,
+            paid_to_customer: Number(activeTab.value.amountPaid) || 0,
+            other_fees: Number(activeTab.value.otherFees) || 0,
             is_delivery: activeTab.value.isDelivery,
             receiver_name: activeTab.value.receiverName,
             receiver_phone: activeTab.value.receiverPhone,
@@ -340,9 +651,9 @@ const saveAndPrint = async () => {
             receiver_district: activeTab.value.receiverDistrict,
             receiver_city: activeTab.value.receiverCity,
             weight: activeTab.value.weight,
-            delivery_fee: activeTab.value.deliveryFee,
+            delivery_fee: Number(activeTab.value.deliveryFee) || 0,
             delivery_note: activeTab.value.deliveryNote,
-            cod_amount: activeTab.value.isCod ? totalPayment.value : 0,
+            cod_amount: activeTab.value.isCod ? (Number(totalPayment.value) || 0) : 0,
             length: activeTab.value.sizeL,
             width: activeTab.value.sizeW,
             height: activeTab.value.sizeH,
@@ -377,7 +688,11 @@ onMounted(() => {
         fetchReturnInvoices();
     }
     if (props.invoice) {
-        selectInvoiceForReturn(props.invoice);
+        if (props.action === 'edit') {
+            selectInvoiceForEdit(props.invoice);
+        } else {
+            selectInvoiceForReturn(props.invoice);
+        }
     }
 });
 
@@ -393,6 +708,15 @@ onUnmounted(() => {
     </Head>
     <div class="h-screen w-screen flex flex-col bg-[#eef1f5] text-[13px] overflow-hidden font-sans fixed inset-0 z-50">
         
+        <!-- Flash Messages -->
+        <div v-if="usePage().props.flash?.error" class="bg-red-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60]">
+            <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+            {{ usePage().props.flash.error }}
+        </div>
+        <div v-if="usePage().props.flash?.success" class="bg-green-500 text-white px-4 py-2 text-sm flex items-center gap-2 flex-shrink-0 z-[60]">
+            <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+            {{ usePage().props.flash.success }}
+        </div>
         <!-- Header POS (Blue) -->
         <header class="bg-[#0052a3] text-white px-2 h-[48px] flex items-center justify-between flex-shrink-0">
             <div class="flex items-center gap-2 h-full flex-1 w-0">
@@ -478,16 +802,71 @@ onUnmounted(() => {
                                         <span v-if="item.stock_quantity <= 0"> — Hết hàng!</span>
                                         <span v-else-if="item.stock_quantity < item.qty"> — Không đủ!</span>
                                     </div>
+                                    <!-- Step 22.1C/22.2B: Serial/IMEI selector — BIND trực tiếp vào reactive proxy
+                                         activeTab.items[index] thay vì computed copy `item` để UI nhận mutation. -->
+                                    <div v-if="item.has_serial" class="mt-2 w-[260px] lg:w-[350px] xl:w-[450px]">
+                                        <div class="flex items-center justify-between mb-1">
+                                            <span class="text-[11px] font-semibold text-gray-700">
+                                                Serial/IMEI
+                                            </span>
+                                            <span
+                                                class="text-[11px] font-semibold"
+                                                :class="(activeTab.items[index]?.serial_ids?.length || 0) === parseInt(item.qty || 0) ? 'text-green-600' : 'text-orange-600'"
+                                            >Đã chọn {{ activeTab.items[index]?.serial_ids?.length || 0 }}/{{ item.qty }}</span>
+                                        </div>
+                                        <!-- Step 22.2G: cảnh báo nếu thiếu Serial/IMEI -->
+                                        <div
+                                            v-if="(activeTab.items[index]?.serial_ids?.length || 0) !== parseInt(item.qty || 0)"
+                                            class="mb-1 text-[11px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5"
+                                        >
+                                            <i class="fas fa-exclamation-triangle mr-1"></i>Cần chọn đủ Serial/IMEI trước khi lưu đơn.
+                                        </div>
+                                        <div v-if="activeTab.items[index]?.serialLoading" class="text-[11px] text-gray-400">Đang tải Serial/IMEI…</div>
+                                        <div v-else-if="activeTab.items[index]?.serialError" class="flex items-center gap-2">
+                                            <span class="text-[11px] text-red-500">{{ activeTab.items[index].serialError }}</span>
+                                            <button
+                                                type="button"
+                                                class="text-[10px] px-1.5 py-0.5 border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
+                                                @click="retryLoadSerials(index)"
+                                            >Tải lại</button>
+                                        </div>
+                                        <div v-else-if="!activeTab.items[index]?.available_serials || activeTab.items[index].available_serials.length === 0" class="flex items-center gap-2">
+                                            <span class="text-[11px] text-red-500">Không có Serial/IMEI khả dụng cho sản phẩm này.</span>
+                                            <button
+                                                type="button"
+                                                class="text-[10px] px-1.5 py-0.5 border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
+                                                @click="retryLoadSerials(index)"
+                                            >Tải lại</button>
+                                        </div>
+                                        <div v-else class="flex flex-wrap gap-1 max-h-24 overflow-auto border border-gray-200 rounded p-1 bg-gray-50">
+                                            <label
+                                                v-for="s in activeTab.items[index].available_serials"
+                                                :key="s.id"
+                                                class="flex items-center gap-1 text-[11px] bg-white border rounded px-1.5 py-0.5 cursor-pointer hover:border-blue-400"
+                                                :class="(activeTab.items[index].serial_ids || []).includes(s.id) ? 'border-blue-500 bg-blue-50 text-blue-700 font-semibold' : 'border-gray-200 text-gray-700'"
+                                                :title="s.is_legacy_status ? 'Dữ liệu cũ — status legacy/null' : ''"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    class="hidden"
+                                                    :checked="(activeTab.items[index].serial_ids || []).includes(s.id)"
+                                                    @change="toggleSerial(activeTab.items[index], s.id)"
+                                                />
+                                                {{ s.label || s.serial_number || s.imei || ('#' + s.id) }}
+                                                <span v-if="s.is_legacy_status" class="text-[9px] text-amber-600 ml-0.5">(cũ)</span>
+                                            </label>
+                                        </div>
+                                    </div>
                                 </td>
                                 <td class="p-3">
                                     <div class="flex items-center justify-center gap-1 border border-transparent hover:border-blue-400 rounded overflow-hidden w-fit mx-auto transition-colors">
-                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty > 1 ? item.qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
-                                        <input type="text" v-model="item.qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
-                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="item.qty++"><i class="fas fa-plus text-[10px]"></i></button>
+                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="activeTab.items[index].qty > 1 ? activeTab.items[index].qty-- : null"><i class="fas fa-minus text-[10px]"></i></button>
+                                        <input type="text" v-model="activeTab.items[index].qty" class="w-10 text-center outline-none text-[13px] border-b border-transparent focus:border-blue-500 py-0.5 text-blue-600 font-bold">
+                                        <button class="px-2 py-1 text-gray-400 hover:text-gray-700 font-bold" @click="activeTab.items[index].qty++"><i class="fas fa-plus text-[10px]"></i></button>
                                     </div>
                                 </td>
                                 <td class="p-3 text-right font-medium text-gray-800">
-                                    <input type="text" :value="formatCurrency(item.price)" @change="e => item.price = e.target.value.replace(/\D/g,'')" class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent">
+                                    <MoneyInput v-model="activeTab.items[index].price" :min="0" input-class="w-24 border-b border-transparent hover:border-gray-300 focus:border-blue-500 text-right outline-none bg-transparent" />
                                 </td>
                                 <td class="p-3 text-right font-bold text-gray-800 pr-4">{{ formatCurrency(item.subtotal) }}</td>
                             </tr>
@@ -520,13 +899,13 @@ onUnmounted(() => {
                         <div class="flex justify-between items-center mb-1">
                             <span>Giảm giá</span>
                             <div class="border-b border-gray-300 hover:border-blue-500 w-24 transition-colors">
-                                <input type="text" :value="formatCurrency(activeTab.discount)" @change="e => activeTab.discount = Number(e.target.value.replace(/\D/g, ''))" class="w-full text-right outline-none bg-transparent text-gray-800">
+                                <MoneyInput v-model="activeTab.discount" :min="0" input-class="w-full text-right outline-none bg-transparent text-gray-800" />
                             </div>
                         </div>
                         <div class="flex justify-between items-center mb-2">
                             <span>Thu khác</span>
                             <div class="border-b border-gray-300 hover:border-blue-500 w-24 transition-colors">
-                                <input type="text" :value="formatCurrency(activeTab.otherFees)" @change="e => activeTab.otherFees = Number(e.target.value.replace(/\D/g, ''))" class="w-full text-right outline-none bg-transparent text-gray-800">
+                                <MoneyInput v-model="activeTab.otherFees" :min="0" input-class="w-full text-right outline-none bg-transparent text-gray-800" />
                             </div>
                         </div>
                         <div class="flex justify-between items-center text-[15px] font-bold text-gray-800 pt-1">
@@ -553,16 +932,29 @@ onUnmounted(() => {
             <div class="w-[320px] bg-white flex flex-col flex-shrink-0 border-r border-[#dce3ec] z-20">
                 <!-- Top area Customer info -->
                 <div class="p-3 border-b border-[#dce3ec] relative shadow-[0_2px_4px_-2px_rgba(0,0,0,0.05)]">
-                    <div v-if="activeTab.selectedCustomer" class="flex justify-between items-center mb-2 cursor-pointer hover:bg-gray-50 -mx-1 px-1 rounded" @click="activeTab.selectedCustomer = null">
+                    <div v-if="activeTab.selectedCustomer" class="flex justify-between items-center mb-2 cursor-pointer hover:bg-gray-50 -mx-1 px-1 rounded" @click="activeTab.selectedCustomer = null; activeTab.searchCustomer = ''">
                        <div class="font-bold text-gray-800 text-[14px] flex items-center gap-1.5">
                            {{ activeTab.selectedCustomer.name }} 
                            <i class="fas fa-walking text-gray-400"></i> 
                            <i class="fas fa-caret-down text-gray-400"></i>
                        </div>
-                       <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" @click.stop />
+                       <DateTimePicker
+                            v-model="activeTab.orderDate"
+                            naked
+                            compact
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer w-[150px]"
+                            @click.stop
+                       />
                     </div>
                     <div v-else class="flex justify-end mb-2">
-                        <input type="datetime-local" v-model="activeTab.orderDate" class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer" />
+                        <DateTimePicker
+                            v-model="activeTab.orderDate"
+                            naked
+                            compact
+                            placeholder="dd/MM/yyyy HH:mm"
+                            input-class="text-[12px] text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 cursor-pointer w-[150px]"
+                        />
                     </div>
                     
                     <div class="flex gap-2 relative">
@@ -570,13 +962,28 @@ onUnmounted(() => {
                        <div class="relative flex-1">
                           <i class="fas fa-search absolute left-2 top-2 text-gray-400"></i>
                            <input v-model="activeTab.searchCustomer" @focus="activeTab.showCustomerDropdown = true" @blur="hideCustomerDropdown" placeholder="Tìm khách hàng (F4)" class="w-full border-b border-gray-300 outline-none focus:border-blue-500 py-1 pl-7 pr-6 text-[13px]" />
-                          <button class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
+                          <button type="button" @click="openNewCustomerModal" title="Thêm khách hàng mới" class="absolute right-0 top-0.5 text-gray-400 hover:text-blue-600 font-bold px-1"><i class="fas fa-plus"></i></button>
                           
-                          <!-- Dropdown Results -->
-                          <div v-if="activeTab.showCustomerDropdown" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[200px] overflow-auto">
-                              <div v-for="c in customers" :key="c.id" @mousedown.prevent="activeTab.selectedCustomer = c; activeTab.receiverName = c.name; activeTab.receiverPhone = c.phone;" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
-                                  <div class="font-bold text-gray-800">{{ c.name }}</div>
-                                  <div class="text-[12px] text-gray-500">{{ c.phone }}</div>
+                          <!-- Dropdown Results (Step 22.2E: AJAX) -->
+                          <div v-if="activeTab.showCustomerDropdown && (activeTab.searchCustomer || '').trim().length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 shadow-xl rounded z-50 max-h-[260px] overflow-auto">
+                              <div v-if="customerLoading" class="p-2 text-[12px] text-gray-500 flex items-center gap-2">
+                                  <i class="fas fa-spinner fa-spin"></i> Đang tìm khách hàng…
+                              </div>
+                              <div v-else-if="customerError" class="p-2 text-[12px] text-red-600 flex items-center justify-between gap-2">
+                                  <span>{{ customerError }}</span>
+                                  <button type="button" @mousedown.prevent="retryCustomerSearch" class="text-blue-600 hover:underline">Thử lại</button>
+                              </div>
+                              <div v-else-if="customerResults.length === 0" class="p-2 text-[12px] text-gray-500">
+                                  Không tìm thấy khách hàng phù hợp.
+                              </div>
+                              <div v-else>
+                                  <div v-for="c in customerResults" :key="c.id" @mousedown.prevent="selectCustomer(c)" class="p-2 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
+                                      <div class="font-bold text-gray-800 text-[13px]">{{ c.name }}<span v-if="c.code" class="text-gray-400 font-normal text-[11px]"> · {{ c.code }}</span></div>
+                                      <div class="text-[12px] text-gray-500 flex justify-between gap-2">
+                                          <span>{{ c.phone || c.email || '—' }}</span>
+                                          <span v-if="c.debt_amount > 0" class="text-red-600">Nợ: {{ formatCurrency(c.debt_amount) }}</span>
+                                      </div>
+                                  </div>
                               </div>
                           </div>
                        </div>
@@ -638,7 +1045,7 @@ onUnmounted(() => {
                     <div class="flex justify-between items-center mb-3 text-[13px] text-gray-700">
                        <span class="font-bold flex items-center gap-1 cursor-pointer hover:text-blue-600">Khách thanh toán <i class="fas fa-th-list text-[11px] ml-1"></i></span>
                        <div class="border-b border-gray-300 hover:border-blue-500 w-24 transition-colors">
-                           <input type="text" :value="formatCurrency(activeTab.amountPaid)" @change="e => activeTab.amountPaid = Number(e.target.value.replace(/\D/g, ''))" class="w-full text-right outline-none bg-transparent font-bold text-gray-800">
+                           <MoneyInput v-model="activeTab.amountPaid" :min="0" input-class="w-full text-right outline-none bg-transparent font-bold text-gray-800" />
                        </div>
                     </div>
                     <div class="flex justify-between items-center mb-3">
@@ -701,7 +1108,7 @@ onUnmounted(() => {
                 <div class="p-3 bg-white border-t border-[#dce3ec] flex-shrink-0">
                     <button @click="save" :disabled="submitRef" class="w-full bg-[#0062c3] hover:bg-blue-700 text-white font-bold py-3 px-4 rounded transition-colors text-[16px] shadow-sm flex items-center justify-center gap-2">
                         <i v-if="submitRef" class="fas fa-circle-notch fa-spin"></i>
-                        {{ activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
+                        {{ activeTab.editing_invoice_id ? 'CẬP NHẬT HÓA ĐƠN' : activeTab.status === 'return' ? 'TRẢ HÀNG' : 'ĐẶT HÀNG' }}
                     </button>
                     <div @click="saveAndPrint" class="text-center font-bold text-gray-500 mt-2 text-[12px] cursor-pointer hover:text-blue-600"><i class="fas fa-print"></i> (F9)</div>
                 </div>
@@ -775,6 +1182,16 @@ onUnmounted(() => {
             </div>
         </div>
     </div>
+
+    <!-- STEP 24.13-FIX — Quick Create Customer Modal (full form, matches /customers create page). -->
+    <QuickCreateCustomerModal
+        :show="showNewCustomerModal"
+        :initial-name="newCustomerInitialName"
+        api-url="/customers"
+        entity-label="khách hàng"
+        @close="showNewCustomerModal = false"
+        @created="onCustomerCreated"
+    />
 </template>
 
 <style scoped>

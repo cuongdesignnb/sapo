@@ -1,4 +1,5 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, computed, watch } from "vue";
 import { Head, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
@@ -35,8 +36,6 @@ const loadRepair = async () => {
     }
 };
 
-const formatCurrency = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
-
 const statusBadge = (status) => {
     const map = {
         pending: { label: "Chờ xử lý", cls: "bg-yellow-100 text-yellow-700" },
@@ -46,7 +45,16 @@ const statusBadge = (status) => {
     return map[status] || { label: status, cls: "bg-gray-100 text-gray-600" };
 };
 
-const repairStatusBadge = (rs) => {
+// HOTFIX 24.16C — accept the serial object so "Sẵn bán" can be downgraded
+// to "Đã bóc tách" when the physical serial.status is dismantled (e.g. a
+// disassembly that was never put back together). Falls back to the raw
+// repair_status string for older callers.
+const repairStatusBadge = (serialOrRs) => {
+    const rs = typeof serialOrRs === "string" ? serialOrRs : serialOrRs?.repair_status;
+    const status = typeof serialOrRs === "object" ? serialOrRs?.status : null;
+    if (rs === "ready" && status === "dismantled") {
+        return { label: "⚠ Đã bóc tách", cls: "bg-red-100 text-red-700" };
+    }
     const map = {
         not_started: { label: "Chưa làm", cls: "bg-red-100 text-red-600" },
         repairing: { label: "Đang xử lý", cls: "bg-yellow-100 text-yellow-600" },
@@ -200,10 +208,10 @@ loadRepair();
                                 <span class="text-gray-500">Trạng thái serial:</span>
                                 <span
                                     v-if="repair.serial_imei?.repair_status"
-                                    :class="repairStatusBadge(repair.serial_imei.repair_status).cls"
+                                    :class="repairStatusBadge(repair.serial_imei).cls"
                                     class="px-2 py-0.5 rounded-full text-xs font-semibold"
                                 >
-                                    {{ repairStatusBadge(repair.serial_imei.repair_status).label }}
+                                    {{ repairStatusBadge(repair.serial_imei).label }}
                                 </span>
                             </div>
                             <div class="flex justify-between">
@@ -219,19 +227,19 @@ loadRepair();
                         <div class="space-y-2 text-sm">
                             <div class="flex justify-between">
                                 <span class="text-gray-500">Giá gốc:</span>
-                                <span>{{ formatCurrency(repair.original_cost) }}đ</span>
+                                <span>{{ formatCurrency(repair.original_cost) }}</span>
                             </div>
                             <div class="flex justify-between">
                                 <span class="text-gray-500">Linh kiện:</span>
-                                <span>{{ formatCurrency(repair.parts_cost) }}đ</span>
+                                <span>{{ formatCurrency(repair.parts_cost) }}</span>
                             </div>
                             <div class="flex justify-between text-base font-bold border-t pt-2 mt-2">
                                 <span>Tổng giá vốn:</span>
-                                <span class="text-blue-600">{{ formatCurrency(repair.total_cost) }}đ</span>
+                                <span class="text-blue-600">{{ formatCurrency(repair.total_cost) }}</span>
                             </div>
                             <div class="flex justify-between text-xs text-gray-400 mt-1">
                                 <span>Serial cost_price hiện tại:</span>
-                                <span>{{ formatCurrency(repair.serial_imei?.cost_price) }}đ</span>
+                                <span>{{ formatCurrency(repair.serial_imei?.cost_price) }}</span>
                             </div>
                         </div>
                     </div>
@@ -342,12 +350,12 @@ loadRepair();
                                     class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex justify-between"
                                 >
                                     <span>{{ p.name }}</span>
-                                    <span class="text-gray-400">{{ formatCurrency(p.cost_price) }}đ</span>
+                                    <span class="text-gray-400">{{ formatCurrency(p.cost_price) }}</span>
                                 </div>
                             </div>
                         </div>
                         <div v-if="selectedProduct" class="mt-2 text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded">
-                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }}đ — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
+                            <strong>{{ selectedProduct.name }}</strong> — Giá vốn: {{ formatCurrency(selectedProduct.cost_price) }} — Tồn: {{ selectedProduct.stock_quantity ?? '?' }}
                         </div>
                     </div>
 

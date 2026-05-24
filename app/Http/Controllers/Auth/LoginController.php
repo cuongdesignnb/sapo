@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
@@ -23,13 +24,14 @@ class LoginController extends Controller
 
         if (Auth::attempt($credentials, $request->boolean('remember'))) {
             $user = Auth::user();
-            if ($user->status === 'locked') {
+            if (in_array($user->status, ['locked', 'inactive'])) {
                 Auth::logout();
                 return back()->withErrors([
-                    'email' => 'Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.',
+                    'email' => 'Tài khoản đã bị khóa hoặc ngừng hoạt động. Vui lòng liên hệ quản trị viên.',
                 ])->onlyInput('email');
             }
             $request->session()->regenerate();
+            ActivityLog::log('login', "Đăng nhập: {$user->name} ({$user->email})");
             return redirect()->intended('/');
         }
 
@@ -40,6 +42,10 @@ class LoginController extends Controller
 
     public function logout(Request $request)
     {
+        $user = Auth::user();
+        if ($user) {
+            ActivityLog::log('logout', "Đăng xuất: {$user->name} ({$user->email})");
+        }
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

@@ -1,9 +1,11 @@
 <script setup>
+import { formatVND as formatCurrency } from '@/utils/money';
 import { ref, watch, reactive, computed } from "vue";
 import { Head, router, Link, useForm, usePage } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
+import MoneyInput from "@/Components/MoneyInput.vue";
 import axios from "axios";
 
 const props = defineProps({
@@ -151,6 +153,10 @@ const salaryForm = reactive({
     tet_rate: 300,
     has_overtime: false,
     overtime_rate: 150,
+    saturday_ot_rate: 150,
+    sunday_ot_rate: 150,
+    rest_day_ot_rate: 150,
+    holiday_ot_rate: 150,
     // Per-employee overrides
     has_bonus: false,
     has_commission: false,
@@ -188,6 +194,10 @@ const resetSalaryForm = () => {
     salaryForm.tet_rate = 300;
     salaryForm.has_overtime = false;
     salaryForm.overtime_rate = 150;
+    salaryForm.saturday_ot_rate = 150;
+    salaryForm.sunday_ot_rate = 150;
+    salaryForm.rest_day_ot_rate = 150;
+    salaryForm.holiday_ot_rate = 150;
     salaryForm.has_bonus = false;
     salaryForm.has_commission = false;
     salaryForm.has_allowance = false;
@@ -262,6 +272,10 @@ const loadSalarySetting = async (employeeId) => {
             salaryForm.tet_rate = setting.tet_rate ?? 300;
             salaryForm.has_overtime = Boolean(setting.has_overtime);
             salaryForm.overtime_rate = setting.overtime_rate ?? 150;
+            salaryForm.saturday_ot_rate = setting.saturday_ot_rate ?? 150;
+            salaryForm.sunday_ot_rate = setting.sunday_ot_rate ?? 150;
+            salaryForm.rest_day_ot_rate = setting.rest_day_ot_rate ?? 150;
+            salaryForm.holiday_ot_rate = setting.holiday_ot_rate ?? 150;
 
             // Per-employee overrides take priority, else copy from template
             const hasCustom = setting.custom_bonuses || setting.custom_commissions || setting.custom_allowances || setting.custom_deductions;
@@ -324,33 +338,48 @@ const saveSalarySetting = async (employeeId) => {
     try {
         await axios.post(`/api/employee-salary-settings/${employeeId}`, {
             salary_type: salaryForm.salary_type,
-            base_salary: salaryForm.base_salary,
+            base_salary: Number(salaryForm.base_salary) || 0,
             salary_template_id: salaryForm.salary_template_id,
             advanced_salary: salaryForm.advanced_salary,
             holiday_rate: salaryForm.holiday_rate,
             tet_rate: salaryForm.tet_rate,
             has_overtime: salaryForm.has_overtime,
             overtime_rate: salaryForm.overtime_rate,
+            saturday_ot_rate: salaryForm.saturday_ot_rate,
+            sunday_ot_rate: salaryForm.sunday_ot_rate,
+            rest_day_ot_rate: salaryForm.rest_day_ot_rate,
+            holiday_ot_rate: salaryForm.holiday_ot_rate,
             has_bonus: salaryForm.has_bonus,
             has_commission: salaryForm.has_commission,
             has_allowance: salaryForm.has_allowance,
             has_deduction: salaryForm.has_deduction,
             bonus_type: salaryForm.bonus_type,
             bonus_calculation: salaryForm.bonus_calculation,
-            custom_bonuses: salaryForm.custom_bonuses,
-            custom_commissions: salaryForm.custom_commissions,
-            custom_allowances: salaryForm.custom_allowances,
-            custom_deductions: salaryForm.custom_deductions,
+            custom_bonuses: salaryForm.custom_bonuses.map(b => ({
+                ...b,
+                revenue_from: Number(b.revenue_from) || 0,
+                bonus_value: Number(b.bonus_value) || 0,
+            })),
+            custom_commissions: salaryForm.custom_commissions.map(c => ({
+                ...c,
+                revenue_from: Number(c.revenue_from) || 0,
+                commission_value: Number(c.commission_value) || 0,
+            })),
+            custom_allowances: salaryForm.custom_allowances.map(a => ({
+                ...a,
+                amount: Number(a.amount) || 0,
+            })),
+            custom_deductions: salaryForm.custom_deductions.map(d => ({
+                ...d,
+                amount: Number(d.amount) || 0,
+            })),
         });
     } catch (e) {
         console.error('Failed to save salary settings', e);
     }
 };
 
-const formatCurrency = (val) => {
-    if (!val && val !== 0) return '0';
-    return Number(val).toLocaleString('vi-VN');
-};
+
 
 const bonusTypeLabel = (type) => {
     const map = {
@@ -652,11 +681,7 @@ const bonusCalcLabel = (calc) => {
                                 <td class="px-4 py-3">{{ employee.phone }}</td>
                                 <td class="px-4 py-3">{{ employee.cccd }}</td>
                                 <td class="px-4 py-3 text-right">
-                                    {{
-                                        Number(
-                                            employee.balance,
-                                        ).toLocaleString()
-                                    }}
+                                    {{ formatCurrency(employee.balance) }}
                                 </td>
                                 <td class="px-4 py-3 text-gray-500">
                                     {{ employee.notes || "" }}
@@ -955,12 +980,11 @@ const bonusCalcLabel = (calc) => {
                                     <div>
                                         <label class="block font-semibold mb-1 text-gray-500">Mức lương</label>
                                         <div class="flex items-center gap-2">
-                                            <input
-                                                v-model.number="salaryForm.base_salary"
-                                                type="number"
-                                                min="0"
-                                                class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
+                                            <MoneyInput
+                                                v-model="salaryForm.base_salary"
+                                                :min="0"
                                                 placeholder="0"
+                                                input-class="w-full border border-gray-300 rounded-md px-3 py-1.5 focus:border-blue-500 outline-none"
                                             />
                                             <span class="text-gray-500 whitespace-nowrap text-sm">/ {{ salaryForm.salary_type === 'hourly' ? 'giờ' : 'tháng' }}</span>
                                         </div>
@@ -1010,16 +1034,35 @@ const bonusCalcLabel = (calc) => {
                                 </div>
 
                                 <!-- Lương làm thêm giờ -->
-                                <div class="mt-4">
+                                <div class="mt-4 border border-gray-200 rounded-lg p-4">
                                     <label class="flex items-center gap-2 cursor-pointer select-none">
                                         <input type="checkbox" v-model="salaryForm.has_overtime" class="accent-blue-600 w-4 h-4" />
                                         <span class="font-semibold text-gray-700 text-sm">Lương làm thêm giờ</span>
                                     </label>
-                                </div>
-                                <div v-if="salaryForm.has_overtime" class="mt-2 flex items-center gap-2 pl-6">
-                                    <span class="text-sm text-gray-600">Hệ số:</span>
-                                    <input v-model.number="salaryForm.overtime_rate" type="number" min="0" max="999" class="w-20 border border-gray-300 rounded px-2 py-1 text-right focus:border-blue-500 outline-none" />
-                                    <span class="text-gray-500 text-sm">%</span>
+                                    <div v-if="salaryForm.has_overtime" class="mt-3">
+                                        <table class="w-full text-sm">
+                                            <thead>
+                                                <tr class="text-gray-500 text-xs">
+                                                    <th class="text-left py-1 font-medium"></th>
+                                                    <th class="text-center py-1 font-medium">Ngày thường</th>
+                                                    <th class="text-center py-1 font-medium">Thứ 7</th>
+                                                    <th class="text-center py-1 font-medium">Chủ nhật</th>
+                                                    <th class="text-center py-1 font-medium">Ngày nghỉ</th>
+                                                    <th class="text-center py-1 font-medium">Ngày lễ tết</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td class="py-1 text-gray-600 text-xs">Hệ số lương trên giờ</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.overtime_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.saturday_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.sunday_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.rest_day_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                    <td class="py-1 text-center"><input v-model.number="salaryForm.holiday_ot_rate" type="number" min="0" max="999" class="w-16 border border-gray-300 rounded px-1.5 py-0.5 text-center text-sm focus:border-blue-500 outline-none" />%</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
 
                                 <div class="mt-4">
@@ -1083,8 +1126,9 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(b, i) in salaryForm.custom_bonuses" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="b.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
-                                                    <td class="px-2 py-1"><input v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-model="b.revenue_from" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-if="!b.bonus_is_percentage" v-model="b.bonus_value" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                        <input v-else v-model.number="b.bonus_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="b.bonus_is_percentage" class="accent-blue-600" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_bonuses.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1121,14 +1165,15 @@ const bonusCalcLabel = (calc) => {
                                             </thead>
                                             <tbody>
                                                 <tr v-for="(c, i) in salaryForm.custom_commissions" :key="i" class="border-t">
-                                                    <td class="px-2 py-1"><input v-model.number="c.revenue_from" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-model="c.revenue_from" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-2 py-1">
                                                         <select v-model="c.commission_table_id" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none">
                                                             <option :value="null">-- Không --</option>
                                                             <option v-for="ct in commissionTables" :key="ct.id" :value="ct.id">{{ ct.name }}</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-if="!c.commission_is_percentage" v-model="c.commission_value" :min="0" :disabled="!!c.commission_table_id" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                        <input v-else v-model.number="c.commission_value" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-2 py-1 text-center"><input type="checkbox" v-model="c.commission_is_percentage" class="accent-blue-600" :disabled="!!c.commission_table_id" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_commissions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
@@ -1172,7 +1217,7 @@ const bonusCalcLabel = (calc) => {
                                                             <option value="percentage">% lương</option>
                                                         </select>
                                                     </td>
-                                                    <td class="px-2 py-1"><input v-model.number="a.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
+                                                    <td class="px-2 py-1"><MoneyInput v-model="a.amount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" /></td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_allowances.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>
                                                 </tr>
                                             </tbody>
@@ -1241,10 +1286,10 @@ const bonusCalcLabel = (calc) => {
                                                     </td>
                                                     <td class="px-2 py-1">
                                                         <div class="relative">
-                                                            <input v-model.number="d.amount" type="number" min="0" class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
+                                                            <MoneyInput v-model="d.amount" :min="0" input-class="w-full border border-gray-300 rounded px-2 py-1 focus:border-blue-500 outline-none" />
                                                         </div>
                                                         <div v-if="d.calculation_type === 'per_minute' && d.per_minutes" class="text-[10px] text-gray-400 mt-0.5">
-                                                            Trừ {{ Number(d.amount || 0).toLocaleString() }}đ / {{ d.per_minutes }} phút
+                                                            Trừ {{ formatCurrency(d.amount || 0) }}đ / {{ d.per_minutes }} phút
                                                         </div>
                                                     </td>
                                                     <td class="px-1 py-1"><button type="button" @click="salaryForm.custom_deductions.splice(i, 1)" class="text-red-400 hover:text-red-600">&times;</button></td>

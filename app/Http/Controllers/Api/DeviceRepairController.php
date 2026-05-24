@@ -7,6 +7,7 @@ use App\Models\DeviceRepair;
 use App\Models\Employee;
 use App\Models\Product;
 use App\Models\SerialImei;
+use App\Services\ProductSearchService;
 use App\Services\RepairService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -25,7 +26,7 @@ class DeviceRepairController extends Controller
      */
     public function index(Request $request)
     {
-        $query = DeviceRepair::with(['product:id,name,sku', 'serialImei:id,serial_number,repair_status', 'assignedEmployee:id,name', 'branch:id,name']);
+        $query = DeviceRepair::with(['product:id,name,sku', 'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id', 'assignedEmployee:id,name', 'branch:id,name']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -67,7 +68,7 @@ class DeviceRepairController extends Controller
     {
         $deviceRepair->load([
             'product:id,name,sku,image',
-            'serialImei:id,serial_number,repair_status,cost_price',
+            'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id',
             'assignedEmployee:id,name',
             'branch:id,name',
             'parts.product:id,name,sku',
@@ -232,17 +233,21 @@ class DeviceRepairController extends Controller
     /**
      * Tìm sản phẩm (linh kiện) để xuất vào phiếu sửa.
      */
-    public function searchProducts(Request $request)
+    public function searchProducts(Request $request, ProductSearchService $productSearch)
     {
         $q = $request->get('q', '');
         if (mb_strlen($q) < 2) {
             return response()->json([]);
         }
 
-        $products = Product::where(function ($query) use ($q) {
-                $query->where('name', 'like', '%' . $q . '%')
-                      ->orWhere('sku', 'like', '%' . $q . '%');
-            })
+        $query = Product::query();
+        $productSearch->apply($query, $q, [
+            'include_serials' => true,
+            'serial_relation' => 'serials',
+        ]);
+        $productSearch->applyScore($query, $q);
+
+        $products = $query
             ->limit(10)
             ->get(['id', 'name', 'sku', 'cost_price', 'stock_quantity']);
 

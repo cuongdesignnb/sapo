@@ -1,46 +1,61 @@
 <script setup>
-import { ref, watch, computed } from "vue";
+import { formatVND as formatCurrency } from '@/utils/money';
+import { ref, computed } from "vue";
 import { Head, Link, router } from "@inertiajs/vue3";
 import AppLayout from "@/Layouts/AppLayout.vue";
 import ExcelButtons from "@/Components/ExcelButtons.vue";
 import SortableHeader from "@/Components/SortableHeader.vue";
-
-const debounce = (fn, delay) => {
-    let timeoutID;
-    return (...args) => {
-        if (timeoutID) clearTimeout(timeoutID);
-        timeoutID = setTimeout(() => {
-            fn(...args);
-        }, delay);
-    };
-};
+import { useFilters } from "@/composables/useFilters.js";
 
 const props = defineProps({
     damages: Object,
     branches: Array,
     filters: Object,
+    filterOptions: Object,
 });
 
-const searchQuery = ref(props.filters.search || "");
+const { filters, setSort, reset } = useFilters({
+    initial: props.filters,
+    route: "/damages",
+    defaults: { date_filter: "all" },
+});
+
 const expandedRow = ref(null);
-const activeDateFilter = ref(props.filters.date_filter || "all");
-const creatorQuery = ref(props.filters.created_by_name || "");
-const destroyerQuery = ref(props.filters.destroyed_by_name || "");
-const branchId = ref(props.filters.branch_id || "");
-const sortBy = ref(props.filters.sort_by || "");
-const sortDirection = ref(props.filters.sort_direction || "");
+const datePresetOptions = computed(() => props.filterOptions?.datePresets || [
+    { value: "all", label: "Toàn thời gian" },
+    { value: "today", label: "Hôm nay" },
+    { value: "this_month", label: "Tháng này" },
+]);
+const creatorOptions = computed(() => props.filterOptions?.creators || []);
+const destroyerOptions = computed(() => props.filterOptions?.destroyers || []);
 
-const activeStatusFilters = ref({
-    "Phiếu tạm": props.filters.status?.includes("draft") ?? true,
-    "Hoàn thành": props.filters.status?.includes("completed") ?? true,
-    "Đã hủy": props.filters.status?.includes("cancelled") ?? false,
+// Bridge: UI uses object map by label; canonical filter uses array of status codes
+const statusLabelMap = {
+    "Phiếu tạm": "draft",
+    "Hoàn thành": "completed",
+    "Đã hủy": "cancelled",
+};
+const activeStatusFilters = computed({
+    get() {
+        const arr = filters.status || [];
+        return Object.fromEntries(Object.entries(statusLabelMap).map(([k, v]) => [k, arr.includes(v)]));
+    },
+    set(val) {
+        const arr = Object.entries(val).filter(([, on]) => on).map(([k]) => statusLabelMap[k]);
+        filters.status = arr;
+    },
 });
+const toggleStatus = (label) => {
+    const current = { ...activeStatusFilters.value };
+    current[label] = !current[label];
+    activeStatusFilters.value = current;
+};
 
 const toggleRow = (id) => {
     expandedRow.value = expandedRow.value === id ? null : id;
 };
 
-const formatCurrency = (val) => Number(val).toLocaleString("vi-VN");
+
 const formatDate = (dateStr) => {
     if (!dateStr) return "";
     const date = new Date(dateStr);
@@ -67,63 +82,7 @@ const getStatusLabelText = (status) => {
     return "Chưa rõ";
 };
 
-const handleSort = (field, direction) => {
-    sortBy.value = field;
-    sortDirection.value = direction;
-    let activeStatuses = [];
-    if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
-    if (activeStatusFilters.value["Hoàn thành"]) activeStatuses.push("completed");
-    if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
-    router.get(
-        "/damages",
-        {
-            search: searchQuery.value,
-            status: activeStatuses,
-            branch_id: branchId.value,
-            created_by_name: creatorQuery.value,
-            destroyed_by_name: destroyerQuery.value,
-            date_filter: activeDateFilter.value,
-            sort_by: field,
-            sort_direction: direction,
-        },
-        { preserveState: true, replace: true },
-    );
-};
-
-const updateFilters = debounce(() => {
-    let activeStatuses = [];
-    if (activeStatusFilters.value["Phiếu tạm"]) activeStatuses.push("draft");
-    if (activeStatusFilters.value["Hoàn thành"]) activeStatuses.push("completed");
-    if (activeStatusFilters.value["Đã hủy"]) activeStatuses.push("cancelled");
-
-    router.get(
-        "/damages",
-        {
-            search: searchQuery.value,
-            status: activeStatuses,
-            branch_id: branchId.value,
-            created_by_name: creatorQuery.value,
-            destroyed_by_name: destroyerQuery.value,
-            date_filter: activeDateFilter.value,
-            sort_by: sortBy.value,
-            sort_direction: sortDirection.value,
-        },
-        { preserveState: true, replace: true },
-    );
-}, 300);
-
-watch(
-    [
-        searchQuery,
-        activeStatusFilters,
-        activeDateFilter,
-        creatorQuery,
-        destroyerQuery,
-        branchId,
-    ],
-    updateFilters,
-    { deep: true },
-);
+const handleSort = (field, direction) => setSort(field, direction);
 
 const printDamage = (damage) => {
     window.open(
@@ -131,6 +90,13 @@ const printDamage = (damage) => {
         "_blank",
         "width=400,height=600",
     );
+};
+
+const cancelDamage = (damage) => {
+    if (!confirm("Bạn chắc chắn muốn hủy phiếu xuất hủy này? Hệ thống sẽ rollback tồn kho và serial đã xuất hủy.")) return;
+    router.post(`/damages/${damage.id}/cancel`, {}, {
+        preserveScroll: true,
+    });
 };
 </script>
 
@@ -156,7 +122,7 @@ const printDamage = (damage) => {
                             Chi nhánh
                         </div>
                         <select
-                            v-model="branchId"
+                            v-model="filters.branch_id"
                             class="w-full border border-gray-300 rounded px-2 py-1.5 text-[13px] outline-none hover:border-blue-400 transition-colors bg-white"
                         >
                             <option value="">Tất cả chi nhánh</option>
@@ -183,7 +149,7 @@ const printDamage = (damage) => {
                             >
                                 <input
                                     type="checkbox"
-                                    v-model="activeStatusFilters[key]"
+                                    :checked="val" @change="toggleStatus(key)"
                                     class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
                                 />
                                 <span>{{ key }}</span>
@@ -207,41 +173,31 @@ const printDamage = (damage) => {
                         </div>
                         <div class="space-y-2">
                             <label
+                                v-for="preset in datePresetOptions"
+                                :key="preset.value"
                                 class="flex items-center gap-2 cursor-pointer group hover:text-blue-600 transition-colors"
                             >
                                 <input
                                     type="radio"
-                                    v-model="activeDateFilter"
-                                    value="all"
+                                    v-model="filters.date_filter"
+                                    :value="preset.value"
                                     name="date"
                                     class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
                                 />
-                                <span>Tất cả thời gian</span>
+                                <span>{{ preset.label }}</span>
                             </label>
-                            <label
-                                class="flex items-center gap-2 cursor-pointer group hover:text-blue-600 transition-colors"
-                            >
+                            <div v-if="filters.date_filter === 'custom'" class="mt-3 space-y-2">
                                 <input
-                                    type="radio"
-                                    v-model="activeDateFilter"
-                                    value="today"
-                                    name="date"
-                                    class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                    v-model="filters.date_from"
+                                    type="date"
+                                    class="w-full rounded border border-gray-300 px-2 py-1.5 text-[13px] outline-none focus:border-blue-500"
                                 />
-                                <span>Hôm nay</span>
-                            </label>
-                            <label
-                                class="flex items-center gap-2 cursor-pointer group hover:text-blue-600 transition-colors"
-                            >
                                 <input
-                                    type="radio"
-                                    v-model="activeDateFilter"
-                                    value="this_month"
-                                    name="date"
-                                    class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                    v-model="filters.date_to"
+                                    type="date"
+                                    class="w-full rounded border border-gray-300 px-2 py-1.5 text-[13px] outline-none focus:border-blue-500"
                                 />
-                                <span>Tháng này</span>
-                            </label>
+                            </div>
                         </div>
                     </div>
 
@@ -250,12 +206,19 @@ const printDamage = (damage) => {
                         <div class="font-bold mb-2 text-gray-800">
                             Người tạo
                         </div>
-                        <input
-                            type="text"
-                            v-model="creatorQuery"
-                            placeholder="Chọn người tạo"
-                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
-                        />
+                        <select
+                            v-model="filters.created_by_name"
+                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm bg-white"
+                        >
+                            <option value="">Chọn người tạo</option>
+                            <option
+                                v-for="creator in creatorOptions"
+                                :key="creator.value"
+                                :value="creator.value"
+                            >
+                                {{ creator.label }}
+                            </option>
+                        </select>
                     </div>
 
                     <!-- Destroyer Filter -->
@@ -263,12 +226,19 @@ const printDamage = (damage) => {
                         <div class="font-bold mb-2 text-gray-800">
                             Người xuất hủy
                         </div>
-                        <input
-                            type="text"
-                            v-model="destroyerQuery"
-                            placeholder="Chọn người xuất hủy"
-                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm"
-                        />
+                        <select
+                            v-model="filters.destroyed_by_name"
+                            class="w-full border border-gray-300 rounded px-3 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow text-[13px] shadow-sm bg-white"
+                        >
+                            <option value="">Chọn người xuất hủy</option>
+                            <option
+                                v-for="destroyer in destroyerOptions"
+                                :key="destroyer.value"
+                                :value="destroyer.value"
+                            >
+                                {{ destroyer.label }}
+                            </option>
+                        </select>
                     </div>
                 </div>
             </div>
@@ -299,7 +269,7 @@ const printDamage = (damage) => {
                             </svg>
                         </div>
                         <input
-                            v-model="searchQuery"
+                            v-model="filters.search"
                             type="text"
                             placeholder="Theo mã xuất hủy"
                             class="w-full bg-white pl-9 pr-8 border border-gray-300 focus:border-blue-500 hover:border-gray-400 py-1.5 rounded-sm outline-none transition-colors shadow-none text-[13px] block"
@@ -380,16 +350,16 @@ const printDamage = (damage) => {
                                         ></path>
                                     </svg>
                                 </th>
-                                <SortableHeader label="Mã xuất hủy" field="code" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Tổng giá trị hủy" field="total_value" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
-                                <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="sortBy" :current-direction="sortDirection" class="p-3 border-b border-[#dce3ec] pl-10" @sort="handleSort" />
+                                <SortableHeader label="Mã xuất hủy" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Tổng giá trị hủy" field="total_value" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="p-3 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="p-3 border-b border-[#dce3ec] pl-10" @sort="handleSort" />
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Chi nhánh
                                 </th>
                                 <th class="p-3 border-b border-[#dce3ec]">
                                     Ghi chú
                                 </th>
-                                <SortableHeader label="Trạng thái" field="status" :current-sort="sortBy" :current-direction="sortDirection" align="right" class="p-3 w-28 text-right border-b border-[#dce3ec]" @sort="handleSort" />
+                                <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="p-3 w-28 text-right border-b border-[#dce3ec]" @sort="handleSort" />
                             </tr>
                         </thead>
                         <tbody>
@@ -670,6 +640,17 @@ const printDamage = (damage) => {
                                                                             ?.name ||
                                                                         "Tên sản phẩm"
                                                                     }}
+                                                                    <div
+                                                                        v-if="item.destroyed_serials && item.destroyed_serials.length"
+                                                                        class="mt-1 flex flex-wrap gap-1"
+                                                                    >
+                                                                        <span class="text-gray-500 text-xs mr-1">Serial/IMEI xuất hủy:</span>
+                                                                        <span
+                                                                            v-for="s in item.destroyed_serials"
+                                                                            :key="s.id"
+                                                                            class="text-[11px] bg-red-50 text-red-700 border border-red-100 px-1.5 py-0.5 rounded"
+                                                                        >{{ s.serial_number || ('#' + s.id) }}</span>
+                                                                    </div>
                                                                 </td>
                                                                 <td
                                                                     class="p-3 text-right"
@@ -792,7 +773,9 @@ const printDamage = (damage) => {
                                             >
                                                 <div class="flex gap-2">
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        v-if="damage.status !== 'cancelled'"
+                                                        @click.stop="cancelDamage(damage)"
+                                                        class="bg-white border border-red-300 px-4 py-1.5 rounded text-red-600 font-medium hover:bg-red-50 flex items-center gap-2 shadow-sm"
                                                     >
                                                         <svg
                                                             class="w-4 h-4"
@@ -807,10 +790,13 @@ const printDamage = (damage) => {
                                                                 d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                                                             ></path>
                                                         </svg>
-                                                        Hủy
+                                                        Hủy phiếu
                                                     </button>
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        type="button"
+                                                        disabled
+                                                        title="Chức năng sao chép phiếu xuất hủy sẽ bổ sung sau."
+                                                        class="bg-gray-50 border border-gray-200 px-4 py-1.5 rounded text-gray-400 font-medium flex items-center gap-2 shadow-sm cursor-not-allowed"
                                                     >
                                                         <svg
                                                             class="w-4 h-4"
@@ -828,7 +814,10 @@ const printDamage = (damage) => {
                                                         Sao chép
                                                     </button>
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        type="button"
+                                                        disabled
+                                                        title="Xuất file từng phiếu sẽ bổ sung sau. Có thể dùng nút Xuất file ở danh sách."
+                                                        class="bg-gray-50 border border-gray-200 px-4 py-1.5 rounded text-gray-400 font-medium flex items-center gap-2 shadow-sm cursor-not-allowed"
                                                     >
                                                         <svg
                                                             class="w-4 h-4"
@@ -848,7 +837,10 @@ const printDamage = (damage) => {
                                                 </div>
                                                 <div class="flex gap-2">
                                                     <button
-                                                        class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm"
+                                                        type="button"
+                                                        disabled
+                                                        title="Phiếu xuất hủy không hỗ trợ lưu chỉnh sửa tại màn chi tiết trong hotfix này."
+                                                        class="bg-gray-50 border border-gray-200 px-4 py-1.5 rounded text-gray-400 font-medium flex items-center gap-2 shadow-sm cursor-not-allowed"
                                                     >
                                                         <svg
                                                             class="w-4 h-4 text-gray-500"

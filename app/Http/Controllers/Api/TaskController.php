@@ -8,6 +8,8 @@ use App\Models\TaskCategory;
 use App\Models\Employee;
 use App\Models\SerialImei;
 use App\Models\Product;
+use App\Models\Warranty;
+use App\Services\ProductSearchService;
 use App\Services\TaskService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -28,7 +30,7 @@ class TaskController extends Controller
     {
         $query = Task::with([
             'product:id,name,sku',
-            'serialImei:id,serial_number,repair_status,product_id',
+            'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id',
             'serialImei.product:id,name,sku',
             'assignedEmployee:id,name',
             'branch:id,name',
@@ -84,23 +86,43 @@ class TaskController extends Controller
 
     /**
      * Chi tiết công việc.
+     *
+     * Step 23.8F: include customer/warranty/invoice cho external repair UI.
      */
     public function show(Task $task)
     {
         $task->load([
-            'product:id,name,sku,image',
-            'serialImei:id,serial_number,repair_status,cost_price',
+            'product:id,name,sku,image,has_serial',
+            'serialImei:id,serial_number,status,repair_status,cost_price,product_id,invoice_id,sold_at,purchase_return_id',
             'assignedEmployee:id,name',
             'branch:id,name',
             'category:id,name,color,type',
-            'parts.product:id,name,sku',
+            'parts.product:id,name,sku,has_serial',
             'creator:id,name',
             'assignments.employee:id,name',
             'assignments.assigner:id,name',
             'comments.user:id,name',
+            'customer:id,name,phone,code',
+            'warranty:id,invoice_code,product_id,serial_imei,purchase_date,warranty_end_date,warranty_period',
+            'warranty.product:id,name,sku',
+            'invoice:id,code,total,customer_paid,status',
         ]);
 
-        return response()->json($task);
+        // Step 23.8F: tính warranty_valid + available_for_disassembly cho UI hiển thị
+        $extras = [
+            'warranty_valid' => $task->warranty?->warranty_end_date
+                ? \Carbon\Carbon::parse($task->warranty->warranty_end_date)->endOfDay()->gte(now())
+                : false,
+            'available_for_disassembly' => $task->is_repair && $task->serial_imei_id
+                ? max(0,
+                    (float) $task->original_cost
+                    + (float) $task->parts()->where('direction', 'export')->sum('total_cost')
+                    - (float) $task->parts()->where('direction', 'import')->sum('total_cost')
+                )
+                : null,
+        ];
+
+        return response()->json(array_merge($task->toArray(), $extras));
     }
 
     /**
@@ -109,8 +131,43 @@ class TaskController extends Controller
     public function store(Request $request)
     {
         $type = $request->input('type', Task::TYPE_GENERAL);
+        $isExternal = $request->boolean('external', false);
 
-        if ($type === Task::TYPE_REPAIR) {
+        // Step 24.0B: external repair cần permission tách `tasks.create_external` (fallback `tasks.create`).
+        if ($type === Task::TYPE_REPAIR && $isExternal) {
+            $user = $request->user();
+            if ($user && !$user->hasAnyPermission(['tasks.create_external', 'tasks.create'])) {
+                return response()->json([
+                    'message' => 'Bạn không có quyền tạo phiếu sửa chữa khách ngoài.',
+                ], 403);
+            }
+        }
+
+        if ($type === Task::TYPE_REPAIR && $isExternal) {
+            // External repair — no serial required
+            $data = $request->validate([
+                'customer_id'       => 'nullable|exists:customers,id',
+                'customer_name'     => 'nullable|string|max:255',
+                'customer_phone'    => 'nullable|string|max:30',
+                'product_id'        => 'nullable|exists:products,id',
+                'issue_description' => 'required|string|max:2000',
+                'title'             => 'nullable|string|max:255',
+                'category_id'       => 'nullable|exists:task_categories,id',
+                'priority'          => 'nullable|in:low,normal,high,urgent',
+                'branch_id'         => 'nullable|exists:branches,id',
+                'notes'             => 'nullable|string|max:2000',
+                'deadline'          => 'nullable|date',
+                'received_at'       => 'nullable|date',
+            ]);
+
+            // Must have customer_id or customer_name
+            if (empty($data['customer_id']) && empty($data['customer_name'])) {
+                return response()->json([
+                    'message' => 'Phải có thông tin khách hàng (customer_id hoặc customer_name).',
+                    'errors'  => ['customer_name' => ['Vui lòng nhập tên khách hàng.']],
+                ], 422);
+            }
+        } elseif ($type === Task::TYPE_REPAIR) {
             $data = $request->validate([
                 'serial_imei_id'    => 'required|exists:serial_imeis,id',
                 'issue_description' => 'nullable|string|max:2000',
@@ -134,10 +191,15 @@ class TaskController extends Controller
         }
 
         $data['type'] = $type;
+        $data['external'] = $isExternal;
         $data['created_by'] = $request->user()?->id;
 
-        $task = $this->service->createTask($data);
-        $task->load(['product:id,name,sku', 'serialImei:id,serial_number', 'category:id,name,color']);
+        try {
+            $task = $this->service->createTask($data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+        $task->load(['product:id,name,sku', 'serialImei:id,serial_number', 'category:id,name,color', 'customer:id,name,phone']);
 
         return response()->json($task, 201);
     }
@@ -205,9 +267,11 @@ class TaskController extends Controller
         }
 
         $data = $request->validate([
-            'product_id' => 'required|exists:products,id',
-            'quantity'   => 'required|integer|min:1',
-            'notes'      => 'nullable|string|max:500',
+            'product_id'   => 'required|exists:products,id',
+            'quantity'     => 'required|integer|min:1',
+            'notes'        => 'nullable|string|max:500',
+            'serial_ids'   => 'nullable|array',
+            'serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
 
         try {
@@ -216,7 +280,8 @@ class TaskController extends Controller
                 $data['product_id'],
                 $data['quantity'],
                 $data['notes'] ?? null,
-                $request->user()?->id
+                $request->user()?->id,
+                $data['serial_ids'] ?? null
             );
             $part->load('product:id,name,sku');
             $task->refresh();
@@ -245,17 +310,31 @@ class TaskController extends Controller
         ]);
     }
 
+
     /**
-     * Hoàn thành công việc.
+     * HOTFIX 24.11B — Rollback a disassembled part (direction='import').
+     * Separate endpoint from removePart() so the export and import flows
+     * keep their own guards and cannot be confused.
      */
-    public function complete(Request $request, Task $task)
+    public function rollbackDisassemblyPart(Request $request, Task $task, int $partId)
     {
-        $result = $this->service->markCompleted($task, $request->user()?->id);
-        return response()->json($result);
+        $part = $task->parts()->findOrFail($partId);
+
+        try {
+            $this->service->rollbackDisassembledPart($part, $request->user()?->id);
+            $task->refresh();
+
+            return response()->json([
+                'message' => 'Đã hoàn tác bóc linh kiện.',
+                'task'    => $task->only(['parts_cost', 'total_cost']),
+            ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 
     /**
-     * Bóc linh kiện từ máy — nhập vào tồn kho.
+     * Bóc linh kiện từ máy — nhập vào tồn kho. (Step 23.8E hardening)
      */
     public function disassemblePart(Request $request, Task $task)
     {
@@ -264,10 +343,12 @@ class TaskController extends Controller
         }
 
         $data = $request->validate([
-            'product_id' => 'required|exists:products,id',
-            'quantity'   => 'required|integer|min:1',
-            'unit_cost'  => 'nullable|numeric|min:0',
-            'notes'      => 'nullable|string|max:500',
+            'product_id'      => 'required|exists:products,id',
+            'quantity'        => 'required|integer|min:1',
+            'unit_cost'       => 'nullable|numeric|min:0',
+            'notes'           => 'nullable|string|max:500',
+            'serial_numbers'  => 'nullable|array',
+            'serial_numbers.*'=> 'string|max:100',
         ]);
 
         try {
@@ -277,7 +358,8 @@ class TaskController extends Controller
                 $data['quantity'],
                 isset($data['unit_cost']) ? (float) $data['unit_cost'] : null,
                 $data['notes'] ?? null,
-                $request->user()?->id
+                $request->user()?->id,
+                $data['serial_numbers'] ?? null
             );
             $part->load('product:id,name,sku');
             $task->refresh();
@@ -342,9 +424,16 @@ class TaskController extends Controller
         $from = Carbon::create($request->year, $request->month, 1)->startOfMonth();
         $to = $from->copy()->endOfMonth();
 
-        $employees = Employee::whereHas('tasks', function ($q) use ($from, $to) {
-            $q->whereBetween('assigned_at', [$from, $to]);
+        // Lấy nhân viên có assignment trong khoảng thời gian (dùng task_assignments thay vì assigned_employee_id)
+        $employees = Employee::whereHas('taskAssignments', function ($q) use ($from, $to) {
+            $q->whereHas('task', fn($tq) => $tq->whereBetween('created_at', [$from, $to]));
         })->get();
+
+        // Nếu lọc theo 1 NV cụ thể
+        if ($request->filled('employee_id')) {
+            $emp = Employee::find($request->employee_id);
+            if ($emp) $employees = collect([$emp]);
+        }
 
         $results = [];
         foreach ($employees as $emp) {
@@ -365,8 +454,13 @@ class TaskController extends Controller
             return response()->json([]);
         }
 
+        // Chỉ trả serial in_stock VÀ không có task active (pending/in_progress)
         $serials = SerialImei::with('product:id,name,sku,cost_price')
             ->where('serial_number', 'like', '%' . $q . '%')
+            ->where('status', 'in_stock')
+            ->whereDoesntHave('tasks', function ($tq) {
+                $tq->whereIn('status', ['pending', 'in_progress']);
+            })
             ->limit(10)
             ->get(['id', 'serial_number', 'product_id', 'status', 'cost_price', 'repair_status']);
 
@@ -376,17 +470,21 @@ class TaskController extends Controller
     /**
      * Tìm sản phẩm (linh kiện).
      */
-    public function searchProducts(Request $request)
+    public function searchProducts(Request $request, ProductSearchService $productSearch)
     {
         $q = $request->get('q', '');
         if (mb_strlen($q) < 2) {
             return response()->json([]);
         }
 
-        $products = Product::where(function ($query) use ($q) {
-                $query->where('name', 'like', '%' . $q . '%')
-                      ->orWhere('sku', 'like', '%' . $q . '%');
-            })
+        $query = Product::query();
+        $productSearch->apply($query, $q, [
+            'include_serials' => true,
+            'serial_relation' => 'serials',
+        ]);
+        $productSearch->applyScore($query, $q);
+
+        $products = $query
             ->limit(10)
             ->get(['id', 'name', 'sku', 'cost_price', 'stock_quantity']);
 
@@ -403,7 +501,9 @@ class TaskController extends Controller
 
         $serials = SerialImei::where('product_id', $productId)
             ->where('status', 'in_stock')
-            ->whereNull('repair_status')
+            ->whereDoesntHave('tasks', function ($tq) {
+                $tq->whereIn('status', ['pending', 'in_progress']);
+            })
             ->get(['id', 'serial_number', 'product_id', 'status', 'cost_price']);
 
         return response()->json($serials);
@@ -429,6 +529,7 @@ class TaskController extends Controller
         ]);
 
         $createdTasks = [];
+        $errors = [];
         $assignerName = $request->user()?->name ?? 'Hệ thống';
 
         foreach ($data['serial_imei_ids'] as $serialId) {
@@ -444,18 +545,189 @@ class TaskController extends Controller
                 'deadline' => $data['deadline'] ?? null,
                 'created_by' => $request->user()?->id,
             ];
-            $task = $this->service->createTask($taskData);
 
-            if (!empty($data['employee_ids'])) {
-                $this->service->assignEmployees($task, $data['employee_ids'], $request->user()?->id, $assignerName);
+            try {
+                $task = $this->service->createTask($taskData);
+                if (!empty($data['employee_ids'])) {
+                    $this->service->assignEmployees($task, $data['employee_ids'], $request->user()?->id, $assignerName);
+                }
+                $createdTasks[] = $task->id;
+            } catch (\InvalidArgumentException $e) {
+                $errors[] = $e->getMessage();
             }
+        }
 
-            $createdTasks[] = $task->id;
+        if (empty($createdTasks) && !empty($errors)) {
+            return response()->json(['message' => implode('; ', $errors)], 422);
         }
 
         return response()->json([
-            'message' => 'Đã tạo ' . count($createdTasks) . ' phiếu sửa chữa',
+            'message' => 'Đã tạo ' . count($createdTasks) . ' phiếu sửa chữa' . (count($errors) ? ', ' . count($errors) . ' lỗi' : ''),
             'task_ids' => $createdTasks,
+            'errors' => $errors,
         ], 201);
+    }
+
+    /**
+     * Hoàn thành sửa chữa.
+     *
+     * External: tạo invoice + cashflow + debt.
+     * Internal: markCompleted (không tạo invoice).
+     */
+    public function complete(Request $request, Task $task)
+    {
+        // External repair — full completion flow
+        if ($task->external && $task->type === Task::TYPE_REPAIR) {
+            // Step 24.0B: external repair cần permission tách `tasks.complete_external` (fallback `tasks.complete`).
+            $user = $request->user();
+            if ($user && !$user->hasAnyPermission(['tasks.complete_external', 'tasks.complete'])) {
+                return response()->json([
+                    'message' => 'Bạn không có quyền hoàn thành phiếu sửa chữa khách ngoài.',
+                ], 403);
+            }
+
+            $data = $request->validate([
+                'labor_fee'       => 'required|numeric|min:0',
+                'paid_amount'     => 'required|numeric|min:0',
+                'payment_method'  => 'nullable|string',
+                'note'            => 'nullable|string|max:1000',
+                'part_prices'     => 'nullable|array',
+                'part_prices.*'   => 'numeric|min:0',
+                'warranty_policy' => 'nullable|in:none,free_labor,free_parts,full_free',
+            ]);
+
+            // Step 24.0B: warranty policy free_* cần permission `tasks.apply_warranty_policy`.
+            $policy = $data['warranty_policy'] ?? 'none';
+            if ($policy !== 'none' && $user && !$user->hasPermission('tasks.apply_warranty_policy')) {
+                return response()->json([
+                    'message' => 'Bạn không có quyền áp chính sách miễn phí bảo hành.',
+                ], 403);
+            }
+
+            try {
+                $task = $this->service->completeExternalRepair($task, $data);
+                return response()->json([
+                    'message'    => 'Đã hoàn thành sửa chữa.',
+                    'task'       => $task,
+                    'invoice_id' => $task->invoice_id,
+                ]);
+            } catch (\RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        }
+
+        // Internal repair or general task — simple completion
+        try {
+            $task = $this->service->markCompleted($task, $request->user()?->id);
+            return response()->json([
+                'message' => 'Đã hoàn thành công việc.',
+                'task'    => $task,
+            ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Step 23.8D: Tra cứu warranty theo serial_imei hoặc invoice_code.
+     */
+    public function lookupWarranty(Request $request)
+    {
+        $data = $request->validate([
+            'serial_imei'  => 'nullable|string|max:100',
+            'invoice_code' => 'nullable|string|max:100',
+        ]);
+
+        if (empty($data['serial_imei']) && empty($data['invoice_code'])) {
+            return response()->json([
+                'message' => 'Cần serial_imei hoặc invoice_code.',
+            ], 422);
+        }
+
+        $query = Warranty::with('product:id,name,sku');
+        if (!empty($data['serial_imei'])) {
+            $query->where('serial_imei', $data['serial_imei']);
+        }
+        if (!empty($data['invoice_code'])) {
+            $query->where('invoice_code', $data['invoice_code']);
+        }
+
+        $warranties = $query->latest('id')->limit(20)->get()->map(function (Warranty $w) {
+            $valid = $w->warranty_end_date ? $w->warranty_end_date->endOfDay()->gte(now()) : false;
+            return [
+                'id'                => $w->id,
+                'invoice_code'      => $w->invoice_code,
+                'product_id'        => $w->product_id,
+                'product_name'      => $w->product?->name,
+                'product_sku'       => $w->product?->sku,
+                'serial_imei'       => $w->serial_imei,
+                'customer_name'     => $w->customer_name,
+                'warranty_period'   => $w->warranty_period,
+                'purchase_date'     => $w->purchase_date,
+                'warranty_end_date' => $w->warranty_end_date,
+                'valid'             => $valid,
+                'status_label'      => $valid ? 'Còn hạn' : 'Hết hạn',
+            ];
+        });
+
+        return response()->json($warranties);
+    }
+
+    /**
+     * Step 23.8D: Gắn warranty vào task sửa chữa khách ngoài.
+     */
+    public function attachWarranty(Request $request, Task $task)
+    {
+        $data = $request->validate([
+            'warranty_id' => 'required|exists:warranties,id',
+        ]);
+
+        $warranty = Warranty::find($data['warranty_id']);
+
+        try {
+            $task = $this->service->attachWarranty($task, $warranty);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $task->load('warranty');
+        $valid = $task->warranty?->warranty_end_date
+            ? $task->warranty->warranty_end_date->endOfDay()->gte(now())
+            : false;
+
+        return response()->json([
+            'message'        => 'Đã gắn bảo hành vào phiếu sửa chữa.',
+            'task'           => $task,
+            'warranty_valid' => $valid,
+        ]);
+    }
+
+    /**
+     * HOTFIX 24.18 — operator-triggered "đã lắp lại xong" restore for a
+     * serial that got stuck at status=dismantled + repair_status=ready.
+     *
+     * Thin wrapper around TaskService::restoreReassembledSerial — that
+     * method is the place all safety guards live. Surface RuntimeException
+     * messages as 422 so the FE can show the cause inline.
+     */
+    public function restoreReassembledSerial(Request $request, SerialImei $serial)
+    {
+        try {
+            $result = $this->service->restoreReassembledSerial($serial->id, $request->user()?->id);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $serial = $result['serial']->fresh();
+        $serial->load('product:id,stock_quantity,name,sku');
+
+        return response()->json([
+            'message'  => $result['restored']
+                ? 'Đã hoàn nguyên serial về kho.'
+                : 'Serial đã ở trạng thái sẵn bán — không cần hoàn nguyên.',
+            'restored' => $result['restored'],
+            'reason'   => $result['reason'] ?? null,
+            'serial'   => $serial,
+        ]);
     }
 }

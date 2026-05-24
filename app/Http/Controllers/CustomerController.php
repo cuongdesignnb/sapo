@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CashFlow;
 use App\Models\Customer;
+use App\Models\CustomerGroup;
 use App\Models\Invoice;
 use App\Models\OrderReturn;
 use App\Models\Purchase;
@@ -12,61 +13,308 @@ use App\Models\Setting;
 use App\Models\SupplierDebtTransaction;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use App\Services\CustomerDebtService;
+use App\Services\CustomerPaymentDiscountService;
+use App\Models\CustomerPaymentDiscount;
 use App\Services\DebtOffsetService;
+use App\Models\DebtOffset;
+use App\Support\Filters\FilterableIndex;
+use App\Support\Filters\DateRangePresets;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 class CustomerController extends Controller
 {
+    use FilterableIndex;
+
+    protected function configureCustomerFilters(): void
+    {
+        $this->searchable = ['code', 'name', 'phone', 'phone2', 'email', 'tax_code'];
+        $this->sortable = ['code', 'name', 'phone', 'debt_amount', 'total_spent', 'total_returns', 'created_at'];
+        $this->dateColumn = 'created_at';
+        $this->creatorColumn = 'created_by';
+        $this->scalarFilters = ['type', 'gender', 'customer_group', 'branch_id', 'city', 'district'];
+    }
+
+    /**
+     * Build capabilities — tells the frontend which advanced filters are available.
+     */
+    private function buildCapabilities(): array
+    {
+        $hasInvoiceTxDate = Schema::hasColumn('invoices', 'transaction_date');
+        return [
+            'supportsBirthdayFilter'        => true,
+            'supportsLastTransactionFilter'  => true,
+            'supportsTotalSalesTimeFilter'   => true,
+            'supportsDebtDaysFilter'         => false,
+            'supportsPointsFilter'           => false,
+            'supportsDeliveryAreaFilter'     => true,
+            'supportsCreatedByFilter'        => Schema::hasColumn('customers', 'created_by'),
+        ];
+    }
+
+    /**
+     * Safe invoice date expression: COALESCE(transaction_date, created_at) if column exists.
+     */
+    private function invoiceDateExpr(): string
+    {
+        return Schema::hasColumn('invoices', 'transaction_date')
+            ? 'COALESCE(transaction_date, created_at)'
+            : 'created_at';
+    }
+
+    /**
+     * Apply all advanced KiotViet-style customer filters.
+     * Called by both index() and export() for consistency.
+     */
+    private function applyAdvancedCustomerFilters($query, Request $request): void
+    {
+        // Branch auto-lock when setting enabled
+        if (Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id) {
+            $query->where('branch_id', auth()->user()->branch_id);
+        }
+
+        // Partner type: customer | customer_supplier
+        if ($request->filled('partner_type')) {
+            if ($request->partner_type === 'customer') {
+                $query->where('is_customer', true)->where(function ($q) {
+                    $q->where('is_supplier', false)->orWhereNull('is_supplier');
+                });
+            } elseif ($request->partner_type === 'customer_supplier') {
+                $query->where('is_customer', true)->where('is_supplier', true);
+            }
+        }
+
+        // Net debt range: debt_amount - supplier_debt_amount
+        if ($request->filled('net_debt_from') || $request->filled('net_debt_to')) {
+            $netDebtExpr = DB::raw('(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0))');
+            if ($request->filled('net_debt_from')) {
+                $query->where($netDebtExpr, '>=', (float) $request->net_debt_from);
+            }
+            if ($request->filled('net_debt_to')) {
+                $query->where($netDebtExpr, '<=', (float) $request->net_debt_to);
+            }
+        }
+
+        // Legacy has_debt shortcut (uses net debt)
+        if ($request->filled('has_debt')) {
+            $netDebtExpr = DB::raw('(COALESCE(debt_amount, 0) - COALESCE(supplier_debt_amount, 0))');
+            if ($request->has_debt === 'yes') {
+                $query->where($netDebtExpr, '>', 0);
+            } elseif ($request->has_debt === 'no') {
+                $query->where($netDebtExpr, '<=', 0);
+            }
+        }
+
+        // Birthday range — supports preset (birthday_filter) OR direct from/to.
+        // If no preset given but bare from/to provided, treat as 'custom' for back-compat.
+        $birthdayPreset = $request->input('birthday_filter')
+            ?: (($request->filled('birthday_from') || $request->filled('birthday_to')) ? 'custom' : null);
+        [$birthdayFrom, $birthdayTo] = DateRangePresets::resolve(
+            $birthdayPreset,
+            $request->input('birthday_from'),
+            $request->input('birthday_to'),
+        );
+        if ($birthdayFrom) {
+            $query->whereDate('birthday', '>=', $birthdayFrom->toDateString());
+        }
+        if ($birthdayTo) {
+            $query->whereDate('birthday', '<=', $birthdayTo->toDateString());
+        }
+
+        // Last transaction date (max invoice transaction_date for this customer)
+        // Supports preset (last_transaction_filter) OR direct from/to.
+        $lastTxPreset = $request->input('last_transaction_filter')
+            ?: (($request->filled('last_transaction_from') || $request->filled('last_transaction_to')) ? 'custom' : null);
+        [$lastTxFrom, $lastTxTo] = DateRangePresets::resolve(
+            $lastTxPreset,
+            $request->input('last_transaction_from'),
+            $request->input('last_transaction_to'),
+        );
+        if ($lastTxFrom || $lastTxTo) {
+            $subquery = Invoice::selectRaw('MAX(' . $this->invoiceDateExpr() . ')')
+                ->whereColumn('invoices.customer_id', 'customers.id');
+
+            if ($lastTxFrom) {
+                $query->where(function ($q) use ($subquery, $lastTxFrom) {
+                    $q->whereRaw('(' . $subquery->toSql() . ') >= ?', array_merge($subquery->getBindings(), [$lastTxFrom->toDateTimeString()]));
+                });
+            }
+            if ($lastTxTo) {
+                $query->where(function ($q) use ($subquery, $lastTxTo) {
+                    $q->whereRaw('(' . $subquery->toSql() . ') <= ?', array_merge($subquery->getBindings(), [$lastTxTo->toDateTimeString()]));
+                });
+            }
+        }
+
+        // Total sales range (lifetime or time-scoped via preset/custom)
+        $hasTotalSalesFilter = $request->filled('total_sales_from') || $request->filled('total_sales_to');
+        $totalSalesPreset = $request->input('total_sales_date_filter')
+            ?: (($request->filled('total_sales_date_from') || $request->filled('total_sales_date_to')) ? 'custom' : null);
+        [$totalSalesFrom, $totalSalesTo] = DateRangePresets::resolve(
+            $totalSalesPreset,
+            $request->input('total_sales_date_from'),
+            $request->input('total_sales_date_to'),
+        );
+        $hasTotalSalesTime = $totalSalesFrom || $totalSalesTo;
+
+        if ($hasTotalSalesFilter) {
+            if ($hasTotalSalesTime) {
+                // Time-scoped: must compute from invoices
+                $sumSubquery = Invoice::selectRaw('COALESCE(SUM(total), 0)')
+                    ->whereColumn('invoices.customer_id', 'customers.id');
+
+                if ($totalSalesFrom) {
+                    $sumSubquery->where(DB::raw($this->invoiceDateExpr()), '>=', $totalSalesFrom->toDateTimeString());
+                }
+                if ($totalSalesTo) {
+                    $sumSubquery->where(DB::raw($this->invoiceDateExpr()), '<=', $totalSalesTo->toDateTimeString());
+                }
+
+                if ($request->filled('total_sales_from')) {
+                    $query->whereRaw('(' . $sumSubquery->toSql() . ') >= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_from]));
+                }
+                if ($request->filled('total_sales_to')) {
+                    $query->whereRaw('(' . $sumSubquery->toSql() . ') <= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_to]));
+                }
+            } else {
+                // Lifetime: use materialized customers.total_spent
+                if ($request->filled('total_sales_from')) {
+                    $query->where('total_spent', '>=', (float) $request->total_sales_from);
+                }
+                if ($request->filled('total_sales_to')) {
+                    $query->where('total_spent', '<=', (float) $request->total_sales_to);
+                }
+            }
+        }
+
+        // Delivery area (customers.city/district/ward)
+        if ($request->filled('delivery_city')) {
+            $query->where('city', $request->delivery_city);
+        }
+        if ($request->filled('delivery_district')) {
+            $query->where('district', $request->delivery_district);
+        }
+
+        // Standard filters via FilterableIndex
+        $this->applyFilters($query, $request);
+    }
+
     public function index(Request $request)
     {
-        $search = $request->input('search');
-        $type = $request->input('type');
-        $gender = $request->input('gender');
+        $this->configureCustomerFilters();
 
-        $customers = Customer::with('branch')
-            ->when($search, function ($query, $search) {
-                return $query->where(function ($q) use ($search) {
-                    $q->where('code', 'LIKE', "%{$search}%")
-                      ->orWhere('name', 'LIKE', "%{$search}%")
-                      ->orWhere('phone', 'LIKE', "%{$search}%");
-                });
-            })
-            ->when($type, fn($q) => $q->where('type', $type))
-            ->when($gender, fn($q) => $q->where('gender', $gender))
-            ->when(Setting::get('customer_manage_by_branch', false), function ($q) {
-                if (auth()->user()?->branch_id) {
-                    $q->where('branch_id', auth()->user()->branch_id);
-                }
-            })
-            ->when($request->filled('sort_by'), function ($q) use ($request) {
-                $allowed = ['code', 'name', 'phone', 'debt_amount', 'total_spent', 'created_at'];
-                $sortBy = in_array($request->sort_by, $allowed) ? $request->sort_by : 'id';
-                $dir = $request->sort_direction === 'asc' ? 'asc' : 'desc';
-                $q->orderBy($sortBy, $dir);
-            }, function ($q) {
-                $q->orderBy('id', 'desc');
-            })
-            ->paginate(15)
-            ->withQueryString();
+        $query = Customer::with('branch');
+        $this->applyAdvancedCustomerFilters($query, $request);
 
-        // Collect customer-related settings for the frontend
+        // Clone query BEFORE paginate for filtered summary
+        $summaryQuery = clone $query;
+
+        $customers = $query->paginate(15)->withQueryString();
+
         $customerSettings = [
             'customer_debt_warning' => Setting::get('customer_debt_warning', true),
             'customer_is_vendor' => Setting::get('customer_is_vendor', false),
             'customer_manage_by_branch' => Setting::get('customer_manage_by_branch', false),
         ];
 
-        // Summary totals
+        // Summary from filtered query (not global)
         $summary = [
-            'total_debt' => Customer::where('debt_amount', '>', 0)->sum('debt_amount'),
-            'total_spent' => Customer::sum('total_spent'),
-            'total_returns' => Customer::sum('total_returns'),
+            'total_debt' => (float) $summaryQuery->clone()->where('debt_amount', '>', 0)->sum('debt_amount'),
+            'total_spent' => (float) $summaryQuery->clone()->sum('total_spent'),
+            'total_returns' => (float) $summaryQuery->clone()->sum('total_returns'),
         ];
 
+        $capabilities = $this->buildCapabilities();
+
+        // Build branches (respect branch lock)
+        $branchLocked = Setting::get('customer_manage_by_branch', false) && auth()->user()?->branch_id;
+        $branches = $branchLocked
+            ? \App\Models\Branch::select('id', 'name')->where('id', auth()->user()->branch_id)->get()
+            : \App\Models\Branch::select('id', 'name')->orderBy('name')->get();
+
+        // CustomerGroup options: master groups + legacy distinct values not yet in master
+        $masterGroups = CustomerGroup::where('is_active', true)
+            ->orderBy('sort_order')->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn($g) => ['value' => $g->name, 'label' => $g->name]);
+
+        $legacyGroups = Customer::whereNotNull('customer_group')
+            ->where('customer_group', '!=', '')
+            ->distinct()->pluck('customer_group')
+            ->diff($masterGroups->pluck('value'))
+            ->map(fn($g) => ['value' => $g, 'label' => $g])
+            ->values();
+
+        $customerGroups = $masterGroups->concat($legacyGroups)->unique('value')->values();
+
+        // Creators: users who have created customers
+        $creators = $capabilities['supportsCreatedByFilter']
+            ? \App\Models\User::select('id', 'name')
+                ->whereIn('id', Customer::whereNotNull('created_by')->distinct()->pluck('created_by'))
+                ->orderBy('name')->get()
+            : collect();
+
+        // Delivery areas (distinct cities from customers)
+        $deliveryCities = Customer::whereNotNull('city')->where('city', '!=', '')
+            ->distinct()->orderBy('city')->pluck('city')
+            ->map(fn($c) => ['value' => $c, 'label' => $c])->values();
+
+        $filterOptions = [
+            'branches'       => $branches,
+            'customerGroups' => $customerGroups,
+            'types' => [
+                ['value' => 'individual', 'label' => 'Cá nhân'],
+                ['value' => 'company',    'label' => 'Công ty'],
+            ],
+            'genders' => [
+                ['value' => 'male',   'label' => 'Nam'],
+                ['value' => 'female', 'label' => 'Nữ'],
+                ['value' => 'none',   'label' => 'Không xác định'],
+            ],
+            'statuses' => [
+                ['value' => 'active',   'label' => 'Đang hoạt động'],
+                ['value' => 'inactive', 'label' => 'Ngừng hoạt động'],
+            ],
+            'partnerTypes' => [
+                ['value' => 'customer',          'label' => 'Khách hàng'],
+                ['value' => 'customer_supplier', 'label' => 'Khách hàng - Nhà cung cấp'],
+            ],
+            'creators'       => $creators,
+            'deliveryCities' => $deliveryCities,
+            'debtOptions' => [
+                ['value' => 'yes', 'label' => 'Còn nợ'],
+                ['value' => 'no',  'label' => 'Không nợ'],
+            ],
+            'capabilities' => $capabilities,
+        ];
+
+        // Echo back all filter values (standard + advanced)
+        $filters = $this->currentFilters($request);
+        $filters['has_debt']              = $request->input('has_debt', '');
+        $filters['partner_type']          = $request->input('partner_type', '');
+        $filters['net_debt_from']         = $request->input('net_debt_from', '');
+        $filters['net_debt_to']           = $request->input('net_debt_to', '');
+        $filters['birthday_filter']           = $request->input('birthday_filter', 'all');
+        $filters['birthday_from']             = $request->input('birthday_from', '');
+        $filters['birthday_to']               = $request->input('birthday_to', '');
+        $filters['last_transaction_filter']   = $request->input('last_transaction_filter', 'all');
+        $filters['last_transaction_from']     = $request->input('last_transaction_from', '');
+        $filters['last_transaction_to']       = $request->input('last_transaction_to', '');
+        $filters['total_sales_from']          = $request->input('total_sales_from', '');
+        $filters['total_sales_to']            = $request->input('total_sales_to', '');
+        $filters['total_sales_date_filter']   = $request->input('total_sales_date_filter', 'all');
+        $filters['total_sales_date_from']     = $request->input('total_sales_date_from', '');
+        $filters['total_sales_date_to']       = $request->input('total_sales_date_to', '');
+        $filters['delivery_city']         = $request->input('delivery_city', '');
+        $filters['delivery_district']     = $request->input('delivery_district', '');
+
         return Inertia::render('Customers/Index', [
-            'customers' => $customers,
-            'filters' => ['search' => $search, 'type' => $type, 'gender' => $gender, 'sort_by' => $request->sort_by, 'sort_direction' => $request->sort_direction],
+            'customers'        => $customers,
+            'filters'          => $filters,
+            'filterOptions'    => $filterOptions,
             'customerSettings' => $customerSettings,
-            'summary' => $summary,
+            'summary'          => $summary,
         ]);
     }
 
@@ -76,7 +324,7 @@ class CustomerController extends Controller
         $rules = [
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:255|unique:customers,code',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255',
+            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255|unique:customers,phone',
             'phone2' => 'nullable|string|max:255',
             'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable') . '|date',
             'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable') . '|in:none,male,female',
@@ -111,6 +359,7 @@ class CustomerController extends Controller
 
         $validated['is_supplier'] = $request->input('is_supplier', false);
         $validated['is_customer'] = true;
+        $validated['created_by'] = auth()->id();
 
         $linkId = $request->input('linked_supplier_id') ?: $request->input('link_existing_id');
         $linkMode = $request->input('supplier_linking_mode');
@@ -141,7 +390,7 @@ class CustomerController extends Controller
     {
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255',
+            'phone' => (Setting::get('customer_required_phone', false) ? 'required' : 'nullable') . '|string|max:255|unique:customers,phone,' . $customer->id,
             'phone2' => 'nullable|string|max:255',
             'birthday' => (Setting::get('customer_required_birthday', false) ? 'required' : 'nullable') . '|date',
             'gender' => (Setting::get('customer_required_gender', false) ? 'required' : 'nullable') . '|in:none,male,female',
@@ -182,13 +431,23 @@ class CustomerController extends Controller
                 'target_name' => collect([$existing->name])->implode(''),
             ]);
 
-            // Merge financial figures
-            $existing->debt_amount += $customer->debt_amount;
+            // RR-06: ghi ledger trước khi merge debt từ source sang target.
+            $sourceDebt = (float) $customer->debt_amount;
+            if (abs($sourceDebt) >= 0.01) {
+                app(CustomerDebtService::class)->recordAdjustment(
+                    $existing->id,
+                    $sourceDebt, // signed: cộng vào target theo dấu của source
+                    "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
+                    ['ref_code' => 'MERGE-IMPORT-' . $customer->id]
+                );
+            }
+
+            // Merge financial figures (debt_amount đã được service xử lý ở trên)
             $existing->total_spent += $customer->total_spent;
             $existing->total_returns += $customer->total_returns;
             $existing->supplier_debt_amount += $customer->supplier_debt_amount;
             $existing->total_bought += $customer->total_bought;
-            
+
             $existing->is_customer = true;
             $existing->is_supplier = true;
             $existing->name = $validated['name'];
@@ -199,7 +458,7 @@ class CustomerController extends Controller
                 $existing->address = $validated['address'];
             }
             $existing->save();
-            
+
             $customer->delete();
             return back()->with('success', 'Cập nhật và gộp vào nhà cung cấp thành công.');
         } else {
@@ -211,6 +470,16 @@ class CustomerController extends Controller
 
     public function destroy(Customer $customer)
     {
+        // Guard: không cho xóa nếu đã có giao dịch — buộc dùng "Ngừng hoạt động"
+        $hasInvoices = Invoice::where('customer_id', $customer->id)->exists();
+        $hasPurchases = \App\Models\Purchase::where('supplier_id', $customer->id)->exists();
+        $hasReturns = OrderReturn::where('customer_id', $customer->id)->exists();
+        $hasDebt = ((float) $customer->debt_amount != 0) || ((float) $customer->supplier_debt_amount != 0);
+
+        if ($hasInvoices || $hasPurchases || $hasReturns || $hasDebt) {
+            return back()->with('error', 'Không thể xóa — đối tác này đã có giao dịch hoặc công nợ. Hãy chuyển sang "Ngừng hoạt động" thay vì xóa.');
+        }
+
         $customer->delete();
         return redirect()->route('customers.index')->with('success', 'Xóa khách hàng thành công.');
     }
@@ -231,215 +500,593 @@ class CustomerController extends Controller
         ]);
     }
 
+    /**
+     * Step 22.1E (hybrid): trả cả ledger mới (customer_debts) lẫn legacy
+     * (invoices/cashflows/purchases/...). Production có dữ liệu cũ trước RR-06
+     * chưa được backfill vào customer_debts ⇒ chỉ đọc ledger sẽ làm mất lịch sử.
+     *
+     * Hợp đồng dữ liệu:
+     *  - entries: combined view (ledger + legacy không trùng), mỗi item có 'source'
+     *  - ledger_entries / legacy_entries: tách rời để UI có thể filter
+     *  - summary.net = customers.debt_amount hiện tại (KHÔNG tính lại từ entries)
+     *  - summary.source = 'hybrid'
+     *
+     * Dedup: nếu legacy.code trùng ledger.ref_code thì ưu tiên ledger.
+     * Không backfill, không cập nhật customers.debt_amount, không sửa CustomerDebtService.
+     */
     public function debtHistory(Customer $customer)
     {
-        $entries = collect();
+        $isDualRole = (bool) ($customer->is_customer && $customer->is_supplier);
 
-        // 1) Invoices = "Bán hàng" entries (create debt)
+        $typeLabels = [
+            'sale'           => 'Bán hàng',
+            'sale_reversal'  => 'Hủy hóa đơn',
+            'return'         => 'Trả hàng',
+            'payment'        => 'Thanh toán',
+            'adjustment'     => 'Điều chỉnh',
+        ];
+
+        $isInvoiceCancelDebt = static function ($debt): bool {
+            $type = (string) $debt->type;
+            $refCode = (string) ($debt->ref_code ?? '');
+            $note = mb_strtolower((string) ($debt->note ?? ''));
+
+            return $type === 'adjustment'
+                && (
+                    str_starts_with($refCode, 'HD')
+                    || str_contains($note, 'hủy hóa đơn')
+                    || str_contains($note, 'huy hoa don')
+                    || str_contains($note, 'đảo công nợ')
+                    || str_contains($note, 'dao cong no')
+                );
+        };
+
+        // ─── 1) LEDGER entries (customer_debts) ─────────────────────────
+        $debts = \App\Models\CustomerDebt::where('customer_id', $customer->id)
+            ->orderByDesc('recorded_at')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get();
+
+        $discountCodes = $debts->pluck('ref_code')
+            ->filter(fn ($code) => str_starts_with((string) $code, 'CKTT'))
+            ->values();
+
+        $discountsByCode = CustomerPaymentDiscount::whereIn('code', $discountCodes)
+            ->get()
+            ->keyBy('code');
+
+        $autoReturnSettlementNotes = [
+            'Tat toan tien da tra khach cho phieu tra',
+            'Bo sung tat toan tien da tra khach cho phieu tra',
+        ];
+
+        $isAutoReturnSettlement = static function ($debt) use ($autoReturnSettlementNotes): bool {
+            if ($debt->type !== 'adjustment' || (float) $debt->amount <= 0) {
+                return false;
+            }
+
+            if (empty($debt->order_return_id) && empty($debt->ref_code)) {
+                return false;
+            }
+
+            $note = (string) $debt->note;
+            foreach ($autoReturnSettlementNotes as $needle) {
+                if (str_contains($note, $needle)) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        $matchesReturnSettlement = static function ($returnDebt, $settlementDebt): bool {
+            if (!empty($returnDebt->order_return_id) && !empty($settlementDebt->order_return_id)
+                && (int) $returnDebt->order_return_id === (int) $settlementDebt->order_return_id) {
+                return true;
+            }
+
+            return !empty($returnDebt->ref_code) && !empty($settlementDebt->ref_code)
+                && (string) $returnDebt->ref_code === (string) $settlementDebt->ref_code;
+        };
+
+        $autoReturnSettlements = $debts->filter($isAutoReturnSettlement)->values();
+        $matchedSettlementIds = [];
+        $returnSettlementMeta = [];
+
+        foreach ($debts->where('type', 'return') as $returnDebt) {
+            $settlements = $autoReturnSettlements
+                ->filter(fn($settlementDebt) => $matchesReturnSettlement($returnDebt, $settlementDebt))
+                ->values();
+
+            if ($settlements->isEmpty()) {
+                continue;
+            }
+
+            $lastSettlement = $settlements
+                ->sortBy(function ($settlementDebt) {
+                    $recordedAt = $settlementDebt->recorded_at ?? $settlementDebt->created_at;
+                    $timeKey = $recordedAt ? $recordedAt->format('YmdHis.u') : '';
+                    return $timeKey . '-' . str_pad((string) $settlementDebt->id, 12, '0', STR_PAD_LEFT);
+                })
+                ->last();
+
+            $settlementIds = $settlements->pluck('id')->values()->all();
+            $matchedSettlementIds = array_merge($matchedSettlementIds, $settlementIds);
+
+            $returnSettlementMeta[$returnDebt->id] = [
+                'display_balance' => (float) $lastSettlement->debt_total,
+                'settlement_adjusted_amount' => (float) $settlements->sum('amount'),
+                'settlement_adjustment_ids' => $settlementIds,
+            ];
+        }
+
+        $matchedSettlementIds = array_values(array_unique($matchedSettlementIds));
+
+        $mapLedgerEntry = function ($d, array $settlementMetaByDebtId = []) use ($typeLabels, $isInvoiceCancelDebt, $discountsByCode) {
+            $amount = (float) $d->amount;
+            $settlementMeta = $settlementMetaByDebtId[$d->id] ?? null;
+            $balance = $settlementMeta['display_balance'] ?? (float) $d->debt_total;
+            $recordedAt = $d->recorded_at ?? $d->created_at;
+
+            $isPaymentDiscount = str_starts_with((string) $d->ref_code, 'CKTT');
+            $isDiscountCancel = $isPaymentDiscount && (float) $d->amount > 0 && str_contains(mb_strtolower((string) $d->note), 'hủy chiết khấu');
+
+            if ($isPaymentDiscount && !$isDiscountCancel && (float) $d->amount < 0) {
+                $label = 'Chiết khấu thanh toán';
+                $typeRaw = 'payment_discount';
+            } elseif ($isDiscountCancel) {
+                $label = 'Hủy chiết khấu thanh toán';
+                $typeRaw = 'payment_discount_cancel';
+            } else {
+                $label = $isInvoiceCancelDebt($d)
+                    ? 'Hủy hóa đơn'
+                    : ($typeLabels[$d->type] ?? $d->type);
+
+                $typeRaw = $isInvoiceCancelDebt($d)
+                    ? 'invoice_cancel_reversal'
+                    : $d->type;
+            }
+
+            $entry = [
+                'id'              => 'ldg-' . $d->id,
+                'code'            => $d->ref_code,
+                'type'            => $label,
+                'type_raw'        => $typeRaw,
+                'amount'          => $amount,
+                'customer_effect' => $amount,
+                'debt_total'      => $balance,
+                'balance'         => $balance,
+                'note'            => $d->note,
+                'created_by'      => $d->created_by,
+                'recorded_at'     => $recordedAt,
+                'created_at'      => $recordedAt,
+                'source'          => 'ledger',
+            ];
+
+            if ($settlementMeta) {
+                $entry['settlement_adjusted_amount'] = $settlementMeta['settlement_adjusted_amount'];
+                $entry['settlement_adjustment_ids'] = $settlementMeta['settlement_adjustment_ids'];
+                $entry['display_merged_settlement'] = true;
+            }
+
+            $discount = $discountsByCode[$d->ref_code] ?? null;
+            if ($discount) {
+                $entry['payment_discount_id'] = $discount->id;
+                $entry['payment_discount_status'] = $discount->status;
+                $entry['can_cancel'] = $typeRaw === 'payment_discount' && $discount->status === 'active';
+            }
+
+            return $entry;
+        };
+
+        $ledgerEntriesRaw = $debts->map(fn($d) => $mapLedgerEntry($d))->values();
+        $ledgerEntries = $debts
+            ->reject(fn($d) => $isAutoReturnSettlement($d) && in_array($d->id, $matchedSettlementIds, true))
+            ->map(fn($d) => $mapLedgerEntry($d, $returnSettlementMeta))
+            ->values();
+
+        // ─── 2) LEGACY entries (logic cũ pre-RR06) ──────────────────────
+        $legacyEntries = collect();
+
         $invoices = Invoice::where('customer_id', $customer->id)
             ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'total', 'customer_paid', 'created_at']);
+            ->get(['id', 'code', 'total', 'customer_paid', 'status', 'created_at']);
 
         foreach ($invoices as $inv) {
-            $entries->push([
+            if ($inv->status === 'Đã hủy') {
+                continue;
+            }
+
+            $legacyEntries->push([
                 'id' => 'inv-' . $inv->id,
                 'code' => $inv->code,
                 'type' => 'Bán hàng',
-                'amount' => $inv->total,
+                'amount' => (float) $inv->total,
+                'customer_effect' => (float) $inv->total,
                 'created_at' => $inv->created_at,
+                'source' => 'legacy',
             ]);
-
-            // Implicit payment entry from customer_paid
             if ($inv->customer_paid > 0) {
-                $entries->push([
+                $legacyEntries->push([
                     'id' => 'pay-' . $inv->id,
                     'code' => 'TTHD' . preg_replace('/^HD/', '', $inv->code),
                     'type' => 'Thanh toán',
-                    'amount' => -$inv->customer_paid,
+                    'amount' => (float) $inv->customer_paid,
+                    'customer_effect' => -(float) $inv->customer_paid,
                     'created_at' => $inv->created_at,
+                    'source' => 'legacy',
                 ]);
             }
         }
 
-        // 2) Explicit cash_flow receipts linked to this customer
+        $invoiceCodes = $invoices->pluck('code')->toArray();
         $cashFlows = CashFlow::where('target_type', 'Khách hàng')
             ->where('target_id', $customer->id)
             ->where('type', 'receipt')
+            ->whereNotIn('reference_type', ['DebtOffset', 'DebtOffsetCancel'])
             ->orderBy('created_at', 'desc')
             ->get();
 
-        // Avoid duplicates: skip cash_flows whose reference_code matches an invoice we already handled
-        $invoiceCodes = $invoices->pluck('code')->toArray();
         foreach ($cashFlows as $cf) {
             if ($cf->reference_type === 'Invoice' && in_array($cf->reference_code, $invoiceCodes)) {
                 continue;
             }
-            $entries->push([
+            $legacyEntries->push([
                 'id' => 'cf-' . $cf->id,
                 'code' => $cf->code,
-                'type' => $cf->reference_type === 'DebtOffset' ? 'Đối trừ CN' : ($cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán'),
-                'amount' => -$cf->amount,
+                'type' => $cf->reference_type === 'OrderReturn' ? 'Trả hàng' : 'Thanh toán',
+                'amount' => (float) $cf->amount,
+                'customer_effect' => -(float) $cf->amount,
                 'created_at' => $cf->created_at,
+                'source' => 'legacy',
             ]);
         }
 
-        // 3) If dual-role (also supplier): include purchase entries (mirrored)
-        // In KiotViet customer view: purchases show as NEGATIVE (we owe them → offsets what they owe us)
-        if ($customer->is_supplier) {
+        if ($isDualRole) {
             $purchases = Purchase::where('supplier_id', $customer->id)
                 ->where('status', 'completed')
                 ->orderBy('created_at', 'desc')
                 ->get(['id', 'code', 'total_amount', 'paid_amount', 'created_at']);
 
             foreach ($purchases as $p) {
-                $entries->push([
+                $legacyEntries->push([
                     'id' => 'pur-' . $p->id,
                     'code' => $p->code,
                     'type' => 'Nhập hàng',
-                    'amount' => -$p->total_amount, // Negative: we owe them
+                    'amount' => (float) $p->total_amount,
+                    'customer_effect' => -(float) $p->total_amount,
                     'created_at' => $p->created_at,
+                    'source' => 'legacy',
                 ]);
                 if ($p->paid_amount > 0) {
-                    $entries->push([
+                    $legacyEntries->push([
                         'id' => 'purpay-' . $p->id,
                         'code' => 'TTNH' . preg_replace('/^PN/', '', $p->code),
                         'type' => 'TT nhập hàng',
-                        'amount' => $p->paid_amount, // Positive: we paid them → reduces what they owe us net
+                        'amount' => (float) $p->paid_amount,
+                        'customer_effect' => (float) $p->paid_amount,
                         'created_at' => $p->created_at,
+                        'source' => 'legacy',
                     ]);
                 }
             }
 
-            // Purchase returns = positive (they refund us)
             $purchaseReturns = PurchaseReturn::where('supplier_id', $customer->id)
                 ->where('status', 'completed')
                 ->orderBy('created_at', 'desc')
-                ->get(['id', 'code', 'total_amount', 'refund_amount', 'created_at']);
+                ->get(['id', 'code', 'total_amount', 'created_at']);
 
             foreach ($purchaseReturns as $pr) {
-                $entries->push([
+                $legacyEntries->push([
                     'id' => 'pret-' . $pr->id,
                     'code' => $pr->code,
                     'type' => 'Trả hàng nhập',
-                    'amount' => $pr->total_amount, // Positive: they owe us back
+                    'amount' => (float) $pr->total_amount,
+                    'customer_effect' => (float) $pr->total_amount,
                     'created_at' => $pr->created_at,
+                    'source' => 'legacy',
                 ]);
             }
 
-            // Supplier debt transactions (payment/adjustment/discount/offset) — mirror sign
             $supplierTxs = SupplierDebtTransaction::where('supplier_id', $customer->id)
-                ->whereNotIn('type', ['purchase']) // purchases already handled above
+                ->whereNotIn('type', ['purchase', 'return', 'offset'])
                 ->orderBy('created_at', 'desc')
                 ->get();
 
-            $typeLabels = [
-                'return' => 'Trả hàng nhập',
-                'payment' => 'TT công nợ NCC',
-                'adjustment' => 'Điều chỉnh NCC',
-                'discount' => 'Chiết khấu NCC',
-                'offset' => 'Đối trừ CN',
-            ];
-
-            // Skip return type since we already show PurchaseReturn entries
             foreach ($supplierTxs as $stx) {
-                if ($stx->type === 'return') continue;
-                if ($stx->type === 'offset') continue; // Already shown as CashFlow DebtOffset entry
-                $entries->push([
+                $legacyEntries->push([
                     'id' => 'stx-' . $stx->id,
                     'code' => $stx->code,
-                    'type' => $typeLabels[$stx->type] ?? $stx->type,
-                    'amount' => -$stx->amount, // Mirror sign for customer perspective
+                    'type' => $stx->type === 'payment' ? 'TT công nợ NCC' : ($stx->type === 'adjustment' ? 'Điều chỉnh' : ($stx->type === 'discount' ? 'Chiết khấu TT' : $stx->type)),
+                    'amount' => abs((float) $stx->amount),
+                    'customer_effect' => -(float) $stx->amount,
                     'created_at' => $stx->created_at,
+                    'source' => 'legacy',
                 ]);
             }
         }
 
-        // Sort by date asc to compute running balance
-        $sorted = $entries->sortBy('created_at')->values();
-        $balance = 0;
-        $ledger = $sorted->map(function ($entry) use (&$balance) {
-            $balance += $entry['amount'];
-            $entry['balance'] = $balance;
-            return $entry;
+        // Tính running balance riêng cho legacy theo thời gian (giữ semantic cũ)
+        $legacySorted = $legacyEntries->sortBy('created_at')->values();
+        $bal = 0.0;
+        $legacySorted = $legacySorted->map(function ($e) use (&$bal) {
+            $bal += (float) ($e['customer_effect'] ?? 0);
+            $e['balance'] = $bal;
+            return $e;
         });
+        $legacyEntries = $legacySorted->reverse()->values();
 
-        // Return newest first for display
-        $receivable = abs((float) $customer->debt_amount);
-        $payable = abs((float) $customer->supplier_debt_amount);
-        $net = $receivable - $payable;
+        // ─── 3) Dedup + combined ────────────────────────────────────────
+        $ledgerCodes = $ledgerEntries->pluck('code')->filter()->map(fn($c) => (string) $c)->all();
+        $legacyFiltered = $legacyEntries->filter(function ($e) use ($ledgerCodes) {
+            return !in_array((string) ($e['code'] ?? ''), $ledgerCodes, true);
+        })->values();
+
+        $combined = $ledgerEntries->concat($legacyFiltered)
+            ->sortByDesc(fn($e) => $e['recorded_at'] ?? $e['created_at'])
+            ->values();
 
         return response()->json([
-            'entries' => $ledger->reverse()->values(),
+            'entries'         => $combined,
+            'ledger_entries'  => $ledgerEntriesRaw,
+            'legacy_entries'  => $legacyEntries,
             'summary' => [
-                'receivable' => $receivable,
-                'payable' => $payable,
-                'net' => $net,
-                'status' => $net > 0 ? 'receivable' : ($net < 0 ? 'payable' : 'balanced'),
-                'is_dual_role' => $customer->is_customer && $customer->is_supplier,
+                'net'             => (float) $customer->debt_amount,
+                'is_dual_role'    => $isDualRole,
+                'source'          => 'hybrid',
+                'count'           => $combined->count(),
+                'ledger_count'    => $ledgerEntriesRaw->count(),
+                'legacy_count'    => $legacyEntries->count(),
+                'dedup_skipped'   => $legacyEntries->count() - $legacyFiltered->count(),
             ],
         ]);
     }
 
+    /**
+     * Thu nợ khách hàng — hỗ trợ auto-allocate (cũ trước) hoặc manual allocation.
+     *
+     * Mode AUTO (default):  { amount: 80000, mode: "auto", note: "..." }
+     * Mode MANUAL:          { mode: "manual", allocations: [{invoice_id:1, amount:20000}, ...], note: "..." }
+     */
     public function debtPayment(Request $request, Customer $customer)
     {
-        $validated = $request->validate([
-            'amount' => 'required|numeric|min:1',
-            'note' => 'nullable|string|max:500',
-        ]);
+        $mode = $request->input('mode', 'auto');
 
-        $cf = CashFlow::create([
-            'code' => 'PT' . date('ymdHis') . rand(10, 99),
-            'type' => 'receipt',
-            'amount' => $validated['amount'],
-            'time' => now(),
-            'category' => 'Thu nợ khách hàng',
-            'target_type' => 'Khách hàng',
-            'target_id' => $customer->id,
-            'target_name' => $customer->name,
-            'reference_type' => 'DebtPayment',
-            'reference_code' => null,
-            'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
-        ]);
+        if ($mode === 'manual') {
+            $validated = $request->validate([
+                'allocations' => 'required|array|min:1',
+                'allocations.*.invoice_id' => 'required|integer|exists:invoices,id',
+                'allocations.*.amount' => 'required|numeric|min:1',
+                'note' => 'nullable|string|max:500',
+                'date' => 'nullable|date',
+            ]);
 
-        $customer->decrement('debt_amount', $validated['amount']);
+            // Guard: Check if all allocated invoices are cancelled
+            $requestedInvoiceIds = collect($validated['allocations'])->pluck('invoice_id')->toArray();
+            $cancelledCount = Invoice::whereIn('id', $requestedInvoiceIds)
+                ->where('status', 'Đã hủy')
+                ->count();
+            if ($cancelledCount > 0 && $cancelledCount === count($requestedInvoiceIds)) {
+                $msg = 'Không thể thu nợ cho hóa đơn đã hủy.';
+                return $request->wantsJson()
+                    ? response()->json(['success' => false, 'message' => $msg], 422)
+                    : back()->with('error', $msg);
+            }
 
-        // Tự động đối trừ công nợ NCC↔KH
-        DebtOffsetService::offsetDebts($customer);
+            $paidAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
 
-        return back()->with('success', 'Đã thu nợ ' . number_format($validated['amount']) . ' từ khách hàng.');
+            $totalAmount = 0;
+            $allocationCodes = [];
+
+            foreach ($validated['allocations'] as $alloc) {
+                $invoice = Invoice::where('id', $alloc['invoice_id'])
+                    ->where('customer_id', $customer->id)
+                    ->where('status', '!=', 'Đã hủy')
+                    ->first();
+
+                if (!$invoice) continue;
+
+                $remaining = app(CustomerPaymentDiscountService::class)->getInvoiceRemainingReceivable($invoice);
+                $payAmount = min($alloc['amount'], $remaining);
+
+                if ($payAmount <= 0) continue;
+
+                $invoice->increment('customer_paid', $payAmount);
+                $totalAmount += $payAmount;
+                $allocationCodes[] = $invoice->code . ':' . number_format($payAmount);
+            }
+
+            if ($totalAmount <= 0) {
+                return back()->with('error', 'Không có khoản nào hợp lệ để thu.');
+            }
+
+            $cf = CashFlow::create([
+                'code' => 'PT' . date('ymdHis') . rand(10, 99),
+                'type' => 'receipt',
+                'amount' => $totalAmount,
+                'time' => $paidAt,
+                'category' => 'Thu nợ khách hàng',
+                'target_type' => 'Khách hàng',
+                'target_id' => $customer->id,
+                'target_name' => $customer->name,
+                'reference_type' => 'DebtPayment',
+                'reference_code' => implode('; ', $allocationCodes),
+                'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
+            ]);
+            if (!empty($validated['date'])) {
+                $cf->created_at = $paidAt;
+                $cf->save();
+            }
+
+            // RR-06: ghi ledger payment qua service.
+            app(CustomerDebtService::class)->recordPayment(
+                $customer->id,
+                (float) $totalAmount,
+                null,
+                $validated['note'] ?? "Thu nợ khách hàng {$customer->name}",
+                ['ref_code' => $cf->code]
+            );
+
+        } else {
+            // AUTO mode — allocate to oldest invoices first
+            $validated = $request->validate([
+                'amount' => 'required|numeric|min:1',
+                'note' => 'nullable|string|max:500',
+                'date' => 'nullable|date',
+            ]);
+            $paidAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
+
+            $remaining = $validated['amount'];
+            $allocationCodes = [];
+
+            // Get invoices with outstanding balance, oldest first
+            $invoices = Invoice::where('customer_id', $customer->id)
+                ->where('status', '!=', 'Đã hủy')
+                ->whereRaw('total > customer_paid')
+                ->orderBy('created_at', 'asc')
+                ->get();
+
+            foreach ($invoices as $invoice) {
+                if ($remaining <= 0) break;
+
+                $invoiceDebt = app(CustomerPaymentDiscountService::class)->getInvoiceRemainingReceivable($invoice);
+                if ($invoiceDebt <= 0) continue;
+
+                $payAmount = min($remaining, $invoiceDebt);
+
+                $invoice->increment('customer_paid', $payAmount);
+                $remaining -= $payAmount;
+                $allocationCodes[] = $invoice->code . ':' . number_format($payAmount);
+            }
+
+            $actualPaid = $validated['amount'] - $remaining;
+            if ($actualPaid <= 0) $actualPaid = $validated['amount']; // fallback: reduce debt even without invoices
+
+            $cf = CashFlow::create([
+                'code' => 'PT' . date('ymdHis') . rand(10, 99),
+                'type' => 'receipt',
+                'amount' => $actualPaid,
+                'time' => $paidAt,
+                'category' => 'Thu nợ khách hàng',
+                'target_type' => 'Khách hàng',
+                'target_id' => $customer->id,
+                'target_name' => $customer->name,
+                'reference_type' => 'DebtPayment',
+                'reference_code' => !empty($allocationCodes) ? implode('; ', $allocationCodes) : null,
+                'description' => $validated['note'] ?? 'Thu nợ khách hàng ' . $customer->name,
+            ]);
+            if (!empty($validated['date'])) {
+                $cf->created_at = $paidAt;
+                $cf->save();
+            }
+
+            // RR-06: ghi ledger payment qua service.
+            app(CustomerDebtService::class)->recordPayment(
+                $customer->id,
+                (float) $actualPaid,
+                null,
+                $validated['note'] ?? "Thu nợ khách hàng {$customer->name}",
+                ['ref_code' => $cf->code]
+            );
+        }
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Đã thu nợ ' . number_format($cf->amount) . ' từ khách hàng.']);
+        }
+
+        return back()->with('success', 'Đã thu nợ ' . number_format($cf->amount) . ' từ khách hàng.');
+    }
+
+    /**
+     * Lấy danh sách hóa đơn còn nợ của khách hàng (cho modal thu nợ).
+     */
+    public function outstandingInvoices(Customer $customer)
+    {
+        $invoices = Invoice::where('customer_id', $customer->id)
+            ->where('status', '!=', 'Đã hủy')
+            ->select('id', 'code', 'total', 'customer_paid', 'created_at')
+            ->selectSub(function ($query) {
+                $query->from('customer_payment_discount_allocations')
+                    ->join('customer_payment_discounts', 'customer_payment_discount_allocations.customer_payment_discount_id', '=', 'customer_payment_discounts.id')
+                    ->whereColumn('customer_payment_discount_allocations.invoice_id', 'invoices.id')
+                    ->where('customer_payment_discounts.status', 'active')
+                    ->selectRaw('COALESCE(SUM(customer_payment_discount_allocations.amount), 0)');
+            }, 'discount_allocated')
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->map(function ($inv) {
+                $remaining = (float) $inv->total - (float) $inv->customer_paid - (float) $inv->discount_allocated;
+                return [
+                    'id' => $inv->id,
+                    'code' => $inv->code,
+                    'total' => (float) $inv->total,
+                    'customer_paid' => (float) $inv->customer_paid,
+                    'discount_allocated' => (float) $inv->discount_allocated,
+                    'remaining' => max(0.0, $remaining),
+                    'created_at' => $inv->created_at,
+                ];
+            })
+            ->filter(fn($inv) => $inv['remaining'] > 0)
+            ->values();
+
+        return response()->json($invoices);
     }
 
     public function debtAdjust(Request $request, Customer $customer)
     {
         $validated = $request->validate([
-            'amount' => 'required|numeric',
+            'amount' => 'required|numeric', // Giá trị nợ cuối mong muốn
             'note' => 'nullable|string|max:500',
+            'date' => 'nullable|date',
         ]);
 
-        $adjustAmount = $validated['amount'];
-        $type = $adjustAmount >= 0 ? 'receipt' : 'payment';
-        $prefix = $adjustAmount >= 0 ? 'PT' : 'PC';
+        $targetDebt = $validated['amount']; // Nợ cuối user muốn set
+        $currentDebt = (float) $customer->debt_amount;
+        $diff = $currentDebt - $targetDebt; // diff > 0 = giảm nợ, diff < 0 = tăng nợ
 
-        CashFlow::create([
+        if ($diff == 0) {
+            return back()->with('info', 'Công nợ không thay đổi.');
+        }
+
+        $type = $diff > 0 ? 'receipt' : 'payment';
+        $prefix = $diff > 0 ? 'PT' : 'PC';
+        $adjustedAt = !empty($validated['date']) ? \Carbon\Carbon::parse($validated['date']) : now();
+
+        $cashFlow = CashFlow::create([
             'code' => $prefix . date('ymdHis') . rand(10, 99),
             'type' => $type,
-            'amount' => abs($adjustAmount),
-            'time' => now(),
+            'amount' => abs($diff),
+            'time' => $adjustedAt,
             'category' => 'Điều chỉnh công nợ',
             'target_type' => 'Khách hàng',
             'target_id' => $customer->id,
             'target_name' => $customer->name,
             'reference_type' => 'DebtAdjustment',
             'reference_code' => null,
-            'description' => $validated['note'] ?? 'Điều chỉnh công nợ khách hàng ' . $customer->name,
+            'description' => ($validated['note'] ?? 'Điều chỉnh công nợ') . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
         ]);
+        // Override created_at để hiển thị trong lịch sử theo ngày người dùng chọn
+        if (!empty($validated['date'])) {
+            $cashFlow->created_at = $adjustedAt;
+            $cashFlow->save();
+        }
 
-        $customer->update(['debt_amount' => max(0, $customer->debt_amount - $adjustAmount)]);
+        // RR-06: ghi ledger adjustment qua service.
+        // delta theo signed amount cho debt_amount: targetDebt - currentDebt.
+        // Lưu ý: $diff trong code này = currentDebt - targetDebt (đảo dấu).
+        $debtDelta = $targetDebt - $currentDebt;
+        if (abs($debtDelta) >= 0.01) {
+            app(CustomerDebtService::class)->recordAdjustment(
+                $customer->id,
+                $debtDelta,
+                ($validated['note'] ?? 'Điều chỉnh công nợ')
+                    . ' | ' . number_format($currentDebt) . ' → ' . number_format($targetDebt),
+                ['ref_code' => $cashFlow->code]
+            );
+        }
 
-        // Tự động đối trừ công nợ NCC↔KH
-        DebtOffsetService::offsetDebts($customer);
-
-        return back()->with('success', 'Đã điều chỉnh công nợ thành công.');
+        return back()->with('success', 'Đã điều chỉnh công nợ: ' . number_format($currentDebt) . ' → ' . number_format($targetDebt) . '₫');
     }
 
     public function searchForMerge(Request $request)
@@ -461,6 +1108,63 @@ class CustomerController extends Controller
             ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'supplier_debt_amount', 'is_customer', 'is_supplier']);
 
         return response()->json($results);
+    }
+
+    /**
+     * Step 22.2E: typeahead search cho Orders/Create (và các màn hình khác cần KH).
+     * Schema-tolerant: chỉ áp is_customer / status nếu cột tồn tại.
+     * Limit 20, không paginate.
+     */
+    public function apiSearch(Request $request)
+    {
+        $search = trim((string) $request->query('search', ''));
+        if ($search === '') {
+            return response()->json([]);
+        }
+
+        $query = Customer::query();
+
+        if (Schema::hasColumn('customers', 'is_customer')) {
+            $query->where('is_customer', true);
+        }
+
+        if (Schema::hasColumn('customers', 'status')) {
+            $query->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', '!=', 'inactive');
+            });
+        }
+
+        $query->where(function ($q) use ($search) {
+            $q->where('name', 'LIKE', "%{$search}%")
+              ->orWhere('code', 'LIKE', "%{$search}%")
+              ->orWhere('phone', 'LIKE', "%{$search}%")
+              ->orWhere('phone2', 'LIKE', "%{$search}%")
+              ->orWhere('email', 'LIKE', "%{$search}%")
+              ->orWhere('tax_code', 'LIKE', "%{$search}%");
+        });
+
+        $columns = ['id', 'code', 'name', 'phone', 'phone2', 'email', 'address',
+                    'debt_amount', 'total_spent'];
+        $columns = array_values(array_filter($columns, fn($c) => Schema::hasColumn('customers', $c)));
+
+        $rows = $query->orderBy('name')->limit(20)->get($columns);
+
+        return response()->json(
+            $rows->map(function (Customer $c) {
+                return [
+                    'id'            => (int) $c->id,
+                    'code'          => $c->code,
+                    'name'          => $c->name,
+                    'phone'         => $c->phone,
+                    'phone2'        => $c->phone2 ?? null,
+                    'email'         => $c->email ?? null,
+                    'address'       => $c->address ?? null,
+                    'debt_amount'   => isset($c->debt_amount) ? (float) $c->debt_amount : 0,
+                    'total_spent'   => isset($c->total_spent) ? (float) $c->total_spent : 0,
+                    'display_label' => trim(($c->name ?? '') . ($c->phone ? ' — ' . $c->phone : '')) ?: ('#' . $c->id),
+                ];
+            })->values()
+        );
     }
 
     public function merge(Request $request, Customer $customer)
@@ -487,8 +1191,18 @@ class CustomerController extends Controller
             'target_name' => $target->name,
         ]);
 
-        // Merge financial figures
-        $target->debt_amount += $customer->debt_amount;
+        // RR-06: ghi ledger trước khi merge debt từ source sang target.
+        $sourceDebt = (float) $customer->debt_amount;
+        if (abs($sourceDebt) >= 0.01) {
+            app(CustomerDebtService::class)->recordAdjustment(
+                $target->id,
+                $sourceDebt, // signed: cộng vào target theo dấu của source
+                "Gộp công nợ từ khách hàng {$customer->name} (id {$customer->id})",
+                ['ref_code' => 'MERGE-CUSTOMER-' . $customer->id]
+            );
+        }
+
+        // Merge financial figures (debt_amount đã được service xử lý ở trên)
         $target->total_spent += $customer->total_spent;
         $target->total_returns += $customer->total_returns;
         $target->supplier_debt_amount += $customer->supplier_debt_amount;
@@ -500,8 +1214,7 @@ class CustomerController extends Controller
 
         $target->save();
 
-        // Tự động đối trừ công nợ NCC↔KH sau khi gộp
-        DebtOffsetService::offsetDebts($target);
+
 
         // Delete source
         $customer->delete();
@@ -511,9 +1224,11 @@ class CustomerController extends Controller
 
     public function export(Request $request)
     {
-        $customers = Customer::query()
-            ->when($request->search, fn($q, $s) => $q->where('name', 'LIKE', "%{$s}%")->orWhere('code', 'LIKE', "%{$s}%")->orWhere('phone', 'LIKE', "%{$s}%"))
-            ->orderBy('id', 'desc')->get();
+        $this->configureCustomerFilters();
+
+        $query = Customer::with('branch');
+        $this->applyAdvancedCustomerFilters($query, $request);
+        $customers = $query->get();
 
         return \App\Services\CsvService::export(
             ['Mã KH', 'Tên khách hàng', 'Điện thoại', 'Email', 'Nhóm KH', 'Địa chỉ', 'Phường/Xã', 'Quận/Huyện', 'Tỉnh/TP', 'Công nợ', 'Tổng mua', 'Ghi chú'],
@@ -522,16 +1237,129 @@ class CustomerController extends Controller
         );
     }
 
-    public function exportDebtHistory(Customer $customer)
+    public function exportDebtHistory(Customer $customer, Request $request)
     {
         $data = $this->debtHistory($customer)->getData(true);
         $entries = $data['entries'] ?? [];
+
+        $hasQuery = $request->hasAny(['date_preset', 'date_from', 'date_to', 'include_detail', 'columns', 'format']);
+
+        if ($hasQuery) {
+            $validated = $request->validate([
+                'date_preset'    => 'nullable|string|in:today,this_week,last_7_days,last_30_days,this_month,last_month,this_quarter,this_year,all,custom',
+                'date_from'      => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+                'date_to'        => ['nullable', 'string', 'regex:#^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{4})$#'],
+                'include_detail' => 'nullable|in:0,1,true,false',
+                'columns'        => 'nullable|array',
+                'columns.*'      => 'string|in:unit,quantity,unit_price,discount,vat,cost,line_total,note',
+                'format'         => 'nullable|string|in:csv,xlsx',
+            ], [
+                'date_from.regex' => 'Ngay bat dau phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
+                'date_to.regex'   => 'Ngay ket thuc phai co dinh dang dd/mm/yyyy hoac YYYY-MM-DD.',
+            ]);
+
+            foreach (['date_from', 'date_to'] as $key) {
+                if (!empty($validated[$key]) && $this->parseDebtExportDate($validated[$key]) === null) {
+                    return response()->json([
+                        'message' => "Ngay {$key} khong hop le.",
+                        'errors' => [$key => ["Ngay {$key} khong hop le."]],
+                    ], 422);
+                }
+            }
+
+            [$from, $to] = $this->resolveCustomerDebtExportRange(
+                $validated['date_preset'] ?? 'all',
+                $validated['date_from'] ?? null,
+                $validated['date_to'] ?? null
+            );
+
+            if ($from && $to && $from->greaterThan($to)) {
+                return response()->json(['message' => 'date_from phai <= date_to'], 422);
+            }
+
+            $includeDetail = in_array((string) ($validated['include_detail'] ?? '0'), ['1', 'true'], true);
+            $selectedColumns = array_values($validated['columns'] ?? []);
+
+            if (($validated['format'] ?? '') === 'xlsx') {
+                return (new \App\Services\Exports\CustomerDebtExcelExportService(
+                    $customer,
+                    is_array($entries) ? $entries : collect($entries)->toArray(),
+                    $from,
+                    $to,
+                    $includeDetail,
+                    $selectedColumns
+                ))->download('cong_no_kh_' . ($customer->code ?: $customer->id) . '.xlsx');
+            }
+
+            $entries = collect($entries)->filter(function ($entry) use ($from, $to) {
+                if (!$from && !$to) return true;
+                $raw = $entry['recorded_at'] ?? $entry['created_at'] ?? $entry['date'] ?? null;
+                if (!$raw) return false;
+                try {
+                    $ts = \Carbon\Carbon::parse($raw);
+                } catch (\Throwable) {
+                    return false;
+                }
+                if ($from && $ts->lessThan($from)) return false;
+                return !($to && $ts->greaterThan($to));
+            })->values()->all();
+        }
 
         return \App\Services\CsvService::export(
             ['Mã chứng từ', 'Loại', 'Giá trị', 'Dư nợ sau GD', 'Ngày'],
             collect($entries)->map(fn($e) => [$e['code'], $e['type'], $e['amount'], $e['balance'], $e['created_at']]),
             "cong_no_kh_{$customer->code}.csv"
         );
+    }
+
+    private function resolveCustomerDebtExportRange(string $preset, ?string $from, ?string $to): array
+    {
+        $now = \Carbon\Carbon::now();
+
+        return match ($preset) {
+            'today' => [$now->copy()->startOfDay(), $now->copy()->endOfDay()],
+            'this_week' => [$now->copy()->startOfWeek(), $now->copy()->endOfWeek()],
+            'last_7_days' => [$now->copy()->subDays(6)->startOfDay(), $now->copy()->endOfDay()],
+            'last_30_days' => [$now->copy()->subDays(29)->startOfDay(), $now->copy()->endOfDay()],
+            'this_month' => [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()],
+            'last_month' => [
+                $now->copy()->subMonthNoOverflow()->startOfMonth(),
+                $now->copy()->subMonthNoOverflow()->endOfMonth(),
+            ],
+            'this_quarter' => [$now->copy()->startOfQuarter(), $now->copy()->endOfQuarter()],
+            'this_year' => [$now->copy()->startOfYear(), $now->copy()->endOfYear()],
+            'custom' => [
+                ($this->parseDebtExportDate($from))?->startOfDay(),
+                ($this->parseDebtExportDate($to))?->endOfDay(),
+            ],
+            default => [null, null],
+        };
+    }
+
+    private function parseDebtExportDate(?string $value): ?\Carbon\Carbon
+    {
+        if (!$value) {
+            return null;
+        }
+
+        $value = trim($value);
+        if (preg_match('#^(\d{4})-(\d{1,2})-(\d{1,2})$#', $value, $matches)) {
+            $year = (int) $matches[1];
+            $month = (int) $matches[2];
+            $day = (int) $matches[3];
+        } elseif (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $value, $matches)) {
+            $day = (int) $matches[1];
+            $month = (int) $matches[2];
+            $year = (int) $matches[3];
+        } else {
+            return null;
+        }
+
+        if (!checkdate($month, $day, $year)) {
+            return null;
+        }
+
+        return \Carbon\Carbon::create($year, $month, $day, 0, 0, 0);
     }
 
     public function exportSalesHistory(Customer $customer)
@@ -639,6 +1467,7 @@ class CustomerController extends Controller
     public function debtOffsetHistory(Customer $customer)
     {
         $offsets = \App\Models\DebtOffset::where('customer_id', $customer->id)
+            ->with('user:id,name')
             ->orderByDesc('created_at')
             ->get()
             ->map(fn($o) => [
@@ -655,6 +1484,7 @@ class CustomerController extends Controller
                 'cancel_reason' => $o->cancel_reason,
                 'cancelled_at' => $o->cancelled_at,
                 'created_at' => $o->created_at,
+                'user_name' => $o->user?->name ?? 'Admin',
             ]);
 
         return response()->json($offsets);
