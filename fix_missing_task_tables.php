@@ -36,6 +36,8 @@ try {
     DB::statement('DROP TABLE IF EXISTS device_repair_parts;');
     DB::statement('DROP TABLE IF EXISTS tasks;');
     DB::statement('DROP TABLE IF EXISTS device_repairs;');
+    DB::statement('DROP TABLE IF EXISTS repair_performance_tiers;');
+    DB::statement('DROP TABLE IF EXISTS task_categories;');
     DB::statement('SET FOREIGN_KEY_CHECKS=1;');
     echo "Orphaned tables drop command executed.\n";
 
