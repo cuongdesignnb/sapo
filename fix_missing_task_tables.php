@@ -28,6 +28,17 @@ try {
         }
     }
 
+    echo "\nForcing drop of potentially orphaned or ghost tables on MySQL...\n";
+    DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+    DB::statement('DROP TABLE IF EXISTS task_assignments;');
+    DB::statement('DROP TABLE IF EXISTS task_comments;');
+    DB::statement('DROP TABLE IF EXISTS task_parts;');
+    DB::statement('DROP TABLE IF EXISTS device_repair_parts;');
+    DB::statement('DROP TABLE IF EXISTS tasks;');
+    DB::statement('DROP TABLE IF EXISTS device_repairs;');
+    DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+    echo "Orphaned tables drop command executed.\n";
+
     $migrationsToDelete = [
         '2026_03_11_000002_create_device_repairs_table',
         '2026_03_11_000003_create_device_repair_parts_table',
