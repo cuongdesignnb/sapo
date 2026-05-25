@@ -244,12 +244,10 @@ const checkAndHydrateOrderFromUrl = async () => {
     const mode = urlParams.get('mode');
 
     if (mode === 'process_order' && orderId) {
-        // Clear query parameters from URL so hard-reload doesn't keep duplicating/reloading
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, document.title, newUrl);
+        let hydrated = false;
 
         try {
-            const res = await axios.get(`/orders/${orderId}/pos-payload`);
+            const res = await axios.get(`/orders/${encodeURIComponent(orderId)}/pos-payload`);
             if (res.data && res.data.success) {
                 const orderData = res.data.order;
                 
@@ -257,6 +255,7 @@ const checkAndHydrateOrderFromUrl = async () => {
                 const existingIndex = tabs.value.findIndex(t => t.source_order_id === orderData.id);
                 if (existingIndex !== -1) {
                     activeTabIndex.value = existingIndex;
+                    hydrated = true;
                     return;
                 }
 
@@ -332,15 +331,22 @@ const checkAndHydrateOrderFromUrl = async () => {
                 tabToUse.customerPaid = Math.max(0, orderData.totals.remaining);
 
                 saveDraft();
+                hydrated = true;
+                console.info('Loaded order for POS', res.data.resolved_by || orderData.code);
             } else {
-                alert("Lỗi load đơn đặt hàng: " + res.data.message);
+                alert("Lỗi load đơn đặt hàng: " + (res.data.message || "Không có phản hồi thành công"));
             }
         } catch (e) {
             console.error('Load order for POS failed', e);
             const message = e.response?.data?.message
                 || e.message
-                || 'Lỗi kết nối máy chủ khi load đơn đặt hàng.';
+                || 'Không thể load đơn đặt hàng.';
             alert(`Không thể load đơn đặt hàng: ${message}`);
+        } finally {
+            if (hydrated) {
+                const newUrl = window.location.pathname;
+                window.history.replaceState({}, document.title, newUrl);
+            }
         }
     }
 };
