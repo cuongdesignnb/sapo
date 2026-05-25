@@ -124,6 +124,20 @@ const orderNote = computed({
     set: (v) => { activeTab.value.note = v; }
 });
 
+// ── Customer Search ──
+const customerQuery = computed({
+    get: () => activeTab.value.customerQuery,
+    set: (v) => { activeTab.value.customerQuery = v; }
+});
+const customerResults = ref([]);
+const selectedCustomer = computed({
+    get: () => activeTab.value.selectedCustomer,
+    set: (v) => { activeTab.value.selectedCustomer = v; }
+});
+const showCustomerDropdown = ref(false);
+const customerSearching = ref(false);
+let customerTimeout;
+
 // Tab management
 const addTab = (type = 'sale') => {
     tabs.value.push(createNewTab(type));
@@ -322,8 +336,11 @@ const checkAndHydrateOrderFromUrl = async () => {
                 alert("Lỗi load đơn đặt hàng: " + res.data.message);
             }
         } catch (e) {
-            console.error(e);
-            alert("Lỗi kết nối máy chủ khi load đơn đặt hàng.");
+            console.error('Load order for POS failed', e);
+            const message = e.response?.data?.message
+                || e.message
+                || 'Lỗi kết nối máy chủ khi load đơn đặt hàng.';
+            alert(`Không thể load đơn đặt hàng: ${message}`);
         }
     }
 };
@@ -382,20 +399,6 @@ onMounted(() => {
 onUnmounted(() => {
     clearInterval(timeInterval);
 });
-
-// ── Customer Search ──
-const customerQuery = computed({
-    get: () => activeTab.value.customerQuery,
-    set: (v) => { activeTab.value.customerQuery = v; }
-});
-const customerResults = ref([]);
-const selectedCustomer = computed({
-    get: () => activeTab.value.selectedCustomer,
-    set: (v) => { activeTab.value.selectedCustomer = v; }
-});
-const showCustomerDropdown = ref(false);
-const customerSearching = ref(false);
-let customerTimeout;
 
 const searchCustomers = async () => {
     if (customerQuery.value.length < 1) {
