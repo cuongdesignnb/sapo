@@ -220,8 +220,12 @@ const openProcessModal = (order) => {
 };
 
 const openProcessOrderInPos = (order) => {
-    if (!order || !order.id) return;
-    window.open(`/pos?order_id=${order.id}&mode=process_order`, '_self');
+    const key = order?.id || order?.code;
+    if (!key) {
+        alert('Không xác định được đơn hàng để xử lý.');
+        return;
+    }
+    window.open(`/pos?order_id=${encodeURIComponent(key)}&mode=process_order`, '_self');
 };
 
 const processError = ref('');

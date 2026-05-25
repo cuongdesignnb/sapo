@@ -889,24 +889,69 @@ class OrderController extends Controller
         }
     }
 
-    public function posPayload(Order $order)
+    public function posPayload(Request $request, string $orderKey)
     {
+        $orderKey = trim((string) $orderKey);
+
+        $query = Order::query()
+            ->with(['customer', 'branch', 'items.product']);
+
+        $order = $query
+            ->where(function ($q) use ($orderKey) {
+                if (ctype_digit($orderKey)) {
+                    $q->where('id', (int) $orderKey);
+                }
+                $q->orWhere('code', $orderKey);
+            })
+            ->first();
+
+        if (!$order) {
+            return response()->json([
+                'success' => false,
+                'message' => "Không tìm thấy đơn đặt hàng '{$orderKey}'. Vui lòng mở đơn từ danh sách Đơn hàng.",
+                'error_code' => 'ORDER_NOT_FOUND',
+                'order_key' => $orderKey,
+            ], 404);
+        }
+
         if ($order->status === 'completed') {
-            return response()->json(['success' => false, 'message' => 'Đơn hàng đã được xử lý.'], 422);
+            return response()->json([
+                'success' => false,
+                'message' => 'Đơn hàng đã được xử lý.',
+                'error_code' => 'ORDER_ALREADY_COMPLETED',
+                'order_key' => $orderKey,
+                'order_code' => $order->code,
+            ], 422);
         }
 
         if ($order->status === 'cancelled') {
-            return response()->json(['success' => false, 'message' => 'Đơn hàng đã bị hủy.'], 422);
+            return response()->json([
+                'success' => false,
+                'message' => 'Đơn hàng đã bị hủy.',
+                'error_code' => 'ORDER_CANCELLED',
+                'order_key' => $orderKey,
+                'order_code' => $order->code,
+            ], 422);
         }
 
         if ($order->status === 'ended') {
-            return response()->json(['success' => false, 'message' => 'Đơn hàng đã kết thúc.'], 422);
+            return response()->json([
+                'success' => false,
+                'message' => 'Đơn hàng đã kết thúc.',
+                'error_code' => 'ORDER_ENDED',
+                'order_key' => $orderKey,
+                'order_code' => $order->code,
+            ], 422);
         }
 
-        $order->load(['customer', 'branch', 'items.product']);
-
         if ($order->items->isEmpty()) {
-            return response()->json(['success' => false, 'message' => 'Đơn hàng không có sản phẩm.'], 422);
+            return response()->json([
+                'success' => false,
+                'message' => 'Đơn hàng không có sản phẩm.',
+                'error_code' => 'ORDER_EMPTY',
+                'order_key' => $orderKey,
+                'order_code' => $order->code,
+            ], 422);
         }
 
         $items = $order->items->map(function ($item) {
@@ -936,6 +981,11 @@ class OrderController extends Controller
 
         return response()->json([
             'success' => true,
+            'resolved_by' => [
+                'input' => $orderKey,
+                'id' => $order->id,
+                'code' => $order->code,
+            ],
             'order' => [
                 'id' => $order->id,
                 'code' => $order->code,

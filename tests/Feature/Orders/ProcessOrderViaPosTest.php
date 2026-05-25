@@ -86,16 +86,17 @@ class ProcessOrderViaPosTest extends TestCase
         return $order;
     }
 
-    public function test_pos_payload_returns_correct_data_and_does_not_modify_db(): void
+    public function test_pos_payload_via_numeric_id(): void
     {
         $product = $this->makeProduct(false, 10, 100000);
         $order = $this->makeOrder($product, 3, 200000);
 
         $this->actingAs($this->admin);
-        $response = $this->getJson(route('orders.pos-payload', $order));
+        $response = $this->getJson(route('orders.pos-payload', ['orderKey' => $order->id]));
 
         $response->assertStatus(200);
         $response->assertJsonPath('success', true);
+        $response->assertJsonPath('order.id', $order->id);
         $response->assertJsonPath('order.code', $order->code);
         $response->assertJsonPath('order.items.0.product_id', $product->id);
         $response->assertJsonPath('order.items.0.qty', 3);
@@ -103,6 +104,30 @@ class ProcessOrderViaPosTest extends TestCase
         $order->refresh();
         $this->assertSame('draft', $order->status);
         $this->assertSame(0, Invoice::where('order_id', $order->id)->count());
+    }
+
+    public function test_pos_payload_via_order_code(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $order = $this->makeOrder($product, 3, 200000);
+
+        $this->actingAs($this->admin);
+        $response = $this->getJson(route('orders.pos-payload', ['orderKey' => $order->code]));
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('order.id', $order->id);
+        $response->assertJsonPath('order.code', $order->code);
+    }
+
+    public function test_pos_payload_missing_order_returns_404_json(): void
+    {
+        $this->actingAs($this->admin);
+        $response = $this->getJson(route('orders.pos-payload', ['orderKey' => 'NONEXISTENT_CODE']));
+
+        $response->assertStatus(404);
+        $response->assertJsonPath('success', false);
+        $response->assertJsonPath('error_code', 'ORDER_NOT_FOUND');
     }
 
     public function test_pos_payload_rejects_completed_or_invalid_orders(): void
@@ -113,12 +138,19 @@ class ProcessOrderViaPosTest extends TestCase
         $this->actingAs($this->admin);
 
         $order->update(['status' => 'completed']);
-        $response = $this->getJson(route('orders.pos-payload', $order));
+        $response = $this->getJson(route('orders.pos-payload', ['orderKey' => $order->id]));
         $response->assertStatus(422);
+        $response->assertJsonPath('error_code', 'ORDER_ALREADY_COMPLETED');
 
         $order->update(['status' => 'cancelled']);
-        $response = $this->getJson(route('orders.pos-payload', $order));
+        $response = $this->getJson(route('orders.pos-payload', ['orderKey' => $order->id]));
         $response->assertStatus(422);
+        $response->assertJsonPath('error_code', 'ORDER_CANCELLED');
+
+        $order->update(['status' => 'ended']);
+        $response = $this->getJson(route('orders.pos-payload', ['orderKey' => $order->id]));
+        $response->assertStatus(422);
+        $response->assertJsonPath('error_code', 'ORDER_ENDED');
     }
 
     public function test_pos_processing_creates_invoice_completes_order_correctly(): void
