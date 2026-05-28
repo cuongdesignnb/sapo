@@ -604,8 +604,8 @@ const save = (status) => {
                             <DateTimePicker
                                 v-model="transactionDate"
                                 compact
-                                class="w-full min-w-0"
-                                input-class="w-full min-w-0 box-border text-[13px] py-1.5"
+                                wrapper-class="w-[190px] shrink-0"
+                                input-class="text-[12px] py-1.5 px-2"
                                 placeholder="dd/MM/yyyy HH:mm"
                             />
                         </div>
