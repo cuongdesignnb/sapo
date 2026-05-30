@@ -575,7 +575,9 @@ class CustomerController extends Controller
      */
     public function debtHistory(Customer $customer)
     {
-        return response()->json(app(PartnerFinancialTimelineService::class)->buildForCustomer($customer));
+        return response()->json(
+            app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer)
+        );
     }
 
     /**

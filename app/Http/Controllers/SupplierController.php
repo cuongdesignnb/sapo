@@ -607,112 +607,14 @@ class SupplierController extends Controller
      */
     public function debtTransactions($id)
     {
-        $this->seedDebtTransactions($id);
-        $supplier = Customer::find($id);
-        $isDualRole = $supplier && $supplier->is_customer && $supplier->is_supplier;
-        $entries = collect();
-
-        // ═══ 1) Purchases = "Nhập hàng" → supplier += total (DN nợ NCC tăng) ═══
-        $purchases = Purchase::where('supplier_id', $id)
-            ->where('status', 'completed')
-            ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'total_amount', 'paid_amount', 'purchase_date', 'created_at']);
-
-        $purchasePaymentCodes = collect();
-        foreach ($purchases as $p) {
-            // Nhập hàng: +total (tăng phải trả NCC)
-            $entries->push([
-                'id' => 'pur-' . $p->id,
-                'code' => $p->code,
-                'type' => 'purchase',
-                'type_label' => 'Nhập hàng',
-                'amount' => $p->total_amount,
-                'supplier_effect' => $p->total_amount, // NCC: +
-                'time' => $p->purchase_date ?? $p->created_at,
-                'created_at' => $p->created_at,
-            ]);
-            // TT khi nhập hàng: lấy từ CashFlow thật (code PC...) thay vì TTNH ảo
-            $purchaseCashFlows = CashFlow::where('reference_type', 'Purchase')
-                ->where('reference_code', $p->code)
-                ->where('type', 'payment')
-                ->get();
-            foreach ($purchaseCashFlows as $cf) {
-                $entries->push([
-                    'id' => 'purpay-' . $cf->id,
-                    'code' => $cf->code,
-                    'type' => 'payment',
-                    'type_label' => 'Thanh toán',
-                    'amount' => $cf->amount,
-                    'supplier_effect' => -$cf->amount, // NCC: -
-                    'time' => $cf->time ?? $cf->created_at,
-                    'created_at' => $cf->created_at,
-                ]);
-                $purchasePaymentCodes->push((string) $cf->code);
-            }
-        }
-
-        // ═══ 2) Purchase returns → giảm phải trả NCC ═══
-        $purchaseReturns = PurchaseReturn::where('supplier_id', $id)
-            ->where('status', 'completed')
-            ->orderBy('created_at', 'desc')
-            ->get(['id', 'code', 'total_amount', 'return_date', 'created_at']);
-
-        foreach ($purchaseReturns as $pr) {
-            $entries->push([
-                'id' => 'pret-' . $pr->id,
-                'code' => $pr->code,
-                'type' => 'return',
-                'type_label' => 'Trả hàng',
-                'amount' => $pr->total_amount,
-                'supplier_effect' => -$pr->total_amount, // NCC: - (giảm phải trả)
-                'time' => $pr->return_date ?? $pr->created_at,
-                'created_at' => $pr->created_at,
-            ]);
-        }
-
-        // ═══ 3) Supplier debt transactions (standalone payment/adjustment/discount) ═══
-        $supplierTxs = SupplierDebtTransaction::where('supplier_id', $id)
-            ->whereNotIn('type', ['purchase', 'return', 'offset'])
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        $typeLabels = [
-            'payment' => 'Thanh toán',
-            'adjustment' => 'Điều chỉnh',
-            'discount' => 'Chiết khấu TT',
-        ];
-
-        foreach ($supplierTxs as $stx) {
-            if ($stx->type === 'payment' && $purchasePaymentCodes->contains((string) $stx->code)) {
-                continue;
-            }
-
-            $entries->push([
-                'id' => 'stx-' . $stx->id,
-                'code' => $stx->code,
-                'type' => $stx->type,
-                'type_label' => $typeLabels[$stx->type] ?? $stx->type,
-                'amount' => abs($stx->amount),
-                'supplier_effect' => $stx->amount, // Already correct sign from source
-                'time' => $stx->created_at,
-                'created_at' => $stx->created_at,
-            ]);
-        }
-
-        // ═══ Sort by supplier-side date asc → compute payable balance ═══
-        $sorted = $entries->sortBy(fn ($entry) => $entry['time'] ?? $entry['created_at'])->values();
-        $balance = 0;
-        $ledger = $sorted->map(function ($entry) use (&$balance) {
-            $balance += $entry['supplier_effect'];
-            $entry['debt_remain'] = $balance;
-            return $entry;
-        });
+        $supplier = Customer::findOrFail($id);
+        $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
 
         return response()->json([
-            'entries' => $ledger->values(),
+            'entries' => $ledger['entries'],
             'summary' => [
-                'net' => $balance, // Final running balance = NET supplier position
-                'is_dual_role' => $isDualRole,
+                'net' => $ledger['closing_balance'],
+                'is_dual_role' => (bool) ($supplier->is_customer && $supplier->is_supplier),
             ],
         ]);
     }
