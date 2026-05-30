@@ -129,32 +129,42 @@ class PartnerDebtLedgerService
             ->where('type', 'payment')
             ->get();
 
-        $purchasePaidTotal = (float) $purchases->sum('paid_amount');
-
+        // HOTFIX FOLLOW-UP — per-transaction guard. The old gate
+        // `$canAffect = $isStandalone && $purchasePaidTotal <= 0` would
+        // silently mark every standalone supplier payment as "Đã hạch
+        // toán" the moment ANY purchase on this supplier had a non-zero
+        // paid_amount — even when that paid_amount belongs to a totally
+        // unrelated purchase. The fix is per-transaction: a standalone
+        // payment counts unless its own code is already represented in
+        // realPayments (the CashFlow loop above) or there is a directly
+        // linked Purchase/CashFlow row carrying the same payment.
         foreach ($supplierTxsPayments as $stx) {
             $code = (string) $stx->code;
-            if (!isset($realPayments[$code])) {
-                $isStandalone = $this->looksLikeStandaloneSupplierPayment($stx);
-                $canAffect = $isStandalone && $purchasePaidTotal <= 0;
-
-                $realPayments[$code] = [
-                    'id' => 'stx-pay-' . $stx->id,
-                    'code' => $stx->code,
-                    'type' => 'payment',
-                    'type_label' => 'Thanh toán',
-                    'badge_label' => $canAffect ? 'Thanh toán NCC' : 'Đã hạch toán',
-                    'amount' => abs((float) $stx->amount),
-                    'supplier_effect' => $canAffect ? (float) $stx->amount : 0.0,
-                    'affects_debt_balance' => $canAffect,
-                    'time' => $stx->created_at,
-                    'created_at' => $stx->created_at,
-                    'source' => $canAffect ? 'supplier_debt_transaction' : 'reference',
-                    'reference_type' => 'SupplierDebtTransaction',
-                    'reference_id' => $stx->id,
-                    'note' => $stx->note,
-                    'detail_available' => false,
-                ];
+            if (isset($realPayments[$code])) {
+                continue;
             }
+
+            $isStandalone = $this->looksLikeStandaloneSupplierPayment($stx);
+            $alreadyAccounted = $this->supplierTransactionAlreadyAccountedFor($stx, $realPayments, $purchases);
+            $canAffect = $isStandalone && !$alreadyAccounted;
+
+            $realPayments[$code] = [
+                'id' => 'stx-pay-' . $stx->id,
+                'code' => $stx->code,
+                'type' => 'payment',
+                'type_label' => 'Thanh toán',
+                'badge_label' => $canAffect ? 'Thanh toán NCC' : 'Đã hạch toán',
+                'amount' => abs((float) $stx->amount),
+                'supplier_effect' => $canAffect ? (float) $stx->amount : 0.0,
+                'affects_debt_balance' => $canAffect,
+                'time' => $stx->created_at,
+                'created_at' => $stx->created_at,
+                'source' => $canAffect ? 'supplier_debt_transaction' : 'reference',
+                'reference_type' => 'SupplierDebtTransaction',
+                'reference_id' => $stx->id,
+                'note' => $stx->note,
+                'detail_available' => false,
+            ];
         }
 
         // Push all real payments
@@ -179,12 +189,15 @@ class PartnerDebtLedgerService
                     }
                 }
                 
-                // Also check if there's any cashflow with reference_code = purchase code
-                $hasLinkedCashFlow = CashFlow::where('reference_type', 'Purchase')
-                    ->where('reference_code', $p->code)
-                    ->where('type', 'payment')
-                    ->where('status', '!=', 'cancelled')
-                    ->exists();
+                // HOTFIX FOLLOW-UP — NULL-safe cancelled guard.
+                // `status != 'cancelled'` drops NULL rows; scopeNotCancelledCashFlow
+                // keeps them in scope so a real payment is correctly detected
+                // and no virtual TTNH duplicate gets synthesised.
+                $hasLinkedCashFlow = $this->scopeNotCancelledCashFlow(
+                    CashFlow::where('reference_type', 'Purchase')
+                        ->where('reference_code', $p->code)
+                        ->where('type', 'payment')
+                )->exists();
 
                 if (!$hasRealPayment && !$hasLinkedCashFlow) {
                     $entries->push([
@@ -415,6 +428,18 @@ class PartnerDebtLedgerService
         $computedBalance = (float) ($computedEntries->where('affects_debt_balance', true)->last()['balance'] ?? 0.0);
         $hasMismatch = abs($computedBalance - $netDebt) >= 0.01;
 
+        // HOTFIX FOLLOW-UP — `partner_net_position` is the canonical
+        // semantic key. `net_debt_amount` is kept for backward
+        // compatibility but UI/reports should migrate to the new key,
+        // which makes it clear this is a display delta, not a recorded
+        // debt offset (no CB voucher implied).
+        // DebtOffset only stores customer_id (dual-role partners use the
+        // same customer record for both roles), so a single where suffices.
+        $hasDebtOffsetVoucher = DebtOffset::query()
+            ->where('customer_id', $customer->id)
+            ->where('status', '!=', 'cancelled')
+            ->exists();
+
         return [
             'entries' => $computedEntries->sortByDesc(fn ($entry) => $this->timestamp($entry))->values(),
             'reconcile' => [
@@ -426,6 +451,15 @@ class PartnerDebtLedgerService
                     : null,
             ],
             'summary' => [
+                // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
+                'customer_receivable_balance' => $customerDebt,
+                'supplier_payable_balance'    => $supplierDebt,
+                'partner_net_position'        => $netDebt,
+                'has_debt_offset_voucher'     => $hasDebtOffsetVoucher,
+                'is_actual_offset'            => false,
+                'is_net_view'                 => true,
+
+                // Backward-compatible keys (do NOT remove — FE/tests reference them)
                 'net' => $netDebt,
                 'current_debt' => $netDebt,
                 'customer_debt_amount' => $customerDebt,
@@ -829,6 +863,25 @@ class PartnerDebtLedgerService
         return in_array($normalized, ['đã hủy', 'da huy', 'cancelled', 'canceled', 'void', 'deleted'], true);
     }
 
+    /**
+     * NULL-safe "not cancelled" scope for CashFlow queries.
+     *
+     * `where('status', '!=', 'cancelled')` would silently drop rows
+     * whose status is NULL (legacy data), making the service think no
+     * real cashflow exists for a purchase and then synthesise a virtual
+     * TTNH payment from Purchase.paid_amount — double-counting the
+     * payment. Using whereNull + whereNotIn keeps NULL rows in scope
+     * (treated as still valid) and only excludes the explicit cancelled
+     * variants the codebase emits.
+     */
+    private function scopeNotCancelledCashFlow($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('status')
+              ->orWhereNotIn('status', ['cancelled', 'canceled', 'void', 'deleted']);
+        });
+    }
+
     private function timestamp(array $entry): string
     {
         $value = $entry['time'] ?? $entry['recorded_at'] ?? $entry['created_at'] ?? null;
@@ -889,5 +942,44 @@ class PartnerDebtLedgerService
                 ->where('reference_type', 'SupplierPayment')
                 ->where('reference_code', $code)
                 ->exists();
+    }
+
+    /**
+     * HOTFIX FOLLOW-UP — Decide whether a SupplierDebtTransaction payment
+     * is already represented elsewhere (real cashflow or purchase legacy
+     * paid_amount), and therefore should NOT have its supplier_effect
+     * double-applied to the ledger.
+     *
+     * Per-transaction (not per-supplier): replaces the old
+     * `$purchasePaidTotal <= 0` gate which falsely marked every
+     * standalone payment as "Đã hạch toán" the moment any unrelated
+     * purchase had paid_amount > 0.
+     */
+    private function supplierTransactionAlreadyAccountedFor(
+        SupplierDebtTransaction $transaction,
+        array $realPayments,
+        Collection $purchases
+    ): bool {
+        $code = (string) ($transaction->code ?? '');
+
+        // 1. Same code already collected from CashFlow loop.
+        if ($code !== '' && isset($realPayments[$code])) {
+            return true;
+        }
+
+        // 2. Transaction note explicitly references a Purchase code that
+        // already has paid_amount > 0 — treat as legacy accounting note.
+        $note = mb_strtolower((string) ($transaction->note ?? ''));
+        foreach ($purchases as $purchase) {
+            $purchaseCode = mb_strtolower((string) $purchase->code);
+            if ($purchaseCode === '' || (float) $purchase->paid_amount <= 0) {
+                continue;
+            }
+            if ($note !== '' && str_contains($note, $purchaseCode)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

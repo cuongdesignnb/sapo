@@ -11,6 +11,7 @@ use App\Models\OrderReturn;
 use App\Models\Purchase;
 use App\Models\PurchaseReturn;
 use App\Models\SupplierDebtTransaction;
+use App\Models\DebtOffset;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -71,7 +72,16 @@ class PartnerFinancialTimelineService
                     ? 'Lịch sử công nợ đang lệch với Nợ hiện tại. Cần đối soát dữ liệu trước khi cập nhật.'
                     : null,
             ],
-            'summary' => [
+            'summary' => array_merge([
+                // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
+                'customer_receivable_balance' => $customerDebt,
+                'supplier_payable_balance'    => $supplierDebt,
+                'partner_net_position'        => $netDebt,
+                'has_debt_offset_voucher'     => $this->hasActiveDebtOffsetVoucher($customer),
+                'is_actual_offset'            => false,
+                'is_net_view'                 => true,
+
+                // Backward-compatible keys (FE + existing tests still read these)
                 'net' => $netDebt,
                 'current_debt' => $netDebt,
                 'customer_debt_amount' => $customerDebt,
@@ -87,8 +97,24 @@ class PartnerFinancialTimelineService
                 'legacy_count' => $legacyEntries->count(),
                 'supplier_count' => $supplierEntries->count(),
                 'dedup_skipped' => $legacyEntries->count() - $legacyFiltered->count(),
-            ],
+            ], []),
         ];
+    }
+
+    /**
+     * Returns true iff there is a non-cancelled DebtOffset voucher
+     * (CB/HCB) that names this customer or supplier. Used to surface
+     * `has_debt_offset_voucher` in the summary so the UI can stop
+     * implying "đã đối trừ" when only a display delta exists.
+     */
+    private function hasActiveDebtOffsetVoucher(Customer $partner): bool
+    {
+        // DebtOffset only stores customer_id — dual-role partners share
+        // a single customer record across receivable + payable sides.
+        return DebtOffset::query()
+            ->where('customer_id', $partner->id)
+            ->where('status', '!=', 'cancelled')
+            ->exists();
     }
 
     private function buildCustomerLedgerEntries(Collection $debts): array

@@ -68,7 +68,7 @@ class ReconcilePartnerLedgerCommandTest extends TestCase
         $this->assertStringContainsString('47,400,000.00', $output);
         $this->assertStringContainsString('Supplier Payable (Phải trả)', $output);
         $this->assertStringContainsString('75,000,000.00', $output);
-        $this->assertStringContainsString('Net Debt (Nợ ròng)', $output);
+        $this->assertStringContainsString('Partner Net Position (Vị thế ròng)', $output);
         $this->assertStringContainsString('-27,600,000.00', $output);
         $this->assertStringContainsString('MERGE-CUSTOMER-141', $output);
         $this->assertStringContainsString('CKTT26052510573737', $output);
@@ -78,13 +78,13 @@ class ReconcilePartnerLedgerCommandTest extends TestCase
         $exitCodeName = Artisan::call('customers:reconcile-partner-ledger', ['--name' => 'Thiên Phú']);
         $outputName = Artisan::output();
         $this->assertEquals(0, $exitCodeName);
-        $this->assertStringContainsString('Net Debt (Nợ ròng)', $outputName);
+        $this->assertStringContainsString('Partner Net Position (Vị thế ròng)', $outputName);
 
         // 3) Test search by phone
         $exitCodePhone = Artisan::call('customers:reconcile-partner-ledger', ['--phone' => '0974321888']);
         $outputPhone = Artisan::output();
         $this->assertEquals(0, $exitCodePhone);
-        $this->assertStringContainsString('Net Debt (Nợ ròng)', $outputPhone);
+        $this->assertStringContainsString('Partner Net Position (Vị thế ròng)', $outputPhone);
 
         $exitCodeJson = Artisan::call('customers:reconcile-partner-ledger', [
             '--customer-id' => $partner->id,

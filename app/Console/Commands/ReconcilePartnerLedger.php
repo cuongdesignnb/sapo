@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Models\Customer;
+use App\Models\DebtOffset;
 use App\Services\PartnerDebtLedgerService;
 use Illuminate\Support\Facades\Schema;
 
@@ -181,6 +182,11 @@ class ReconcilePartnerLedger extends Command
             ];
         }
 
+        $hasDebtOffsetVoucher = DebtOffset::query()
+            ->where('customer_id', $customer->id)
+            ->where('status', '!=', 'cancelled')
+            ->exists();
+
         if ($json) {
             $this->line(json_encode([
                 'partner' => [
@@ -190,12 +196,22 @@ class ReconcilePartnerLedger extends Command
                     'phone' => $customer->phone ?? '',
                 ],
                 'reconciliation' => [
-                    'customer_receivable_cached' => $customer_receivable_cached,
+                    // Canonical keys (HOTFIX FOLLOW-UP)
+                    'customer_receivable_cached'   => $customer_receivable_cached,
+                    'customer_receivable_computed' => $customer_ledger_computed,
+                    'receivable_mismatch'          => $receivable_mismatch,
+                    'supplier_payable_cached'      => $supplier_payable_cached,
+                    'supplier_payable_computed'    => $supplier_ledger_computed,
+                    'payable_mismatch'             => $payable_mismatch,
+                    'partner_net_position_cached'  => $net_cached,
+                    'partner_net_position_computed'=> $net_ledger_computed,
+                    'partner_net_position_mismatch'=> $net_mismatch,
+                    'is_actual_offset'             => false,
+                    'has_debt_offset_voucher'      => $hasDebtOffsetVoucher,
+
+                    // Backward-compatible keys
                     'customer_ledger_computed' => $customer_ledger_computed,
-                    'receivable_mismatch' => $receivable_mismatch,
-                    'supplier_payable_cached' => $supplier_payable_cached,
                     'supplier_ledger_computed' => $supplier_ledger_computed,
-                    'payable_mismatch' => $payable_mismatch,
                     'net_cached' => $net_cached,
                     'net_ledger_computed' => $net_ledger_computed,
                     'net_mismatch' => $net_mismatch,
@@ -224,13 +240,18 @@ class ReconcilePartnerLedger extends Command
                     $payable_mismatch ? '⚠️ MISMATCH' : '✅ OK',
                 ],
                 [
-                    'Net Debt (Nợ ròng)',
+                    'Partner Net Position (Vị thế ròng)',
                     number_format($net_cached, 2) . 'đ',
                     number_format($net_ledger_computed, 2) . 'đ',
                     $net_mismatch ? '⚠️ MISMATCH' : '✅ OK',
                 ],
             ]
         );
+
+        $this->line('');
+        $this->line('Has actual debt-offset voucher (CB/HCB): ' . ($hasDebtOffsetVoucher ? 'YES' : 'NO'));
+        $this->line('Note: partner_net_position is a display delta of receivable - payable.');
+        $this->line('      It is NOT a debt-offset voucher. Only a CB/HCB row indicates an actual offset.');
 
         $this->info("\n=== DETAILED LEDGER ENTRIES CHRONOLOGICAL ===");
         $this->table(

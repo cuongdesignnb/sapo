@@ -57,19 +57,20 @@
   ```bash
   php artisan customers:reconcile-partner-ledger --code=KH177727496998
   ```
-- **Output summary**:
+- **Output summary** (chạy trên dữ liệu simulated/local; chưa đối chiếu production thật):
   - **Receivable cached**: 47,400,000.00đ
-  - **Receivable computed**: 47,400,000.00đ (✅ Khớp)
+  - **Receivable computed**: 47,400,000.00đ (matches simulated fixture)
   - **Payable cached**: 75,000,000.00đ
-  - **Payable computed**: 75,000,000.00đ (✅ Khớp)
-  - **Net cached**: -27,600,000.00đ
-  - **Net computed**: -27,600,000.00đ (✅ Khớp)
+  - **Payable computed**: 75,000,000.00đ (matches simulated fixture)
+  - **Partner net position (cached)**: -27,600,000.00đ
+  - **Partner net position (computed)**: -27,600,000.00đ (matches simulated fixture)
+  - **Has debt-offset voucher**: `false` — chỉ là vị thế ròng display, không phải phiếu CB/HCB.
 - **Ledger detail**:
   - `MERGE-CUSTOMER-141`: `+47,420,000đ` (Số dư đầu kỳ / Gộp công nợ)
   - `CKTT26052510573737`: `-20,000đ` (Chiết khấu thanh toán)
   - `PN20260523105400`: `-75,000,000đ` (Nhập hàng - mirror đảo dấu từ NCC)
-- **Mismatch**: Không có mismatch (`✅ OK`).
-- **Kết luận**: Đối soát số dư và ledger khớp 100%.
+- **Mismatch**: Không có mismatch trong fixture đã mô phỏng.
+- **Kết luận (giới hạn)**: Đối soát ledger pass ở phạm vi test local/staging cho case mô phỏng đã liệt kê. **Chưa** đối chiếu trên dữ liệu thật production; **chưa** đủ điều kiện kết luận "khớp 100%" hoặc "không còn rủi ro". Cần đối chiếu read-only trên dữ liệu thật production sau khi user xác nhận.
 
 ## Có ảnh hưởng dữ liệu đang có không?
 - **Không**. Tất cả tính toán và đối chiếu công nợ được thực hiện trên lớp đọc (Read-only API & CLI command), không ghi dữ liệu xuống database và không chạy cấn trừ ảo trong GET requests.
@@ -97,15 +98,23 @@
 - `npm run build`: **PASS** (Biên dịch asset frontend thành công trong 7.51s).
 
 ## Manual QA
-- **Màn Khách hàng**: Chọn đối tác "Anh Thanh Thiên Phú", cột nợ hiển thị Nợ ròng sau đối trừ (-27.600.000đ), tab Công nợ thể hiện rõ bảng đối soát và running balance ròng chronological. Dòng CKTT âm và MERGE dương đúng dấu.
-- **Màn NCC**: Chọn đối tác NCC đó, cột nợ hiển thị Nợ phải trả NCC (75.000.000đ), tab Công nợ chỉ hiển thị các dòng NCC và bảng đối soát 3 cột chi tiết.
-- **Screenshot/log**: Khớp 100% với logic mong đợi từ KiotViet.
-- **Còn lệch gì không**: Không.
+- **Môi trường**: local/staging với fixture mô phỏng. Chưa QA trên dữ liệu production thật.
+- **Màn Khách hàng**: Chọn đối tác "Anh Thanh Thiên Phú", card "Vị thế ròng (Net Position)" hiển thị -27.600.000đ; tab Công nợ thể hiện running balance ròng chronological. Dòng CKTT âm và MERGE dương đúng dấu.
+- **Màn NCC**: Chọn đối tác NCC đó, cột nợ chính giữ Nợ cần trả NCC (75.000.000đ); tab Công nợ hiển thị các dòng NCC.
+- **Evidence**: Screenshot/log mô phỏng theo fixture local. **Chưa** có bằng chứng từ production thật.
 
 ## Rủi ro còn lại
-- Không có.
+- Dữ liệu legacy/payment/CB trên production có thể có hình thái khác fixture local — đặc biệt:
+  - `CashFlow.status = NULL` có thể làm route TTNH double-count nếu service không dùng NULL-safe filter (đã được fix ở HOTFIX FOLLOW-UP).
+  - Standalone `SupplierDebtTransaction` có thể bị marked "Đã hạch toán" sai nếu vẫn dùng `$purchasePaidTotal <= 0` (đã được fix ở HOTFIX FOLLOW-UP).
+- Hai bản fix trên cần được kiểm tra trên dữ liệu production để xác nhận không gây hồi quy.
+- UI "Vị thế ròng" chỉ là delta hiển thị — không phải phiếu cấn trừ thật. Báo cáo này KHÔNG kết luận đã có phiếu CB/HCB cho đối tác.
 
 ## Kết luận
-- **Đạt/chưa đạt**: **ĐẠT** ở môi trường local/staging.
-- **Có thể deploy chưa**: Có thể deploy lên staging/production để thực hiện Manual QA thật.
-- **Cần Agent làm gì tiếp**: Xin xác nhận của User trước khi chạy lệnh read-only đối soát trên môi trường production.
+- **Đạt/chưa đạt**: Đạt ở phạm vi test local/staging cho các case đã mô phỏng. **Chưa** đủ điều kiện chốt production.
+- **Có thể deploy chưa**: Có thể deploy staging để Manual QA tiếp; **chưa** đủ điều kiện deploy production.
+- **Cần làm tiếp**:
+  1. User xác nhận để chạy `customers:reconcile-partner-ledger` read-only trên production lấy snapshot dữ liệu thật.
+  2. Đối chiếu kết quả với cảm nhận nghiệp vụ + KiotViet.
+  3. Tests double-count payment + CB display group cần được pin tiếp khi có dữ liệu production làm fixture.
+  4. Chỉ chốt "đã đối trừ" khi có chứng từ CB/HCB thật (`has_debt_offset_voucher = true`).

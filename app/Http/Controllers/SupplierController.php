@@ -615,9 +615,23 @@ class SupplierController extends Controller
         $supplierDebt = $hasSupplierColumn ? (float) ($supplier->supplier_debt_amount ?? 0) : 0.0;
         $netDebt = $customerDebt - $supplierDebt;
 
+        $hasDebtOffsetVoucher = \App\Models\DebtOffset::query()
+            ->where('customer_id', $supplier->id)
+            ->where('status', '!=', 'cancelled')
+            ->exists();
+
         return response()->json([
             'entries' => $ledger['entries'],
             'summary' => [
+                // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
+                'customer_receivable_balance' => $customerDebt,
+                'supplier_payable_balance'    => $supplierDebt,
+                'partner_net_position'        => $netDebt,
+                'has_debt_offset_voucher'     => $hasDebtOffsetVoucher,
+                'is_actual_offset'            => false,
+                'is_net_view'                 => false,
+
+                // Backward-compatible keys (existing FE/tests still read these)
                 'net' => $ledger['closing_balance'],
                 'is_dual_role' => (bool) ($supplier->is_customer && ($hasSupplierColumn ? $supplier->is_supplier : false)),
                 'customer_debt_amount' => $customerDebt,

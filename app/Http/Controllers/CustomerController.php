@@ -255,6 +255,14 @@ class CustomerController extends Controller
                 ? 'Khách còn nợ'
                 : ($netDebt < 0 ? 'Mình còn nợ lại' : 'Hết nợ');
 
+            // HOTFIX FOLLOW-UP — canonical receivable/payable/net keys.
+            // Old `net_debt_amount` retained for backward compatibility;
+            // new keys make it explicit this is a display delta, NOT a
+            // recorded offset voucher.
+            $customer->customer_receivable_balance = $customerDebt;
+            $customer->supplier_payable_balance    = $supplierDebt;
+            $customer->partner_net_position        = $netDebt;
+
             return $customer;
         });
 
