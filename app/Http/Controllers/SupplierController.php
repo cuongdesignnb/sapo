@@ -619,7 +619,7 @@ class SupplierController extends Controller
 
         $ledgerService = app(\App\Services\PartnerDebtLedgerService::class);
         $ledger = $usePartnerTimeline
-            ? $ledgerService->buildSupplierDualRoleDebtTimeline($supplier)
+            ? $ledgerService->buildSupplierDualRolePartnerTimeline($supplier)
             : $ledgerService->buildSupplierPayableLedger($supplier);
 
         // HOTFIX FOLLOW-UP — opt-in server-side pagination matching

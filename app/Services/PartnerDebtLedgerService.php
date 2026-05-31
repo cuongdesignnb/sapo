@@ -549,7 +549,7 @@ class PartnerDebtLedgerService
      * This view reuses the customer net timeline so dual-role supplier tabs
      * can show the partner financial story without changing payable totals.
      */
-    public function buildSupplierDualRoleDebtTimeline(Customer $partner): array
+    public function buildSupplierDualRolePartnerTimeline(Customer $partner): array
     {
         $netLedger = $this->buildCustomerNetLedger($partner);
         $summary = $netLedger['summary'] ?? [];

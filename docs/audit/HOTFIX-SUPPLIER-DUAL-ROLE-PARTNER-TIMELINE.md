@@ -1,71 +1,77 @@
-# HOTFIX — Supplier Dual-role Partner Timeline
+# HOTFIX — Restore Supplier dual-role partner timeline
 
-## Scope
+## Phạm vi audit
 
-- Module: Customers, Suppliers, partner debt timeline.
-- Screens: `/suppliers`, supplier `Công nợ` tab, dual-role partners only.
-- API: `/api/suppliers/{id}/debt-transactions`.
-- Risk: mixing customer receivable documents into the pure supplier payable ledger can corrupt the supplier debt column/export if not kept behind an explicit view mode.
+- Module: Khách hàng, Nhà cung cấp, công nợ đối tác dual-role.
+- Màn hình: `/suppliers`, tab `Công nợ` của nhà cung cấp kiêm khách hàng.
+- Nghiệp vụ: payable NCC thuần, receivable khách hàng, timeline vị thế ròng đối tác.
+- Rủi ro chính: đưa `HD/TTHD` vào ledger phải trả NCC thuần sẽ làm sai cột `Nợ cần trả hiện tại`, export, và thanh toán NCC.
 
-## Root Cause
+## Source đã kiểm tra
 
-- The supplier debt tab had been hardened to pure supplier-side payable entries only.
-- For dual-role partners, QA expected the expanded supplier tab to also show the partner financial timeline with customer-side `HD...` and `TTHD...` rows.
-- The missing distinction was between the canonical supplier payable ledger and the opt-in partner net timeline shown for dual-role partners.
+- File: `app/Http/Controllers/SupplierController.php`, `app/Services/PartnerDebtLedgerService.php`, `resources/js/Pages/Suppliers/Index.vue`.
+- Route: `GET /api/suppliers/{id}/debt-transactions`.
+- Controller: `SupplierController::debtTransactions()`.
+- Service: `PartnerDebtLedgerService::buildSupplierPayableLedger()`, `buildCustomerNetLedger()`, `buildSupplierDualRolePartnerTimeline()`.
+- Model: `Customer`, `Invoice`, `Purchase`, `CashFlow`, `CustomerDebt`, `SupplierDebtTransaction`, `DebtOffset`, `OrderReturn`, `PurchaseReturn`.
+- Test: `SupplierDualRolePartnerTimelineTest`, `SupplierPayableLedgerTest`, supplier hardening, customer dual-role/reconcile suites.
+- Commit: compared `7fb035c329df10a996348faaeb96dd6665ee525f` and parent commit.
 
-## Business Rule
+## Commit gây mất logic
 
-- Default supplier payable ledger remains pure supplier-side:
-  - Purchases increase payable.
-  - Supplier payments decrease payable.
-  - Purchase returns decrease payable.
-  - Supplier adjustments/discounts/debt offsets follow signed `supplier_effect`.
-- Dual-role supplier partner timeline is opt-in with `view=partner`:
-  - Customer receivable entries keep customer-side signs.
-  - Supplier payable entries are mirrored into partner net position.
-  - `partner_net_position = customer_receivable_balance - supplier_payable_balance`.
-- Exports and non-dual suppliers continue using pure payable mode.
+- Commit: `7fb035c329df10a996348faaeb96dd6665ee525f` (`fix(debt): align customer and supplier debt tabs with Kiot standard`).
+- Block bị remove: `Cross-role: Invoices from customer side (dual-role only)` in `SupplierController::debtTransactions()`.
+- Tác động: tab NCC dual-role không còn thấy `HD...`, `TTHD...`, standalone customer receipt trong supplier tab.
 
-## Source Checked
+## Hiện trạng trước hotfix
 
-- `app/Http/Controllers/SupplierController.php`
-- `app/Services/PartnerDebtLedgerService.php`
-- `resources/js/Pages/Suppliers/Index.vue`
-- `tests/Feature/Suppliers/SupplierPayableLedgerTest.php`
-- `tests/Feature/Suppliers/HOTFIXFollowUpSupplierLedgerHardeningTest.php`
-- `tests/Feature/Customers/DualRolePartnerDebtTimelineTest.php`
-- `tests/Feature/Customers/AnhThanhThienPhuDebtReconcileTest.php`
+- Supplier payable ledger: đã đúng hướng, chỉ chứa supplier-side `PN`, `PCPN/TTNH`, trả hàng nhập, adjustment/discount/CB.
+- Partner timeline: có sẵn ở customer net ledger, nhưng supplier tab chưa opt-in dùng.
+- Frontend: supplier tab luôn gọi endpoint mặc định, nên chỉ nhận `supplier_payable`.
+- Sai/lệch: dual-role supplier tab thiếu customer-side entries, dù cột chính NCC vẫn đang đúng gross payable.
 
-## Changes Made
+## Root cause
 
-- Added `PartnerDebtLedgerService::buildSupplierDualRoleDebtTimeline()` as a wrapper over the existing customer net ledger.
-- Added supplier API `view=partner` mode for dual-role partners.
-- Kept default `/api/suppliers/{id}/debt-transactions` as pure supplier payable.
-- Added partner timeline metadata:
+- Sau `7fb035c`, logic customer-side được loại khỏi supplier payable để tránh trộn nghiệp vụ.
+- Cần thêm một lớp view riêng cho tab NCC dual-role thay vì nhét invoice vào `buildSupplierPayableLedger()`.
+
+## Phương án
+
+- Không revert `7fb035c`.
+- Giữ `buildSupplierPayableLedger()` là source of truth thuần NCC.
+- Thêm `PartnerDebtLedgerService::buildSupplierDualRolePartnerTimeline()` để compose từ `buildCustomerNetLedger()`.
+- `SupplierController::debtTransactions()` hỗ trợ `view=partner` cho dual-role, mặc định vẫn `supplier_payable`.
+- Frontend supplier dual-role gọi `view=partner`.
+- Cột chính danh sách NCC giữ gross payable từ `supplier_debt_amount`.
+
+## Output contract
+
+- Summary partner mode:
   - `display_mode=partner_net_timeline`
+  - `customer_receivable_balance`
+  - `supplier_payable_balance`
+  - `partner_net_position`
+  - `is_supplier_tab_partner_timeline=true`
+- Entry partner mode:
+  - `domain`: `customer`, `supplier`, hoặc `offset`
+  - `source_ledger`: `customer_receivable`, `supplier_payable`, hoặc `debt_offset`
   - `partner_effect`
   - `partner_running_balance`
-  - `source_ledger`
-  - `is_mirror`
+  - `affects_partner_net`
   - `affects_customer_receivable`
   - `affects_supplier_payable`
-- Updated supplier frontend to request `view=partner` for dual-role suppliers and render:
-  - final column as `Vị thế ròng`
-  - values from `partner_effect`
-  - balances from `partner_running_balance`
-  - domain badges for receivable/payable entries.
-- Added regression test file `tests/Feature/Suppliers/SupplierDualRolePartnerTimelineTest.php`.
 
-## Data Safety
+## Có ảnh hưởng dữ liệu đang có không?
 
-- Migration: No.
-- Backfill: No.
-- Recalculate: No.
-- Update old data: No.
-- Delete data: No.
-- Stock/cost/serial logic: Not touched.
+- Không.
+- Migration: Không.
+- Backfill: Không.
+- Update dữ liệu cũ: Không.
+- Delete: Không.
+- Recalculate: Không.
+- Tạo phiếu CB/HCB: Không.
 
-## Tests
+## Tests đã chạy
 
 - `php artisan test tests/Feature/Suppliers/SupplierDualRolePartnerTimelineTest.php`: PASS.
 - `php artisan test tests/Feature/Suppliers/SupplierPayableLedgerTest.php`: PASS.
@@ -78,19 +84,25 @@
 - `php artisan test --filter=CashFlow`: PASS.
 - `php artisan test --filter=Purchase`: PASS.
 - `php artisan test --filter=CustomerDebt`: PASS.
+- Note: PHP CLI prints startup warnings for missing optional `oci8_*`, `pdo_oci`, and `pdo_firebird` extensions in local environment. The commands exited successfully.
+
+## Build
+
 - `npm run build`: PASS.
-- Note: PHP CLI prints startup warnings for missing optional `oci8_*`, `pdo_oci`, and `pdo_firebird` extensions in this local environment. They did not fail the test process.
 
 ## Manual QA
 
-- Not run locally against production/staging in this hotfix.
-- Expected QA after deploy:
-  - Dual-role supplier tab shows `HD...`, `TTHD...`, `PN...`, `PCPN...` in partner mode.
-  - Default supplier payable API/export does not include `HD...` or `TTHD...`.
-  - Non-dual supplier tab remains payable-only.
-  - Final partner column shows net position, not pure payable.
+- Anh Thanh Thiên Phú: Chưa QA trên staging/production.
+- Supplier thường: Chưa QA trên staging/production.
+- Screenshot/log: Chưa có.
 
-## Conclusion
+## Rủi ro còn lại
 
-- The implementation separates supplier payable source-of-truth from dual-role partner timeline display.
-- This hotfix is code/test/UI only and does not mutate production data.
+- Dữ liệu legacy thiếu ledger thật vẫn cần đối soát riêng nếu phát hiện mismatch.
+- Hotfix này chỉ thay đổi API/UI read path và test, không chuẩn hóa dữ liệu cũ.
+
+## Kết luận
+
+- Đạt code/test/build local.
+- Có thể deploy staging để QA.
+- Chưa kết luận production cho đến khi có xác nhận deploy/check production và bằng chứng read-only trên dữ liệu thật.

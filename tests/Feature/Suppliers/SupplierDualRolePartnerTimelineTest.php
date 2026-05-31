@@ -29,7 +29,7 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         ]);
     }
 
-    public function test_supplier_dual_role_partner_view_includes_customer_sales_and_supplier_purchases(): void
+    public function test_supplier_dual_role_partner_view_includes_customer_invoices_and_supplier_purchases(): void
     {
         $partner = $this->createDualRolePartner([
             'debt_amount' => 3_250_000,
@@ -53,15 +53,23 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         $this->assertEquals(-19_600_000, $data['summary']['partner_net_position']);
         $this->assertEquals(-19_600_000, $data['summary']['net']);
 
-        $this->assertNotNull($entries->firstWhere('code', 'HD-PARTNER-001'));
-        $this->assertNotNull($entries->firstWhere('code', 'TTHD-PARTNER-001'));
-        $this->assertNotNull($entries->firstWhere('code', 'PN-PARTNER-001'));
-        $this->assertNotNull($entries->firstWhere('code', 'PCPN-PARTNER-001'));
+        $this->assertNotNull($entries->firstWhere('code', 'HDTEST001'), 'Supplier dual-role partner timeline must include customer invoice HD...');
+        $this->assertNotNull($entries->firstWhere('code', 'TTHDTEST001'), 'Supplier dual-role partner timeline must include customer payment TTHD...');
+        $this->assertNotNull($entries->firstWhere('code', 'PNTEST001'), 'Supplier dual-role partner timeline must include supplier purchase PN...');
+        $this->assertNotNull($entries->firstWhere('code', 'PCPNTEST001'), 'Supplier dual-role partner timeline must include supplier payment PCPN...');
 
-        $this->assertEquals(4_000_000, $entries->firstWhere('code', 'HD-PARTNER-001')['partner_effect']);
-        $this->assertEquals(-750_000, $entries->firstWhere('code', 'TTHD-PARTNER-001')['partner_effect']);
-        $this->assertEquals(-25_000_000, $entries->firstWhere('code', 'PN-PARTNER-001')['partner_effect']);
-        $this->assertEquals(2_150_000, $entries->firstWhere('code', 'PCPN-PARTNER-001')['partner_effect']);
+        $hd = $entries->firstWhere('code', 'HDTEST001');
+        $pn = $entries->firstWhere('code', 'PNTEST001');
+
+        $this->assertEquals('customer', $hd['domain']);
+        $this->assertContains($hd['source_ledger'], ['customer_receivable', 'customer_reference']);
+        $this->assertEquals('supplier', $pn['domain']);
+        $this->assertEquals('supplier_payable', $pn['source_ledger']);
+
+        $this->assertEquals(4_000_000, $entries->firstWhere('code', 'HDTEST001')['partner_effect']);
+        $this->assertEquals(-750_000, $entries->firstWhere('code', 'TTHDTEST001')['partner_effect']);
+        $this->assertEquals(-25_000_000, $entries->firstWhere('code', 'PNTEST001')['partner_effect']);
+        $this->assertEquals(2_150_000, $entries->firstWhere('code', 'PCPNTEST001')['partner_effect']);
     }
 
     public function test_default_dual_role_supplier_endpoint_remains_pure_supplier_payable(): void
@@ -86,8 +94,8 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         $this->assertEquals(22_850_000, $data['summary']['net']);
         $this->assertFalse($entries->contains(fn ($entry) => str_starts_with((string) $entry['code'], 'HD')));
         $this->assertFalse($entries->contains(fn ($entry) => str_starts_with((string) $entry['code'], 'TTHD')));
-        $this->assertNotNull($entries->firstWhere('code', 'PN-PARTNER-001'));
-        $this->assertNotNull($entries->firstWhere('code', 'PCPN-PARTNER-001'));
+        $this->assertNotNull($entries->firstWhere('code', 'PNTEST001'));
+        $this->assertNotNull($entries->firstWhere('code', 'PCPNTEST001'));
     }
 
     public function test_non_dual_supplier_tab_stays_supplier_payable(): void
@@ -161,7 +169,7 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
     private function createInvoiceAndPayment(Customer $partner, float $total, float $paid): void
     {
         Invoice::create([
-            'code' => 'HD-PARTNER-001',
+            'code' => 'HDTEST001',
             'customer_id' => $partner->id,
             'subtotal' => $total,
             'discount' => 0,
@@ -176,7 +184,7 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
     private function createPurchaseAndPayment(Customer $partner, float $total, float $paid): void
     {
         Purchase::create([
-            'code' => 'PN-PARTNER-001',
+            'code' => 'PNTEST001',
             'supplier_id' => $partner->id,
             'total_amount' => $total,
             'paid_amount' => 0,
@@ -187,14 +195,14 @@ class SupplierDualRolePartnerTimelineTest extends TestCase
         ]);
 
         CashFlow::create([
-            'code' => 'PCPN-PARTNER-001',
+            'code' => 'PCPNTEST001',
             'type' => 'payment',
             'amount' => $paid,
             'time' => Carbon::parse('2026-05-03 09:00:00'),
             'target_type' => 'Nhà cung cấp',
             'target_id' => $partner->id,
             'reference_type' => 'Purchase',
-            'reference_code' => 'PN-PARTNER-001',
+            'reference_code' => 'PNTEST001',
             'payment_method' => 'cash',
             'status' => 'completed',
             'created_at' => Carbon::parse('2026-05-03 09:00:00'),
