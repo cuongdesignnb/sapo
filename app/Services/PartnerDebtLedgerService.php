@@ -857,28 +857,49 @@ class PartnerDebtLedgerService
             );
     }
 
+    /**
+     * Single source of truth for "what counts as cancelled" across
+     * isCancelledStatus() (PHP-side) and scopeNotCancelledCashFlow()
+     * (DB-side). Adding a new variant here keeps both paths aligned.
+     *
+     * Values are lower-cased + trimmed; callers must normalise input
+     * the same way before comparison.
+     */
+    private function cancelledStatuses(): array
+    {
+        return ['đã hủy', 'da huy', 'cancelled', 'canceled', 'void', 'deleted'];
+    }
+
     private function isCancelledStatus(?string $status): bool
     {
         $normalized = mb_strtolower(trim((string) $status));
-        return in_array($normalized, ['đã hủy', 'da huy', 'cancelled', 'canceled', 'void', 'deleted'], true);
+        return in_array($normalized, $this->cancelledStatuses(), true);
     }
 
     /**
-     * NULL-safe "not cancelled" scope for CashFlow queries.
+     * NULL-safe + accent-aware "not cancelled" scope for CashFlow queries.
      *
      * `where('status', '!=', 'cancelled')` would silently drop rows
      * whose status is NULL (legacy data), making the service think no
      * real cashflow exists for a purchase and then synthesise a virtual
      * TTNH payment from Purchase.paid_amount — double-counting the
-     * payment. Using whereNull + whereNotIn keeps NULL rows in scope
-     * (treated as still valid) and only excludes the explicit cancelled
-     * variants the codebase emits.
+     * payment. NULL rows must stay in scope (treated as valid legacy
+     * payments) and the explicit cancelled variants — including the
+     * Vietnamese "Đã hủy" / "da huy" forms — must be excluded.
+     *
+     * We normalise the column with LOWER+TRIM to defeat case/whitespace
+     * drift in legacy data (eg "DA HUY", " Đã Hủy ").
      */
     private function scopeNotCancelledCashFlow($query)
     {
-        return $query->where(function ($q) {
+        $cancelled = $this->cancelledStatuses();
+
+        return $query->where(function ($q) use ($cancelled) {
             $q->whereNull('status')
-              ->orWhereNotIn('status', ['cancelled', 'canceled', 'void', 'deleted']);
+              ->orWhere(function ($q2) use ($cancelled) {
+                  $q2->whereNotNull('status')
+                     ->whereNotIn(\DB::raw('LOWER(TRIM(status))'), $cancelled);
+              });
         });
     }
 

@@ -1432,7 +1432,7 @@ const createdDateRange = computed({
                             <SortableHeader label="Mã khách hàng" field="code" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Tên khách hàng" field="name" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
                             <SortableHeader label="Điện thoại" field="phone" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-3" @sort="handleSort" />
-                            <SortableHeader label="Nợ hiện tại" field="debt_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" title="Nợ ròng = Nợ khách hàng - Nợ NCC" @sort="handleSort" />
+                            <SortableHeader label="Nợ hiện tại" field="debt_amount" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" title="Vị thế ròng = Phải thu khách - Phải trả NCC. Đây là delta hiển thị, không phải phiếu cấn trừ." @sort="handleSort" />
                             <th class="px-4 py-3 text-right">Số ngày nợ</th>
                             <SortableHeader label="Tổng bán" field="total_spent" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-3 text-right" @sort="handleSort" />
                             <th class="px-4 py-3 text-right">
@@ -1503,7 +1503,7 @@ const createdDateRange = computed({
                                                     ? 'text-green-600 font-semibold'
                                                     : 'text-gray-700'
                                         "
-                                        title="Nợ ròng = Nợ khách hàng - Nợ NCC"
+                                        title="Vị thế ròng = Phải thu khách - Phải trả NCC. Đây là delta hiển thị, không phải phiếu cấn trừ."
                                     >
                                         {{ formatCurrency(customerNetDebt(customer)) }}
                                         <span

@@ -8,7 +8,7 @@
 - **Nghiệp vụ**:
   - Công nợ khách hàng kiêm nhà cung cấp (dual-role partner).
   - Mirror ledger NCC sang màn khách với dấu đảo ngược để hiển thị nợ ròng.
-  - Tách biệt rõ Nợ phải thu, Nợ phải trả, và Nợ ròng trên UI cả 2 màn hình.
+  - Tách biệt rõ Nợ phải thu, Nợ phải trả, và Vị thế ròng (Partner Net Position) trên UI cả 2 màn hình.
 - **Rủi ro chính**:
   - Rủi ro logic: Hiển thị nhầm lẫn hoặc lệch số dư nợ.
   - Rủi ro data: Thấp. Lập chỉ sửa read-only API và giao diện hiển thị, hoàn toàn không sửa đổi hoặc tự cấn trừ dữ liệu cũ trên database.
@@ -42,7 +42,7 @@
 
 ## Hiện trạng
 - **Backend**: Đã chuẩn hóa Service tính toán lịch sử công nợ, đảm bảo mirror chính xác và phân chia rõ rệt running balances. Tránh double-counting giữa `Purchase.paid_amount` và CashFlow thực tế.
-- **Frontend**: Hiển thị bảng đối soát 3 cột (Nợ phải thu, Nợ phải trả, Nợ ròng) trên tab Công nợ của cả 2 màn hình Khách hàng và Nhà cung cấp khi đối tác là dual-role.
+- **Frontend**: Hiển thị bảng đối soát 3 cột (Nợ phải thu, Nợ phải trả, Vị thế ròng) trên tab Công nợ của cả 2 màn hình Khách hàng và Nhà cung cấp khi đối tác là dual-role.
 - **Database**: Sử dụng các trường `debt_amount` và `supplier_debt_amount` của bảng `customers`.
 - **Permission**: Đầy đủ cho môi trường CLI chạy command đối soát.
 - **Production/deploy**: Chưa deploy code mới nhất lên production.
@@ -118,3 +118,37 @@
   2. Đối chiếu kết quả với cảm nhận nghiệp vụ + KiotViet.
   3. Tests double-count payment + CB display group cần được pin tiếp khi có dữ liệu production làm fixture.
   4. Chỉ chốt "đã đối trừ" khi có chứng từ CB/HCB thật (`has_debt_offset_voucher = true`).
+
+---
+
+## HOTFIX FOLLOW-UP — Đồng bộ trạng thái hủy CashFlow tiếng Việt
+
+### Vấn đề
+`scopeNotCancelledCashFlow()` trước đó chỉ loại 4 giá trị tiếng Anh (`cancelled, canceled, void, deleted`) trong khi `isCancelledStatus()` xử lý cả tiếng Việt (`đã hủy, da huy`). Lệch danh sách gây nguy cơ: một CashFlow `status='Đã hủy'` vẫn bị scope SQL coi là payment hợp lệ → service chặn fallback TTNH sai → ledger thiếu payment legacy.
+
+### Cách sửa
+- Tạo helper dùng chung `cancelledStatuses()` — single source of truth cho cả PHP-side (`isCancelledStatus`) và DB-side (`scopeNotCancelledCashFlow`).
+- `scopeNotCancelledCashFlow()` normalise cột `status` bằng `LOWER(TRIM(status))` để defeat case/whitespace drift (vd `' DA HUY '`, `'Đã Hủy'`).
+- Giữ semantics:
+  - `status = NULL` → vẫn coi là legacy payment hợp lệ.
+  - `status = active/pending/completed/...` (mọi non-cancelled) → hợp lệ.
+  - `status ∈ {cancelled, canceled, void, deleted, đã hủy, da huy}` (case-insensitive, trim) → loại.
+
+### Tests pin contract
+- `test_vietnamese_cancelled_cashflow_does_not_block_legacy_purchase_paid_amount` — `Đã hủy` → fallback `TTNH...` được sinh.
+- `test_ascii_vietnamese_cancelled_cashflow_does_not_block_legacy_purchase_paid_amount` — `da huy` → fallback `TTNH...` được sinh.
+- `test_mixed_case_cancelled_cashflow_is_normalised` — `' CANCELLED '` (padded + upper-case) → vẫn loại nhờ `LOWER+TRIM`.
+
+### Wording
+- UI: title cột "Nợ hiện tại" ở `Customers/Index.vue` đổi từ "Nợ ròng = Nợ KH − Nợ NCC" sang "Vị thế ròng = Phải thu khách − Phải trả NCC. Đây là delta hiển thị, không phải phiếu cấn trừ.".
+- Doc: các dòng mô tả tab 3 cột đổi từ "Nợ ròng" sang "Vị thế ròng (Partner Net Position)".
+- Command: đã đổi nhãn từ vòng trước (`Partner Net Position (Vị thế ròng)`), không đổi thêm.
+
+### Data safety
+- Không migration, không backfill, không update/delete data, không recalculate.
+- Chỉ sửa: 1 helper trong service, 3 test mới, 2 dòng audit doc, 1 tooltip UI.
+
+### Tests run
+- `php artisan test --filter=HOTFIXFollowUpSupplierLedgerHardeningTest` → **7/7 pass / 18 assertions / 0.74s**.
+- Regression full debt-related → **192 passed / 995 assertions / 35.37s, zero fail**.
+- `npm run build` → **built in 7.97s**.

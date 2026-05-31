@@ -184,6 +184,116 @@ class HOTFIXFollowUpSupplierLedgerHardeningTest extends TestCase
         $this->assertEquals(-300_000.0, (float) $standalone['supplier_effect']);
     }
 
+    // ── A.2) Vietnamese cancelled status "Đã hủy" must be treated as cancelled ──
+    public function test_vietnamese_cancelled_cashflow_does_not_block_legacy_purchase_paid_amount(): void
+    {
+        $supplier = $this->supplier('PNVICAN', 500_000);
+        $baseTime = Carbon::now()->subDays(2);
+
+        Purchase::create([
+            'code'          => 'PNVICAN001',
+            'supplier_id'   => $supplier->id,
+            'total_amount'  => 1_000_000,
+            'paid_amount'   => 500_000,
+            'status'        => 'completed',
+            'purchase_date' => $baseTime->copy(),
+        ]);
+
+        // status='Đã hủy' is the canonical Vietnamese form some legacy
+        // rows carry. scopeNotCancelledCashFlow + isCancelledStatus
+        // must both treat it as cancelled.
+        CashFlow::create([
+            'code'           => 'PCPNVICAN001',
+            'type'           => 'payment',
+            'amount'         => 500_000,
+            'time'           => $baseTime->copy()->addMinutes(5),
+            'target_type'    => 'Nhà cung cấp',
+            'target_id'      => $supplier->id,
+            'reference_type' => 'Purchase',
+            'reference_code' => 'PNVICAN001',
+            'status'         => 'Đã hủy',
+        ]);
+
+        $ledger = app(PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
+        $payments = collect($ledger['entries'])->where('type', 'payment')->values();
+
+        $codes = $payments->pluck('code')->all();
+        $this->assertNotContains('PCPNVICAN001', $codes,
+            'Vietnamese-cancelled CashFlow must be excluded from payments');
+        $this->assertContains('TTNHVICAN001', $codes,
+            'Legacy Purchase.paid_amount must synthesise a TTNH fallback');
+        $this->assertCount(1, $payments, 'Exactly one (legacy) payment surfaces');
+    }
+
+    // ── A.3) ASCII Vietnamese cancelled status "da huy" must also be treated as cancelled ──
+    public function test_ascii_vietnamese_cancelled_cashflow_does_not_block_legacy_purchase_paid_amount(): void
+    {
+        $supplier = $this->supplier('PNASCIICAN', 500_000);
+        $baseTime = Carbon::now()->subDays(2);
+
+        Purchase::create([
+            'code'          => 'PNASCIICAN001',
+            'supplier_id'   => $supplier->id,
+            'total_amount'  => 1_000_000,
+            'paid_amount'   => 500_000,
+            'status'        => 'completed',
+            'purchase_date' => $baseTime->copy(),
+        ]);
+
+        CashFlow::create([
+            'code'           => 'PCPNASCIICAN001',
+            'type'           => 'payment',
+            'amount'         => 500_000,
+            'time'           => $baseTime->copy()->addMinutes(5),
+            'target_type'    => 'Nhà cung cấp',
+            'target_id'      => $supplier->id,
+            'reference_type' => 'Purchase',
+            'reference_code' => 'PNASCIICAN001',
+            'status'         => 'da huy',
+        ]);
+
+        $ledger = app(PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
+        $codes = collect($ledger['entries'])->where('type', 'payment')->pluck('code')->all();
+
+        $this->assertNotContains('PCPNASCIICAN001', $codes);
+        $this->assertContains('TTNHASCIICAN001', $codes);
+    }
+
+    // ── A.4) Mixed-case + whitespace cancelled status normalised ──
+    public function test_mixed_case_cancelled_cashflow_is_normalised(): void
+    {
+        $supplier = $this->supplier('PNMIXED', 500_000);
+        $baseTime = Carbon::now()->subDays(2);
+
+        Purchase::create([
+            'code'          => 'PNMIXED001',
+            'supplier_id'   => $supplier->id,
+            'total_amount'  => 1_000_000,
+            'paid_amount'   => 500_000,
+            'status'        => 'completed',
+            'purchase_date' => $baseTime->copy(),
+        ]);
+
+        CashFlow::create([
+            'code'           => 'PCPNMIXED001',
+            'type'           => 'payment',
+            'amount'         => 500_000,
+            'time'           => $baseTime->copy()->addMinutes(5),
+            'target_type'    => 'Nhà cung cấp',
+            'target_id'      => $supplier->id,
+            'reference_type' => 'Purchase',
+            'reference_code' => 'PNMIXED001',
+            'status'         => ' CANCELLED ', // padded + upper-case
+        ]);
+
+        $ledger = app(PartnerDebtLedgerService::class)->buildSupplierPayableLedger($supplier);
+        $codes = collect($ledger['entries'])->where('type', 'payment')->pluck('code')->all();
+
+        $this->assertNotContains('PCPNMIXED001', $codes,
+            'LOWER+TRIM must normalise mixed-case/whitespace cancelled status');
+        $this->assertContains('TTNHMIXED001', $codes);
+    }
+
     // ── C) Same standalone payment, but a real CashFlow with the same code already exists ──
     //    must NOT be duplicated (regression guard for the per-transaction guard).
     public function test_standalone_payment_with_matching_cashflow_does_not_duplicate(): void
