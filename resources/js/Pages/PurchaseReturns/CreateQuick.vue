@@ -3,6 +3,7 @@ import { formatVND as formatCurrency } from '@/utils/money';
 import MoneyInput from '@/Components/MoneyInput.vue';
 import { ref, computed } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import axios from 'axios';
 
 const page = usePage();
 const props = defineProps({
@@ -135,6 +136,50 @@ const onQtyOrPriceChange = () => {
     refundAmount.value = totalAmount.value;
 };
 
+// ====== SERIAL LOOKUP ======
+const serialLookupLoading = ref(false);
+const serialLookupResults = ref([]);
+const serialLookupBlockedResults = ref([]);
+const serialLookupMessage = ref('');
+const serialLookupError = ref('');
+
+const resetSerialLookup = () => {
+    serialLookupResults.value = [];
+    serialLookupBlockedResults.value = [];
+    serialLookupMessage.value = '';
+    serialLookupError.value = '';
+};
+
+const onProductSearchInput = () => {
+    resetSerialLookup();
+};
+
+const lookupSerial = async () => {
+    const q = productSearch.value.trim();
+    if (q.length < 2) {
+        serialLookupError.value = 'Vui lòng nhập ít nhất 2 ký tự Serial/IMEI.';
+        return;
+    }
+    serialLookupLoading.value = true;
+    resetSerialLookup();
+    try {
+        const params = { serial: q };
+        if (supplierId.value) params.supplier_id = supplierId.value;
+        const res = await axios.get('/purchase-returns/serial-lookup', { params });
+        const data = res.data;
+        serialLookupResults.value = data.matches || [];
+        serialLookupBlockedResults.value = data.blocked_matches || [];
+        serialLookupMessage.value = data.message || '';
+    } catch (e) {
+        if (e.response?.data?.message) {
+            serialLookupError.value = e.response.data.message;
+        } else {
+            serialLookupError.value = 'Không tra cứu được Serial/IMEI.';
+        }
+    } finally {
+        serialLookupLoading.value = false;
+    }
+};
 
 const save = () => {
     if (!supplierId.value) {
@@ -244,9 +289,18 @@ const save = () => {
                 <!-- Product search + items table -->
                 <div class="bg-white rounded shadow-sm border border-gray-200">
                     <div class="p-4 border-b border-gray-200 relative">
-                        <input v-model="productSearch" @focus="showProductList = true"
-                            placeholder="Tìm sản phẩm theo tên, mã SKU để thêm vào phiếu trả..."
-                            class="w-full border border-gray-300 rounded px-3 py-2 outline-none focus:border-green-500" />
+                        <div class="flex gap-2">
+                            <input v-model="productSearch" @focus="showProductList = true"
+                                @input="onProductSearchInput"
+                                @keydown.enter.prevent="lookupSerial"
+                                placeholder="Tìm sản phẩm theo tên, mã SKU hoặc nhập Serial/IMEI để tra cứu phiếu nhập..."
+                                class="flex-1 border border-gray-300 rounded px-3 py-2 outline-none focus:border-green-500" />
+                            <button type="button" @click="lookupSerial"
+                                class="px-3 py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                                :disabled="serialLookupLoading">
+                                {{ serialLookupLoading ? 'Đang tìm...' : '🔍 Tìm serial' }}
+                            </button>
+                        </div>
                         <div v-if="showProductList && filteredProducts.length > 0"
                             class="absolute top-full left-4 right-4 mt-1 bg-white border border-gray-200 rounded shadow-lg z-20 max-h-[320px] overflow-auto">
                             <div v-for="p in filteredProducts" :key="p.id"
@@ -267,6 +321,47 @@ const save = () => {
                                     {{ p.has_serial ? 'Không hỗ trợ trả nhanh' : '+ Thêm' }}
                                 </button>
                             </div>
+                        </div>
+
+                        <!-- Serial lookup results -->
+                        <div v-if="serialLookupResults.length > 0" class="mt-3 bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
+                            <div class="font-bold text-blue-700 text-sm">Tìm thấy Serial/IMEI có thể trả theo phiếu nhập</div>
+                            <div v-for="result in serialLookupResults" :key="result.serial_id"
+                                class="bg-white rounded border border-blue-100 p-3 flex items-center justify-between gap-3">
+                                <div class="text-sm">
+                                    <div class="font-bold text-gray-800">Serial/IMEI: {{ result.serial_number }}</div>
+                                    <div class="text-gray-600">{{ result.product_sku }} — {{ result.product_name }}</div>
+                                    <div class="text-gray-500 text-xs mt-1">
+                                        Phiếu nhập: {{ result.purchase_code }}
+                                        <span v-if="result.supplier_name"> · NCC: {{ result.supplier_name }}</span>
+                                    </div>
+                                </div>
+                                <Link :href="result.return_url"
+                                    class="px-3 py-2 rounded bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 whitespace-nowrap">
+                                    Mở phiếu nhập để trả serial này
+                                </Link>
+                            </div>
+                        </div>
+
+                        <!-- Serial lookup blocked results -->
+                        <div v-if="serialLookupBlockedResults.length > 0" class="mt-3 bg-yellow-50 border border-yellow-200 rounded p-3 space-y-2">
+                            <div class="font-bold text-yellow-700 text-sm">Tìm thấy Serial/IMEI nhưng không thể trả NCC</div>
+                            <div v-for="result in serialLookupBlockedResults" :key="'blocked-' + result.serial_id"
+                                class="bg-white rounded border border-yellow-100 p-3">
+                                <div class="font-bold text-gray-800">Serial/IMEI: {{ result.serial_number }}</div>
+                                <div class="text-gray-600 text-sm">{{ result.product_sku }} — {{ result.product_name }}</div>
+                                <div class="text-red-600 text-xs mt-1">{{ result.reason }}</div>
+                            </div>
+                        </div>
+
+                        <!-- Serial lookup message -->
+                        <div v-if="serialLookupMessage && serialLookupResults.length === 0 && serialLookupBlockedResults.length === 0" class="mt-2 text-sm text-gray-500 italic">
+                            {{ serialLookupMessage }}
+                        </div>
+
+                        <!-- Serial lookup error -->
+                        <div v-if="serialLookupError" class="mt-2 text-sm text-red-600">
+                            {{ serialLookupError }}
                         </div>
                     </div>
 

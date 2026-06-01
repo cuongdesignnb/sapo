@@ -52,6 +52,11 @@ class SerialImei extends Model
         return $this->belongsTo(Product::class);
     }
 
+    public function purchase()
+    {
+        return $this->belongsTo(Purchase::class);
+    }
+
     public function deviceRepairs()
     {
         return $this->hasMany(DeviceRepair::class, 'serial_imei_id');

@@ -1,7 +1,7 @@
 <script setup>
 import { formatVND as formatCurrency } from '@/utils/money';
 import MoneyInput from '@/Components/MoneyInput.vue';
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 
 const page = usePage();
@@ -11,6 +11,9 @@ const props = defineProps({
     bankAccounts: Array,
     employees: Array,
     currentReturner: Object,
+    preselectSerialId: [Number, String],
+    preselectProductId: [Number, String],
+    preselectWarning: String,
 });
 
 const items = ref(
@@ -92,6 +95,19 @@ const syncRefund = computed(() => {
     return totalAmount.value;
 });
 
+// HOTFIX: Auto-select serial from serial-lookup redirect
+onMounted(() => {
+    if (!props.preselectSerialId) return;
+    const item = items.value.find(i => String(i.product_id) === String(props.preselectProductId));
+    if (!item) return;
+    const serial = item.serials.find(s => String(s.id) === String(props.preselectSerialId));
+    if (!serial) return;
+    item.selected = true;
+    serial.selected = true;
+    item.serial_ids = [serial.id];
+    item.quantity = 1;
+});
+
 
 const save = () => {
     if (selectedItems.value.length === 0) {
@@ -155,6 +171,10 @@ const save = () => {
         <div class="flex flex-1 overflow-hidden">
             <!-- Left: Items -->
             <div class="flex-1 overflow-auto p-4">
+                <!-- Preselect warning -->
+                <div v-if="preselectWarning" class="mb-3 bg-yellow-50 border border-yellow-200 text-yellow-700 px-4 py-2 rounded text-sm">
+                    {{ preselectWarning }}
+                </div>
                 <div class="bg-white rounded shadow-sm border border-gray-200">
                     <div class="px-4 py-3 border-b border-gray-200 bg-gray-50 font-bold text-gray-700">
                         Chọn sản phẩm trả lại

@@ -124,12 +124,130 @@ class PurchaseReturnController extends Controller
             }
         }
 
+        // HOTFIX: preselect serial from serial-lookup redirect
+        $preselectSerialId = null;
+        $preselectProductId = null;
+        $preselectWarning = null;
+
+        if ($request->filled('serial_id')) {
+            $serial = SerialImei::where('id', $request->serial_id)
+                ->where('purchase_id', $purchase->id)
+                ->first();
+
+            if (!$serial) {
+                $preselectWarning = 'Serial không thuộc phiếu nhập này.';
+            } elseif ($serial->status !== 'in_stock') {
+                $preselectWarning = 'Serial không còn trong kho để trả NCC.';
+            } elseif (!$purchase->items->firstWhere('product_id', $serial->product_id)) {
+                $preselectWarning = 'Sản phẩm của serial không thuộc phiếu nhập này.';
+            } else {
+                $preselectSerialId = $serial->id;
+                $preselectProductId = $serial->product_id;
+            }
+        }
+
         return Inertia::render('PurchaseReturns/Create', [
             'purchase' => $purchase,
             'returnCode' => 'PTN' . date('YmdHis'),
             'bankAccounts' => \App\Models\BankAccount::where('status', 'active')->get(),
             'employees' => $this->activeReturnEmployees(),
             'currentReturner' => $this->currentReturnerOption(),
+            'preselectSerialId' => $preselectSerialId,
+            'preselectProductId' => $preselectProductId,
+            'preselectWarning' => $preselectWarning,
+        ]);
+    }
+
+    /**
+     * HOTFIX: Tra cứu Serial/IMEI từ màn trả nhanh.
+     * Read-only — không thay đổi DB, chỉ trả thông tin để FE điều hướng.
+     */
+    public function serialLookup(Request $request)
+    {
+        $data = $request->validate([
+            'serial' => 'required|string|min:2|max:100',
+            'supplier_id' => 'nullable|exists:customers,id',
+        ]);
+
+        $keyword = trim($data['serial']);
+        $supplierId = $data['supplier_id'] ?? null;
+
+        $query = SerialImei::query()
+            ->with([
+                'product:id,name,sku,has_serial,stock_quantity',
+                'purchase:id,code,supplier_id,purchase_date,created_at,status',
+                'purchase.supplier:id,name,code,phone',
+            ])
+            ->where(function ($q) use ($keyword) {
+                $q->where('serial_number', $keyword)
+                  ->orWhere('serial_number', 'like', '%' . $keyword . '%');
+            })
+            ->limit(10);
+
+        if ($supplierId) {
+            $query->whereHas('purchase', function ($q) use ($supplierId) {
+                $q->where('supplier_id', $supplierId);
+            });
+        }
+
+        $serials = $query->get();
+
+        $matches = [];
+        $blockedMatches = [];
+
+        foreach ($serials as $serial) {
+            $product = $serial->product;
+            $purchase = $serial->purchase;
+
+            $reason = null;
+
+            if (!$product) {
+                $reason = 'Không tìm thấy sản phẩm của serial này.';
+            } elseif (!$product->has_serial) {
+                $reason = 'Sản phẩm của serial này không bật quản lý Serial/IMEI.';
+            } elseif (!$purchase) {
+                $reason = 'Serial này không có phiếu nhập gốc.';
+            } elseif ($purchase->status === 'cancelled') {
+                $reason = 'Phiếu nhập gốc đã bị hủy.';
+            } elseif ($serial->status !== 'in_stock') {
+                $reason = 'Serial này không còn trong kho, không thể trả NCC.';
+            }
+
+            $row = [
+                'serial_id' => $serial->id,
+                'serial_number' => $serial->serial_number,
+                'status' => $serial->status,
+                'product_id' => $product?->id,
+                'product_name' => $product?->name,
+                'product_sku' => $product?->sku,
+                'purchase_id' => $purchase?->id,
+                'purchase_code' => $purchase?->code,
+                'purchase_date' => optional($purchase?->purchase_date ?? $purchase?->created_at)->toDateTimeString(),
+                'supplier_id' => $purchase?->supplier_id,
+                'supplier_name' => $purchase?->supplier?->name,
+                'reason' => $reason,
+            ];
+
+            if ($reason) {
+                $blockedMatches[] = $row;
+                continue;
+            }
+
+            $row['return_url'] = route('purchase-returns.create', [
+                'purchase_id' => $purchase->id,
+                'serial_id' => $serial->id,
+            ], false);
+
+            $matches[] = $row;
+        }
+
+        return response()->json([
+            'success' => true,
+            'matches' => $matches,
+            'blocked_matches' => $blockedMatches,
+            'message' => count($matches)
+                ? null
+                : 'Không tìm thấy serial/IMEI còn trong kho để trả NCC.',
         ]);
     }
 
