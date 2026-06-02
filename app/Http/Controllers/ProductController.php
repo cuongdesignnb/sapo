@@ -12,6 +12,9 @@ use App\Models\PriceBook;
 use App\Models\PriceBookProduct;
 use App\Models\ProductAttribute;
 use App\Models\ProductVariant;
+use App\Services\ProductExcel\ProductExcelExportService;
+use App\Services\ProductExcel\ProductExcelFieldCatalog;
+use App\Services\ProductExcel\ProductExcelImportService;
 use App\Services\ProductSearchService;
 
 class ProductController extends Controller
@@ -72,7 +75,7 @@ class ProductController extends Controller
         return response()->json($result);
     }
 
-    public function index(Request $request, ProductSearchService $productSearch)
+    public function index(Request $request, ProductSearchService $productSearch, ProductExcelFieldCatalog $excelFieldCatalog)
     {
         $query = Product::with(['category', 'brand']);
 
@@ -201,6 +204,7 @@ class ProductController extends Controller
                 $request->only('search', 'category_id', 'brand_id', 'type', 'status', 'stock_filter', 'sort_by', 'sort_direction')
             ),
             'canViewCostPrice' => auth()->check() && auth()->user()->hasPermission('products.view_cost_price'),
+            'productExcel' => $excelFieldCatalog->payload(auth()->user()),
         ]);
     }
 
@@ -1108,7 +1112,105 @@ class ProductController extends Controller
 
         return redirect()->back()->with('success', 'Đã xoá hàng hóa!');
     }
-    public function export(Request $request, ProductSearchService $productSearch)
+    public function export(
+        Request $request,
+        ProductSearchService $productSearch,
+        ProductExcelFieldCatalog $catalog,
+        ProductExcelExportService $exporter
+    ) {
+        $query = Product::with(['category', 'brand']);
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+            $productSearch->apply($query, $search, [
+                'include_serials' => true,
+                'serial_relation' => 'serialImeis',
+            ]);
+            $productSearch->applyScore($query, $search);
+        }
+
+        if ($request->filled('category_id')) {
+            $categoryId = $request->input('category_id');
+            $categoryIds = [$categoryId];
+            $childIds = Category::where('parent_id', $categoryId)->pluck('id')->toArray();
+            $categoryIds = array_merge($categoryIds, $childIds);
+            if (!empty($childIds)) {
+                $categoryIds = array_merge($categoryIds, Category::whereIn('parent_id', $childIds)->pluck('id')->toArray());
+            }
+            $query->whereIn('category_id', $categoryIds);
+        }
+
+        if ($request->filled('brand_id')) {
+            $query->where('brand_id', $request->input('brand_id'));
+        }
+
+        if ($request->filled('type')) {
+            $query->where('type', $request->input('type'));
+        }
+
+        $status = $request->input('status', 'active');
+        if ($status === 'inactive') {
+            $query->where('is_active', false);
+        } elseif ($status !== 'all') {
+            $query->where(function ($q) {
+                $q->where('is_active', true)->orWhereNull('is_active');
+            });
+        }
+
+        if ($request->filled('stock_filter')) {
+            match ($request->input('stock_filter')) {
+                'in_stock' => $query->where('stock_quantity', '>', 0),
+                'out_of_stock' => $query->where('stock_quantity', '<=', 0),
+                'below_min' => $query->whereColumn('stock_quantity', '<', 'min_stock')->where('min_stock', '>', 0),
+                default => null,
+            };
+        }
+
+        $fields = $catalog->selectedExportFields((array) $request->input('fields', []), auth()->user());
+        $products = $query->with('units')->orderBy('id', 'desc')->get();
+
+        return $exporter->download($products, $fields, 'hang_hoa_' . now()->format('Ymd_His') . '.xlsx');
+    }
+
+    public function importTemplate(ProductExcelImportService $importer)
+    {
+        return $importer->template();
+    }
+
+    public function importPreview(Request $request, ProductExcelImportService $importer)
+    {
+        $validated = $request->validate([
+            'file' => 'required|file|mimes:csv,txt,xlsx,xls',
+            'duplicate_name_strategy' => 'nullable|in:error,replace_name',
+            'duplicate_barcode_sku_strategy' => 'nullable|in:error,replace_sku',
+            'update_stock' => 'nullable|boolean',
+            'update_cost_price' => 'nullable|boolean',
+            'update_description' => 'nullable|boolean',
+        ]);
+
+        return response()->json($importer->preview($request->file('file'), $validated));
+    }
+
+    public function importCommit(Request $request, ProductExcelImportService $importer)
+    {
+        $validated = $request->validate([
+            'file' => 'required|file|mimes:csv,txt,xlsx,xls',
+            'duplicate_name_strategy' => 'nullable|in:error,replace_name',
+            'duplicate_barcode_sku_strategy' => 'nullable|in:error,replace_sku',
+            'update_stock' => 'nullable|boolean',
+            'update_cost_price' => 'nullable|boolean',
+            'update_description' => 'nullable|boolean',
+        ]);
+
+        return response()->json($importer->commit($request->file('file'), $validated));
+    }
+
+    public function import(Request $request, ProductExcelImportService $importer)
+    {
+        return $this->importPreview($request, $importer);
+    }
+
+    private function legacyProductCsvExport(Request $request, ProductSearchService $productSearch)
     {
         $query = Product::with(['category', 'brand']);
 
@@ -1130,7 +1232,7 @@ class ProductController extends Controller
         );
     }
 
-    public function import(Request $request)
+    private function legacyProductCsvImport(Request $request)
     {
         [$headers, $rows] = \App\Services\CsvService::parse($request);
         $count = 0;

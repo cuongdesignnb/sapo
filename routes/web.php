@@ -435,6 +435,9 @@ Route::get('/employees/export', [App\Http\Controllers\EmployeeController::class,
 Route::post('/employees/import', [App\Http\Controllers\EmployeeController::class, 'import'])->name('employees.import')->middleware('permission:employees.import');
 
 Route::get('/products/export', [App\Http\Controllers\ProductController::class, 'export'])->name('products.export')->middleware('permission:products.export');
+Route::get('/products/import-template', [App\Http\Controllers\ProductController::class, 'importTemplate'])->name('products.import-template')->middleware('permission:products.import');
+Route::post('/products/import-preview', [App\Http\Controllers\ProductController::class, 'importPreview'])->name('products.import-preview')->middleware('permission:products.import');
+Route::post('/products/import-commit', [App\Http\Controllers\ProductController::class, 'importCommit'])->name('products.import-commit')->middleware('permission:products.import');
 Route::post('/products/import', [App\Http\Controllers\ProductController::class, 'import'])->name('products.import')->middleware('permission:products.import');
 
 Route::get('/invoices/export', [App\Http\Controllers\InvoiceController::class, 'export'])->name('invoices.export')->middleware('permission:invoices.export');

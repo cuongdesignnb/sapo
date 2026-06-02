@@ -13,6 +13,7 @@ const props = defineProps({
     brands: Array,
     filters: Object,
     canViewCostPrice: { type: Boolean, default: false },
+    productExcel: { type: Object, default: null },
 });
 
 const search = ref(props.filters?.search || "");
@@ -613,6 +614,11 @@ const formatDate = (val) => {
                     <ExcelButtons
                         export-url="/products/export"
                         import-url="/products/import"
+                        import-template-url="/products/import-template"
+                        import-preview-url="/products/import-preview"
+                        import-commit-url="/products/import-commit"
+                        :product-excel="productExcel"
+                        :export-params="buildFilterParams()"
                     />
                 </div>
             </div>
