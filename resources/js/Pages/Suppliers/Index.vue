@@ -369,6 +369,10 @@ const setSupplierTab = async (id, tab) => {
 // (KiotViet 10/page). Caller passes ?page=N to activate.
 const supplierDebtPage = reactive({});
 const supplierDebtPerPage = 10;
+const shouldShowDebtReconcileWarning = (reconcile) =>
+    reconcile?.severity === "warning" || reconcile?.user_warning === true;
+const shouldShowDebtReconcileInfo = (reconcile) =>
+    reconcile?.severity === "info" && !!reconcile?.message;
 
 const supplierRows = computed(() => {
     if (Array.isArray(props.suppliers?.data)) return props.suppliers.data;
@@ -1271,6 +1275,19 @@ const submitActivate = (supplier) => {
                                         <template v-if="getSupplierTab(supplier.id) === 'debt'">
                                             <div v-if="supplierDataLoading[supplier.id]" class="text-center py-8 text-gray-400">Đang tải...</div>
                                             <template v-else>
+                                                <div
+                                                    v-if="shouldShowDebtReconcileWarning(supplierDebt[supplier.id]?.reconcile)"
+                                                    class="mb-3 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-xs flex items-center gap-2"
+                                                >
+                                                    <svg class="w-4 h-4 text-yellow-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                                    <span>{{ supplierDebt[supplier.id]?.reconcile?.message || 'Lịch sử công nợ đang lệch với Nợ cần trả nhà cung cấp. Cần đối soát dữ liệu trước khi cập nhật.' }}</span>
+                                                </div>
+                                                <div
+                                                    v-else-if="shouldShowDebtReconcileInfo(supplierDebt[supplier.id]?.reconcile)"
+                                                    class="mb-3 text-xs text-slate-500"
+                                                >
+                                                    {{ supplierDebt[supplier.id].reconcile.message }}
+                                                </div>
                                                 <div class="flex justify-end mb-3">
                                                     <select v-model="debtFilter" class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none">
                                                         <option value="all">Tất cả giao dịch</option>

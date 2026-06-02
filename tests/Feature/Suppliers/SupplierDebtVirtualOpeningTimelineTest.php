@@ -36,7 +36,12 @@ class SupplierDebtVirtualOpeningTimelineTest extends TestCase
             ->assertJsonPath('summary.has_virtual_opening_balance', true)
             ->assertJsonPath('summary.virtual_opening_balance', 500_000)
             ->assertJsonPath('summary.display_balance_target', 500_000)
-            ->assertJsonPath('summary.display_balance_final', 500_000);
+            ->assertJsonPath('summary.display_balance_final', 500_000)
+            ->assertJsonPath('reconcile.ledger_mismatch', true)
+            ->assertJsonPath('reconcile.display_resolved', true)
+            ->assertJsonPath('reconcile.has_mismatch', false)
+            ->assertJsonPath('reconcile.severity', 'info')
+            ->assertJsonPath('reconcile.user_warning', false);
 
         $entries = collect($response->json('entries'));
         $this->assertCount(1, $entries);

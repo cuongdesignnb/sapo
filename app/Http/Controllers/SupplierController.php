@@ -719,7 +719,7 @@ class SupplierController extends Controller
                 'net_debt_amount' => $netDebt,
             ],
         ];
-        if ($usePartnerTimeline && !empty($ledger['reconcile'])) {
+        if (!empty($ledger['reconcile'])) {
             $response['reconcile'] = $ledger['reconcile'];
         }
         if ($pagination !== null) {

@@ -132,6 +132,10 @@ const getCustomerSalesReturnEntries = (customerId) => {
 // HOTFIX FOLLOW-UP — paginated debt-history (KiotViet 10/page).
 const debtHistoryPage = reactive({});       // { [customerId]: 1, ... }
 const debtHistoryPerPage = 10;
+const shouldShowDebtReconcileWarning = (reconcile) =>
+    reconcile?.severity === "warning" || reconcile?.user_warning === true;
+const shouldShowDebtReconcileInfo = (reconcile) =>
+    reconcile?.severity === "info" && !!reconcile?.message;
 
 const loadDebtHistory = async (customerId, page = null) => {
     tabLoading[customerId] = true;
@@ -2255,11 +2259,17 @@ const createdDateRange = computed({
                                             >
                                                 <!-- Reconcile Warning -->
                                                 <div
-                                                    v-if="debtHistoryData[customer.id].reconcile?.has_mismatch"
+                                                    v-if="shouldShowDebtReconcileWarning(debtHistoryData[customer.id].reconcile)"
                                                     class="mb-3 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-xs flex items-center gap-2"
                                                 >
                                                     <svg class="w-4 h-4 text-yellow-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                                                     <span>{{ debtHistoryData[customer.id].reconcile?.message || 'Lịch sử công nợ đang lệch với Nợ hiện tại. Cần đối soát dữ liệu trước khi cập nhật.' }}</span>
+                                                </div>
+                                                <div
+                                                    v-else-if="shouldShowDebtReconcileInfo(debtHistoryData[customer.id].reconcile)"
+                                                    class="mb-3 text-xs text-slate-500"
+                                                >
+                                                    {{ debtHistoryData[customer.id].reconcile.message }}
                                                 </div>
 
                                                 <!-- Filter dropdown -->

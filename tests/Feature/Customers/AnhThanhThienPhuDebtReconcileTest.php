@@ -95,6 +95,11 @@ class AnhThanhThienPhuDebtReconcileTest extends TestCase
         $this->assertEquals(-27600000, $data['summary']['net_debt_amount']);
         $this->assertEquals(-27600000, $data['reconcile']['computed_balance']);
         $this->assertFalse($data['reconcile']['has_mismatch']);
+        $this->assertEquals($data['summary']['display_balance_target'], $data['summary']['display_balance_final']);
+        $this->assertNotEquals('warning', $data['reconcile']['severity']);
+        $this->assertFalse($data['reconcile']['user_warning']);
+        $this->assertFalse($data['reconcile']['ledger_mismatch']);
+        $this->assertTrue($data['reconcile']['display_resolved']);
 
         $entries = collect($data['entries']);
 
@@ -128,6 +133,11 @@ class AnhThanhThienPhuDebtReconcileTest extends TestCase
         $this->assertEquals(47400000, $supData['summary']['customer_debt_amount']);
         $this->assertEquals(75000000, $supData['summary']['supplier_debt_amount']);
         $this->assertEquals(-27600000, $supData['summary']['net_debt_amount']);
+        $this->assertEquals($supData['summary']['display_balance_target'], $supData['summary']['display_balance_final']);
+        $this->assertNotEquals('warning', $supData['reconcile']['severity']);
+        $this->assertFalse($supData['reconcile']['user_warning']);
+        $this->assertFalse($supData['reconcile']['ledger_mismatch']);
+        $this->assertTrue($supData['reconcile']['display_resolved']);
 
         $supEntries = collect($supData['entries']);
 

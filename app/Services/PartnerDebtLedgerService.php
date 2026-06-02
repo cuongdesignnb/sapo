@@ -362,14 +362,26 @@ class PartnerDebtLedgerService
 
         $ledger = $this->computeSupplierDisplayRunningBalance($sorted);
         $balance = (float) ($ledger->last()['supplier_display_running_balance'] ?? 0.0);
+        $virtualOpening = $ledger->firstWhere('is_virtual_opening', true);
+        $hasVirtualOpening = (bool) $virtualOpening;
+        $ledgerBalance = (float) ($ledger->last()['supplier_ledger_running_balance'] ?? 0.0);
+        $reconcile = $this->buildDisplayReconcilePayload(
+            $targetBalance,
+            $ledgerBalance,
+            $targetBalance,
+            $balance,
+            $hasVirtualOpening,
+            'Nợ cần trả nhà cung cấp'
+        );
 
         return [
             'entries' => $ledger->values(),
             'closing_balance' => $balance,
+            'reconcile' => $reconcile,
             'summary' => [
                 'display_timeline_mode' => true,
-                'has_virtual_opening_balance' => $ledger->contains(fn ($entry) => (bool) ($entry['is_virtual_opening'] ?? false)),
-                'virtual_opening_balance' => (float) ($ledger->firstWhere('is_virtual_opening', true)['supplier_display_effect'] ?? 0.0),
+                'has_virtual_opening_balance' => $hasVirtualOpening,
+                'virtual_opening_balance' => (float) ($virtualOpening['supplier_display_effect'] ?? 0.0),
                 'display_balance_target' => $targetBalance,
                 'display_balance_final' => $balance,
             ],
@@ -547,10 +559,18 @@ class PartnerDebtLedgerService
         [$computedEntries, $ledgerClosingBalance] = $this->computeCustomerDisplayRunningBalance($sorted);
 
         // 5) Net metrics and reconciliation
-        $computedBalance = $ledgerClosingBalance;
-        $hasMismatch = abs($computedBalance - $netDebt) >= 0.01;
+        $ledgerBalance = $ledgerClosingBalance;
         $displayFinalBalance = (float) ($computedEntries->last()['customer_display_running_balance'] ?? 0.0);
         $virtualOpening = $computedEntries->firstWhere('is_virtual_opening', true);
+        $hasVirtualOpening = (bool) $virtualOpening;
+        $reconcile = $this->buildDisplayReconcilePayload(
+            $netDebt,
+            $ledgerBalance,
+            $netDebt,
+            $displayFinalBalance,
+            $hasVirtualOpening,
+            'Nợ hiện tại'
+        );
 
         // HOTFIX FOLLOW-UP — `partner_net_position` is the canonical
         // semantic key. `net_debt_amount` is kept for backward
@@ -566,14 +586,7 @@ class PartnerDebtLedgerService
 
         return [
             'entries' => $computedEntries->sortByDesc(fn ($entry) => $this->timestamp($entry))->values(),
-            'reconcile' => [
-                'current_net_debt' => $netDebt,
-                'computed_balance' => $computedBalance,
-                'has_mismatch' => $hasMismatch,
-                'message' => $hasMismatch
-                    ? 'Lịch sử công nợ đang lệch với Nợ hiện tại. Cần đối soát dữ liệu trước khi cập nhật.'
-                    : null,
-            ],
+            'reconcile' => $reconcile,
             'summary' => [
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
                 'customer_receivable_balance' => $customerDebt,
@@ -583,7 +596,7 @@ class PartnerDebtLedgerService
                 'is_actual_offset'            => false,
                 'is_net_view'                 => true,
                 'display_timeline_mode'        => true,
-                'has_virtual_opening_balance'  => (bool) $virtualOpening,
+                'has_virtual_opening_balance'  => $hasVirtualOpening,
                 'virtual_opening_balance'      => (float) ($virtualOpening['customer_display_effect'] ?? 0.0),
                 'display_balance_target'       => $netDebt,
                 'display_balance_final'        => $displayFinalBalance,
@@ -688,8 +701,19 @@ class PartnerDebtLedgerService
             ->sortByDesc(fn ($entry) => $this->timestamp($entry))
             ->values();
 
-        $virtualOpening = $entries->firstWhere('is_virtual_opening', true);
-        $displayFinalBalance = (float) ($entries->sortBy(fn ($entry) => $this->timestamp($entry))->last()['supplier_display_running_balance'] ?? 0.0);
+        $chronologicalEntries = $entries->sortBy(fn ($entry) => $this->timestamp($entry))->values();
+        $virtualOpening = $chronologicalEntries->firstWhere('is_virtual_opening', true);
+        $hasVirtualOpening = (bool) $virtualOpening;
+        $displayFinalBalance = (float) ($chronologicalEntries->last()['supplier_display_running_balance'] ?? 0.0);
+        $ledgerBalance = (float) ($chronologicalEntries->last()['supplier_ledger_running_balance'] ?? 0.0);
+        $reconcile = $this->buildDisplayReconcilePayload(
+            $supplierOrientedBalance,
+            $ledgerBalance,
+            $supplierOrientedBalance,
+            $displayFinalBalance,
+            $hasVirtualOpening,
+            'Nợ cần trả nhà cung cấp'
+        );
         $summary = array_merge($summary, [
             'display_mode' => 'supplier_partner_timeline',
             'legacy_display_mode' => 'partner_net_timeline',
@@ -705,7 +729,7 @@ class PartnerDebtLedgerService
             'balance_label' => 'Nợ cần trả nhà cung cấp',
             'source' => 'supplier_partner_financial_timeline',
             'display_timeline_mode' => true,
-            'has_virtual_opening_balance' => (bool) $virtualOpening,
+            'has_virtual_opening_balance' => $hasVirtualOpening,
             'virtual_opening_balance' => (float) ($virtualOpening['supplier_display_effect'] ?? 0.0),
             'display_balance_target' => $supplierOrientedBalance,
             'display_balance_final' => $displayFinalBalance,
@@ -716,7 +740,51 @@ class PartnerDebtLedgerService
             'entries' => $entries,
             'closing_balance' => $supplierOrientedBalance,
             'summary' => $summary,
-            'reconcile' => $netLedger['reconcile'] ?? null,
+            'reconcile' => $reconcile,
+        ];
+    }
+
+    private function buildDisplayReconcilePayload(
+        float $storedBalance,
+        float $ledgerBalance,
+        float $displayBalanceTarget,
+        float $displayBalanceFinal,
+        bool $hasVirtualOpeningBalance,
+        string $balanceLabel = 'Nợ hiện tại'
+    ): array {
+        $ledgerMismatch = abs($ledgerBalance - $storedBalance) >= 0.01;
+        $displayMismatch = abs($displayBalanceFinal - $displayBalanceTarget) >= 0.01;
+        $displayResolved = !$displayMismatch;
+
+        $severity = 'ok';
+        $message = null;
+        $userWarning = false;
+
+        if ($displayMismatch) {
+            $severity = 'warning';
+            $message = 'Lịch sử công nợ đang lệch với ' . $balanceLabel . '. Cần đối soát dữ liệu trước khi cập nhật.';
+            $userWarning = true;
+        } elseif ($ledgerMismatch && $hasVirtualOpeningBalance) {
+            $severity = 'info';
+            $message = 'Timeline dùng số dư đầu kỳ hiển thị do thiếu lịch sử chi tiết.';
+        }
+
+        return [
+            'has_mismatch' => $displayMismatch,
+            'ledger_mismatch' => $ledgerMismatch,
+            'display_mismatch' => $displayMismatch,
+            'display_resolved' => $displayResolved,
+            'stored_balance' => $storedBalance,
+            'current_net_debt' => $storedBalance,
+            'ledger_balance' => $ledgerBalance,
+            'computed_balance' => $ledgerBalance,
+            'display_balance_target' => $displayBalanceTarget,
+            'display_balance_final' => $displayBalanceFinal,
+            'has_virtual_opening_balance' => $hasVirtualOpeningBalance,
+            'resolved_by_virtual_opening' => $ledgerMismatch && $displayResolved && $hasVirtualOpeningBalance,
+            'severity' => $severity,
+            'user_warning' => $userWarning,
+            'message' => $message,
         ];
     }
 

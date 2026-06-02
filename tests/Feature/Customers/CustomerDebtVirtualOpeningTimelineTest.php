@@ -36,7 +36,17 @@ class CustomerDebtVirtualOpeningTimelineTest extends TestCase
             ->assertJsonPath('summary.has_virtual_opening_balance', true)
             ->assertJsonPath('summary.virtual_opening_balance', -800_000)
             ->assertJsonPath('summary.display_balance_target', -800_000)
-            ->assertJsonPath('summary.display_balance_final', -800_000);
+            ->assertJsonPath('summary.display_balance_final', -800_000)
+            ->assertJsonPath('reconcile.ledger_mismatch', true)
+            ->assertJsonPath('reconcile.display_resolved', true)
+            ->assertJsonPath('reconcile.has_mismatch', false)
+            ->assertJsonPath('reconcile.severity', 'info')
+            ->assertJsonPath('reconcile.user_warning', false);
+
+        $this->assertNotEquals(
+            'Lịch sử công nợ đang lệch với Nợ hiện tại. Cần đối soát dữ liệu trước khi cập nhật.',
+            $response->json('reconcile.message')
+        );
 
         $entries = collect($response->json('entries'));
         $this->assertCount(1, $entries);
