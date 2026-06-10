@@ -10,6 +10,7 @@ final class OrderStatus implements StatusEnum
     public const COMPLETED = 'completed';
     public const CANCELLED = 'cancelled';
     public const RETURNED = 'return';
+    public const ENDED = 'ended';
 
     public static function options(): array
     {
@@ -20,6 +21,7 @@ final class OrderStatus implements StatusEnum
             ['value' => self::COMPLETED,  'label' => 'Hoàn thành',  'color' => 'green'],
             ['value' => self::CANCELLED,  'label' => 'Đã hủy',      'color' => 'red'],
             ['value' => self::RETURNED,   'label' => 'Trả hàng',    'color' => 'purple'],
+            ['value' => self::ENDED,      'label' => 'Đã kết thúc', 'color' => 'slate'],
         ];
     }
 }

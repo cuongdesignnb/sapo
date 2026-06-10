@@ -13,6 +13,7 @@ class OrderItem extends Model
 
     protected $casts = [
         'serial_ids' => 'array',
+        'fulfilled_quantity' => 'integer',
     ];
 
     public function order()
@@ -23,5 +24,15 @@ class OrderItem extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function invoiceItems()
+    {
+        return $this->hasMany(InvoiceItem::class, 'order_item_id');
+    }
+
+    public function getRemainingQuantityAttribute(): int
+    {
+        return max(0, (int) $this->qty - (int) ($this->fulfilled_quantity ?? 0));
     }
 }

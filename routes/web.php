@@ -215,15 +215,23 @@ Route::post('/returns/{return}/cancel', [OrderReturnController::class, 'cancel']
 // ===== ORDERS =====
 Route::middleware('permission:orders.view')->group(function () {
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+    Route::get('/orders/export', [OrderController::class, 'export'])->name('orders.export');
+    Route::get('/orders/{order}/print', [OrderController::class, 'print'])->name('orders.print');
     Route::get('/orders/{orderKey}/pos-payload', [OrderController::class, 'posPayload'])->name('orders.pos-payload');
 });
+
+Route::middleware('permission:orders.edit')->group(function () {
+    Route::post('/orders/merge', [OrderController::class, 'merge'])->name('orders.merge');
+    Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update');
+    Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])->name('orders.process');
+    Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');
+    Route::post('/orders/{order}/end', [OrderController::class, 'endOrder'])->name('orders.end');
+});
+
 Route::middleware('permission:orders.create')->group(function () {
     Route::get('/orders/create', [OrderController::class, 'create'])->name('orders.create');
     Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
 });
-Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update')->middleware('permission:orders.edit');
-// RR-13: chuyển Order → Invoice (process). Trước đây method tồn tại nhưng route chưa đăng ký.
-Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])->name('orders.process')->middleware('permission:orders.edit');
 
 // ===== CASH FLOWS =====
 Route::get('/cash-flows', [App\Http\Controllers\CashFlowController::class, 'index'])->name('cash_flows.index')->middleware('permission:cash_flows.view');
@@ -285,7 +293,6 @@ Route::middleware('permission:customers.debt_adjust')->group(function () {
 Route::get('/invoices/{invoice}/print', [InvoiceController::class, 'print'])->name('invoices.print')->middleware('permission:invoices.print');
 Route::get('/invoices/{invoice}/show', [InvoiceController::class, 'show'])->name('invoices.show')->middleware('permission:invoices.view');
 Route::get('/invoices/{invoice}/payment-history', [InvoiceController::class, 'paymentHistory'])->name('invoices.payment-history')->middleware('permission:invoices.view');
-Route::get('/orders/{order}/print', [OrderController::class, 'print'])->name('orders.print')->middleware('permission:orders.print');
 Route::get('/returns/{return}/print', [\App\Http\Controllers\OrderReturnController::class, 'print'])->name('returns.print')->middleware('permission:returns.print');
 Route::get('/returns/{return}/show', [\App\Http\Controllers\OrderReturnController::class, 'show'])->name('returns.show')->middleware('permission:returns.view');
 Route::get('/purchases/{purchase}/print', [\App\Http\Controllers\PurchaseController::class, 'print'])->name('purchases.print')->middleware('permission:purchases.print');
@@ -442,7 +449,6 @@ Route::post('/products/import-commit', [App\Http\Controllers\ProductController::
 Route::post('/products/import', [App\Http\Controllers\ProductController::class, 'import'])->name('products.import')->middleware('permission:products.import');
 
 Route::get('/invoices/export', [App\Http\Controllers\InvoiceController::class, 'export'])->name('invoices.export')->middleware('permission:invoices.export');
-Route::get('/orders/export', [App\Http\Controllers\OrderController::class, 'export'])->name('orders.export')->middleware('permission:orders.export');
 Route::get('/returns/export', [App\Http\Controllers\OrderReturnController::class, 'export'])->name('returns.export')->middleware('permission:returns.export');
 
 Route::get('/cash-flows/export', [App\Http\Controllers\CashFlowController::class, 'export'])->name('cash_flows.export')->middleware('permission:cash_flows.export');

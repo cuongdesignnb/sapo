@@ -22,4 +22,9 @@ class InvoiceItem extends Model
     {
         return $this->hasMany(InvoiceItemSerial::class);
     }
+
+    public function orderItem()
+    {
+        return $this->belongsTo(OrderItem::class, 'order_item_id');
+    }
 }

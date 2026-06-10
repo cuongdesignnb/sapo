@@ -68,6 +68,9 @@ const createInitialTab = (index) => ({
     discount: 0,
     otherFees: 0,
     amountPaid: 0,
+    paymentMethod: 'cash',
+    bankAccountInfo: '',
+    expectedDeliveryDate: '',
     note: '',
     orderDate: formatDatetimeLocal(new Date()),
     
@@ -518,6 +521,9 @@ const save = async () => {
             discount: moneyNumber(activeTab.value.discount),
             total_payment: moneyNumber(totalPayment.value),
             amount_paid: moneyNumber(activeTab.value.amountPaid),
+            payment_method: activeTab.value.paymentMethod,
+            bank_account_info: activeTab.value.bankAccountInfo,
+            expected_delivery_date: activeTab.value.expectedDeliveryDate || null,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
             items: itemsComputed.value.map(item => ({
@@ -699,6 +705,9 @@ const saveAndPrint = async () => {
             discount: moneyNumber(activeTab.value.discount),
             total_payment: moneyNumber(totalPayment.value),
             amount_paid: moneyNumber(activeTab.value.amountPaid),
+            payment_method: activeTab.value.paymentMethod,
+            bank_account_info: activeTab.value.bankAccountInfo,
+            expected_delivery_date: activeTab.value.expectedDeliveryDate || null,
             price_book_id: activeTab.value.selectedPriceBookId,
             price_book_name: activeTab.value.selectedPriceBookName,
             items: itemsComputed.value.map(item => ({
@@ -1091,6 +1100,11 @@ onUnmounted(() => {
                                 <option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }} - {{ branch.address }}</option>
                             </select>
                         </div>
+                        <div class="flex items-center gap-2 mb-1 text-[13px] text-gray-700">
+                            <i class="fas fa-calendar-alt text-blue-500 w-4"></i>
+                            <span class="text-gray-500 w-24">Giao dự kiến:</span>
+                            <input type="datetime-local" v-model="activeTab.expectedDeliveryDate" class="flex-1 border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500 text-[12px] text-gray-700 bg-white" />
+                        </div>
                         <div v-show="activeTab.isDelivery">
                             <div class="flex gap-4 mb-3 mt-3">
                                 <div class="flex-1 relative">
@@ -1133,6 +1147,23 @@ onUnmounted(() => {
                        <div class="border-b border-gray-300 hover:border-blue-500 w-24 transition-colors">
                            <MoneyInput v-model="activeTab.amountPaid" :min="0" input-class="w-full text-right outline-none bg-transparent font-bold text-gray-800" />
                        </div>
+                    </div>
+                    <div v-if="activeTab.amountPaid > 0" class="mb-3 space-y-2 pl-3 border-l-2 border-blue-500">
+                        <div class="flex justify-between items-center text-[12px] text-gray-700">
+                            <span class="text-gray-500">Phương thức cọc:</span>
+                            <div class="flex gap-3">
+                                <label class="flex items-center gap-1 cursor-pointer">
+                                    <input type="radio" v-model="activeTab.paymentMethod" value="cash" class="text-blue-600" /> Tiền mặt
+                                </label>
+                                <label class="flex items-center gap-1 cursor-pointer">
+                                    <input type="radio" v-model="activeTab.paymentMethod" value="transfer" class="text-blue-600" /> Chuyển khoản
+                                </label>
+                            </div>
+                        </div>
+                        <div v-if="activeTab.paymentMethod === 'transfer'" class="flex justify-between items-center text-[12px] text-gray-700">
+                            <span class="text-gray-500">Thông tin TK:</span>
+                            <input type="text" v-model="activeTab.bankAccountInfo" placeholder="Tên ngân hàng, số TK..." class="w-32 border border-gray-300 rounded px-1.5 py-0.5 outline-none focus:border-blue-500 text-right text-[11px]" />
+                        </div>
                     </div>
                     <div v-if="activeTab.isDelivery" class="flex justify-between items-center mb-3">
                        <span class="font-bold text-gray-700">Thu hộ tiền (COD)</span>

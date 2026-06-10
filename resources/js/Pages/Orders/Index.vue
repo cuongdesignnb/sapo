@@ -116,15 +116,17 @@ const allStatuses = computed(() => props.filterOptions?.statuses || [
     { value: "completed", label: "Hoàn thành" },
     { value: "cancelled", label: "Đã hủy" },
     { value: "return", label: "Trả hàng" },
+    { value: "ended", label: "Đã kết thúc" },
 ]);
 
 // Status transition map - từ trạng thái nào có thể chuyển sang trạng thái nào
 const statusTransitions = {
-    draft: ["draft", "confirmed", "cancelled"],
-    confirmed: ["confirmed", "delivering", "completed", "cancelled"],
-    delivering: ["delivering", "completed", "cancelled"],
+    draft: ["draft", "confirmed"],
+    confirmed: ["confirmed", "delivering"],
+    delivering: ["delivering"],
     completed: ["completed"],
     cancelled: ["cancelled"],
+    ended: ["ended"],
     return: ["return"],
 };
 
@@ -199,9 +201,113 @@ const printOrder = (order) => {
     window.open(`/orders/${order.id}/print`, "_blank");
 };
 
-const cancelOrder = (order) => {
-    if (!confirm("Bạn có chắc muốn hủy đơn hàng này?")) return;
-    updateOrder(order.id, "status", "cancelled");
+// Hủy đơn hàng với modal nhập lý do
+const showCancelModal = ref(false);
+const cancelOrderId = ref(null);
+const cancelReason = ref('');
+
+const openCancelModal = (order) => {
+    cancelOrderId.value = order.id;
+    cancelReason.value = '';
+    showCancelModal.value = true;
+};
+
+const submitCancelOrder = () => {
+    if (!cancelOrderId.value) return;
+    router.post(`/orders/${cancelOrderId.value}/cancel`, {
+        reason: cancelReason.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            showCancelModal.value = false;
+            cancelOrderId.value = null;
+        }
+    });
+};
+
+// Kết thúc đơn hàng với modal nhập lý do
+const showEndModal = ref(false);
+const endOrderId = ref(null);
+const endReason = ref('');
+
+const openEndModal = (order) => {
+    endOrderId.value = order.id;
+    endReason.value = '';
+    showEndModal.value = true;
+};
+
+const submitEndOrder = () => {
+    if (!endOrderId.value) return;
+    router.post(`/orders/${endOrderId.value}/end`, {
+        reason: endReason.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            showEndModal.value = false;
+            endOrderId.value = null;
+        }
+    });
+};
+
+// Chọn đơn hàng để gộp
+const selectedOrderIds = ref([]);
+const handleSelectOrder = (id, event) => {
+    if (event.target.checked) {
+        if (!selectedOrderIds.value.includes(id)) {
+            selectedOrderIds.value.push(id);
+        }
+    } else {
+        selectedOrderIds.value = selectedOrderIds.value.filter(itemId => itemId !== id);
+    }
+};
+
+const isAllSelected = computed(() => {
+    return props.orders.data.length > 0 && selectedOrderIds.value.length === props.orders.data.length;
+});
+
+const toggleSelectAll = (event) => {
+    if (event.target.checked) {
+        selectedOrderIds.value = props.orders.data.map(o => o.id);
+    } else {
+        selectedOrderIds.value = [];
+    }
+};
+
+// Kiểm tra xem có thể gộp hay không (phải cùng khách hàng, cùng chi nhánh và trạng thái nháp/xác nhận)
+const canMerge = computed(() => {
+    if (selectedOrderIds.value.length < 2) return false;
+    const selectedOrders = props.orders.data.filter(o => selectedOrderIds.value.includes(o.id));
+    if (selectedOrders.length !== selectedOrderIds.value.length) return false;
+
+    const customerId = selectedOrders[0].customer_id;
+    const branchId = selectedOrders[0].branch_id;
+
+    return selectedOrders.every(o => 
+        o.customer_id === customerId && 
+        o.branch_id === branchId && 
+        ['draft', 'confirmed'].includes(o.status) &&
+        (o.fulfilled_quantity || 0) === 0
+    );
+});
+
+const mergeOrders = () => {
+    if (!canMerge.value) {
+        alert("Chỉ có thể gộp các đơn hàng cùng khách hàng, cùng chi nhánh, ở trạng thái Phiếu tạm/Đã xác nhận và chưa được xử lý phần nào!");
+        return;
+    }
+    if (!confirm(`Bạn có chắc muốn gộp ${selectedOrderIds.value.length} đơn hàng đã chọn? Các đơn hàng gốc sẽ bị hủy.`)) return;
+
+    router.post('/orders/merge', {
+        order_ids: selectedOrderIds.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            selectedOrderIds.value = [];
+        },
+        onError: (err) => {
+            alert(err.message || 'Có lỗi xảy ra khi gộp đơn hàng.');
+        }
+    });
 };
 
 // Xử lý đơn hàng → Invoice
@@ -335,7 +441,10 @@ const submitProcessOrder = () => {
                         Đặt hàng
                     </Link>
                     <button
-                        class="bg-white text-gray-600 border border-gray-300 px-3 py-1.5 text-sm font-medium rounded hover:bg-gray-50 transition flex items-center gap-1"
+                        @click="mergeOrders"
+                        :disabled="!canMerge"
+                        :class="!canMerge ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'"
+                        class="bg-white text-gray-600 border border-gray-300 px-3 py-1.5 text-sm font-medium rounded transition flex items-center gap-1"
                     >
                         <svg
                             class="w-4 h-4"
@@ -409,6 +518,8 @@ const submitProcessOrder = () => {
                                 <input
                                     type="checkbox"
                                     class="rounded border-gray-300"
+                                    :checked="isAllSelected"
+                                    @change="toggleSelectAll"
                                 />
                             </th>
                             <th class="px-3 py-2 text-center w-8">
@@ -494,6 +605,8 @@ const submitProcessOrder = () => {
                                     <input
                                         type="checkbox"
                                         class="rounded border-gray-300"
+                                        :checked="selectedOrderIds.includes(order.id)"
+                                        @change="handleSelectOrder(order.id, $event)"
                                     />
                                 </td>
                                 <td class="px-3 py-2 text-center text-gray-300">
@@ -1690,12 +1803,27 @@ const submitProcessOrder = () => {
                                                 </button>
                                                 <button
                                                     v-if="
+                                                        order.status === 'confirmed' ||
+                                                        order.status === 'delivering'
+                                                    "
+                                                    @click.stop="openEndModal(order)"
+                                                    class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-1.5 rounded font-bold shadow-sm flex items-center gap-1"
+                                                >
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                                                    </svg>
+                                                    Kết thúc
+                                                </button>
+                                                <button
+                                                    v-if="
                                                         order.status !==
                                                             'cancelled' &&
                                                         order.status !==
-                                                            'completed'
+                                                            'completed' &&
+                                                        order.status !==
+                                                            'ended'
                                                     "
-                                                    @click="cancelOrder(order)"
+                                                    @click.stop="openCancelModal(order)"
                                                     class="bg-white border border-gray-300 px-4 py-1.5 rounded text-gray-700 font-bold hover:bg-gray-50 shadow-sm flex items-center gap-1"
                                                 >
                                                     <svg
@@ -1801,6 +1929,48 @@ const submitProcessOrder = () => {
                     <button @click="showProcessModal = false" class="px-4 py-2 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-100">Hủy</button>
                     <button @click="submitProcessOrder" :disabled="isProcessing" class="px-4 py-2 text-sm bg-green-600 text-white rounded font-medium hover:bg-green-700 disabled:opacity-50">
                         {{ isProcessing ? 'Đang xử lý...' : 'Tạo hóa đơn' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hủy đơn hàng Modal -->
+        <div v-if="showCancelModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="showCancelModal = false">
+            <div class="bg-white rounded-lg shadow-xl w-[400px] max-w-full">
+                <div class="px-5 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">Hủy bỏ đơn đặt hàng</h3>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Lý do hủy bỏ</label>
+                        <textarea v-model="cancelReason" rows="3" placeholder="Nhập lý do hủy bỏ đơn đặt hàng..." class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none resize-none"></textarea>
+                    </div>
+                </div>
+                <div class="px-5 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+                    <button @click="showCancelModal = false" class="px-4 py-2 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-100">Đóng</button>
+                    <button @click="submitCancelOrder" class="px-4 py-2 text-sm bg-red-600 text-white rounded font-medium hover:bg-red-700">
+                        Đồng ý hủy
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Kết thúc đơn hàng Modal -->
+        <div v-if="showEndModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="showEndModal = false">
+            <div class="bg-white rounded-lg shadow-xl w-[400px] max-w-full">
+                <div class="px-5 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-bold text-gray-800">Kết thúc đơn đặt hàng</h3>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Lý do kết thúc</label>
+                        <textarea v-model="endReason" rows="3" placeholder="Nhập lý do kết thúc đơn đặt hàng..." class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-blue-500 outline-none resize-none"></textarea>
+                    </div>
+                </div>
+                <div class="px-5 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+                    <button @click="showEndModal = false" class="px-4 py-2 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-100">Đóng</button>
+                    <button @click="submitEndOrder" class="px-4 py-2 text-sm bg-orange-600 text-white rounded font-medium hover:bg-orange-700">
+                        Xác nhận kết thúc
                     </button>
                 </div>
             </div>

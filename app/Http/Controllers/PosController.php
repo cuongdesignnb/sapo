@@ -369,13 +369,44 @@ class PosController extends Controller
             'seller_key'  => 'nullable|string',
             'sale_time' => 'nullable',
             'note' => 'nullable|string|max:1000',
+
+            // New fields for deposit and expected delivery date
+            'amount_paid' => 'nullable|numeric|min:0',
+            'customer_paid' => 'nullable|numeric|min:0',
+            'payment_method' => 'nullable|string',
+            'bank_account_info' => 'nullable|string',
+            'expected_delivery_date' => 'nullable|date',
+
+            // New delivery fields
+            'is_delivery' => 'nullable|boolean',
+            'delivery' => 'nullable|array',
+            'delivery.is_delivery' => 'nullable|boolean',
+            'delivery.delivery_mode' => 'nullable|string',
+            'delivery.delivery_partner' => 'nullable|string',
+            'delivery.receiver_name' => 'nullable|string',
+            'delivery.receiver_phone' => 'nullable|string',
+            'delivery.receiver_address' => 'nullable|string',
+            'delivery.receiver_ward' => 'nullable|string',
+            'delivery.receiver_district' => 'nullable|string',
+            'delivery.receiver_city' => 'nullable|string',
+            'delivery.weight' => 'nullable|numeric|min:0',
+            'delivery.delivery_fee' => 'nullable|numeric|min:0',
+            'delivery.cod_amount' => 'nullable|numeric|min:0',
+            'delivery.tracking_code' => 'nullable|string',
+            'delivery.delivery_note' => 'nullable|string',
+
             'items' => 'required|array',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|numeric|min:1',
             'items.*.price' => 'required|numeric',
+            'items.*.discount' => 'nullable|numeric|min:0',
+            'items.*.serial_ids' => 'nullable|array',
+            'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
 
         try {
+            \Illuminate\Support\Facades\DB::beginTransaction();
+
             $customer = $validated['customer_id'] ? \App\Models\Customer::find($validated['customer_id']) : null;
 
             // HOTFIX 24.33 — resolve seller_key (admin_user:<id> or employee:<id>),
@@ -391,7 +422,10 @@ class PosController extends Controller
                 return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
             }
 
-            $order = \App\Models\Order::create([
+            $amountPaid = $validated['amount_paid'] ?? $validated['customer_paid'] ?? 0;
+            $deliveryData = $validated['delivery'] ?? [];
+
+            $orderData = [
                 'code' => 'DH' . time() . rand(10, 99),
                 'customer_id' => $customer?->id,
                 'branch_id' => null,
@@ -402,26 +436,78 @@ class PosController extends Controller
                 'status' => 'draft',
                 'total_price' => $validated['subtotal'],
                 'discount' => $validated['discount'] ?? 0,
-                'other_fees' => 0,
+                'other_fees' => $deliveryData['delivery_fee'] ?? 0,
                 'total_payment' => $validated['total'],
-                'amount_paid' => 0,
+                'amount_paid' => $amountPaid,
                 'note' => $validated['note'] ?? null,
-            ]);
+                'expected_delivery_date' => $validated['expected_delivery_date'] ?? null,
+
+                'is_delivery' => (bool) ($deliveryData['is_delivery'] ?? $validated['is_delivery'] ?? false),
+                'delivery_partner' => $deliveryData['delivery_partner'] ?? null,
+                'receiver_name' => $deliveryData['receiver_name'] ?? null,
+                'receiver_phone' => $deliveryData['receiver_phone'] ?? null,
+                'receiver_address' => $deliveryData['receiver_address'] ?? null,
+                'receiver_ward' => $deliveryData['receiver_ward'] ?? null,
+                'receiver_district' => $deliveryData['receiver_district'] ?? null,
+                'receiver_city' => $deliveryData['receiver_city'] ?? null,
+                'weight' => $deliveryData['weight'] ?? 0,
+                'delivery_fee' => $deliveryData['delivery_fee'] ?? 0,
+                'cod_amount' => $deliveryData['cod_amount'] ?? 0,
+                'tracking_code' => $deliveryData['tracking_code'] ?? null,
+                'delivery_note' => $deliveryData['delivery_note'] ?? null,
+            ];
+
+            $order = \App\Models\Order::create($orderData);
 
             if (!empty($validated['sale_time'])) {
                 $order->update(['created_at' => \Carbon\Carbon::parse($validated['sale_time'])]);
             }
 
             foreach ($validated['items'] as $item) {
-                $subtotal = ($item['quantity'] * $item['price']);
+                $subtotal = ($item['quantity'] * $item['price']) - ($item['discount'] ?? 0);
+                
+                $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
+                $product = Product::find($item['product_id']);
+                if ($product && $product->has_serial && !empty($serialIds)) {
+                    $availability = app(SerialAvailabilityService::class);
+                    $blocked = $availability->findBlockedIds($serialIds, $product->id);
+                    if (!empty($blocked)) {
+                        throw new \Exception("Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ").");
+                    }
+                }
+
                 $order->items()->create([
                     'product_id' => $item['product_id'],
                     'qty'        => $item['quantity'],
                     'price'      => $item['price'],
-                    'discount'   => 0,
+                    'discount'   => $item['discount'] ?? 0,
                     'subtotal'   => $subtotal,
+                    'serial_ids' => !empty($serialIds) ? $serialIds : null,
                 ]);
             }
+
+            // Ghi nhận cashflow cọc
+            if ($amountPaid > 0) {
+                $paymentMethod = $validated['payment_method'] ?? 'cash';
+                $bankInfo = $validated['bank_account_info'] ?? null;
+
+                \App\Models\CashFlow::create([
+                    'code' => 'PT' . time() . rand(10, 99),
+                    'type' => 'receipt',
+                    'amount' => $amountPaid,
+                    'time' => now(),
+                    'category' => 'Thu đặt cọc đơn đặt hàng',
+                    'target_type' => 'Khách hàng',
+                    'target_id' => $customer?->id,
+                    'target_name' => $customer?->name ?? 'Khách lẻ',
+                    'reference_type' => 'Order',
+                    'reference_code' => $order->code,
+                    'payment_method' => $paymentMethod,
+                    'description' => 'Thu đặt cọc đơn đặt hàng ' . $order->code . ($bankInfo ? ' - CK: ' . $bankInfo : ''),
+                ]);
+            }
+
+            \Illuminate\Support\Facades\DB::commit();
 
             return response()->json([
                 'success' => true,
@@ -429,10 +515,11 @@ class PosController extends Controller
                 'message' => 'Đặt hàng thành công! Mã: ' . $order->code,
             ]);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
             \Illuminate\Support\Facades\Log::error('POS Quick Order Error', [
                 'message' => $e->getMessage(),
             ]);
-            return response()->json(['success' => false, 'message' => 'Có lỗi: ' . $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Có lỗi: ' . $e->getMessage()], 422);
         }
     }
 

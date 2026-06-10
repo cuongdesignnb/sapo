@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Models\ActivityLog;
 use App\Models\Order;
+use App\Models\Invoice;
 use App\Models\Branch;
 use App\Models\Product;
 use App\Models\Customer;
@@ -170,6 +171,8 @@ class OrderController extends Controller
             'assigned_to_name' => 'nullable|string',
             'price_book_id' => 'nullable|exists:price_books,id',
             'price_book_name' => 'nullable|string|max:255',
+            'payment_method' => 'nullable|string',
+            'bank_account_info' => 'nullable|string',
 
             // Items
             'items' => 'required|array',
@@ -192,6 +195,7 @@ class OrderController extends Controller
             'weight' => 'numeric|nullable',
             'delivery_fee' => 'numeric|nullable',
             'cod_amount' => 'numeric|nullable',
+            'expected_delivery_date' => 'nullable|date',
         ]);
 
         // Lock period check
@@ -199,8 +203,6 @@ class OrderController extends Controller
         app(LockPeriodService::class)->assertNotLocked($txDate, 'order_create');
 
         // Step 22.2G: pre-flight serial validation TRƯỚC khi tạo Order row.
-        // Tránh tình trạng Order đã được create nhưng items fail validate giữa chừng,
-        // để lại order rỗng/không nhất quán trong DB.
         if ($preFlight = $this->validateItemsSerials($validated['items'] ?? [])) {
             return $preFlight;
         }
@@ -215,108 +217,163 @@ class OrderController extends Controller
             $priceBookName = $validated['price_book_name'];
         }
 
-        $order = Order::create([
-            'code' => 'DH' . time(), // Simple unique code for now
-            'customer_id' => $validated['customer_id'] ?? null,
-            'branch_id' => $validated['branch_id'] ?? null,
-            'status' => $validated['status'] ?? 'draft',
-            'total_price' => $validated['total_price'] ?? 0,
-            'discount' => $validated['discount'] ?? 0,
-            'other_fees' => $validated['other_fees'] ?? 0,
-            'total_payment' => $validated['total_payment'] ?? 0,
-            'amount_paid' => $validated['amount_paid'] ?? 0,
-            'note' => $validated['note'] ?? null,
-            'created_by_name' => $validated['created_by_name'] ?? auth()->user()?->name,
-            'assigned_to_name' => $validated['assigned_to_name'] ?? auth()->user()?->name,
-            'price_book_name' => $priceBookName,
+        try {
+            \Illuminate\Support\Facades\DB::beginTransaction();
 
-            'is_delivery' => $validated['is_delivery'] ?? false,
-            'delivery_partner' => $validated['delivery_partner'] ?? null,
-            'receiver_name' => $validated['receiver_name'] ?? null,
-            'receiver_phone' => $validated['receiver_phone'] ?? null,
-            'receiver_address' => $validated['receiver_address'] ?? null,
-            'receiver_ward' => $validated['receiver_ward'] ?? null,
-            'receiver_district' => $validated['receiver_district'] ?? null,
-            'receiver_city' => $validated['receiver_city'] ?? null,
-            'weight' => $validated['weight'] ?? 0,
-            'delivery_fee' => $validated['delivery_fee'] ?? 0,
-            'cod_amount' => $validated['cod_amount'] ?? 0,
-        ]);
+            $order = Order::create([
+                'code' => 'DH' . time(), // Simple unique code for now
+                'customer_id' => $validated['customer_id'] ?? null,
+                'branch_id' => $validated['branch_id'] ?? null,
+                'status' => $validated['status'] ?? 'draft',
+                'total_price' => $validated['total_price'] ?? 0,
+                'discount' => $validated['discount'] ?? 0,
+                'other_fees' => $validated['other_fees'] ?? 0,
+                'total_payment' => $validated['total_payment'] ?? 0,
+                'amount_paid' => $validated['amount_paid'] ?? 0,
+                'note' => $validated['note'] ?? null,
+                'created_by_name' => $validated['created_by_name'] ?? auth()->user()?->name,
+                'assigned_to_name' => $validated['assigned_to_name'] ?? auth()->user()?->name,
+                'price_book_name' => $priceBookName,
 
-        // Cho phép chọn ngày (kế toán nhập sau)
-        if ($request->filled('order_date')) {
-            $orderDate = Carbon::parse($request->order_date);
+                'is_delivery' => $validated['is_delivery'] ?? false,
+                'delivery_partner' => $validated['delivery_partner'] ?? null,
+                'receiver_name' => $validated['receiver_name'] ?? null,
+                'receiver_phone' => $validated['receiver_phone'] ?? null,
+                'receiver_address' => $validated['receiver_address'] ?? null,
+                'receiver_ward' => $validated['receiver_ward'] ?? null,
+                'receiver_district' => $validated['receiver_district'] ?? null,
+                'receiver_city' => $validated['receiver_city'] ?? null,
+                'weight' => $validated['weight'] ?? 0,
+                'delivery_fee' => $validated['delivery_fee'] ?? 0,
+                'cod_amount' => $validated['cod_amount'] ?? 0,
+                'expected_delivery_date' => $validated['expected_delivery_date'] ?? null,
+            ]);
 
-            // Validate: không được đặt hàng trước ngày nhập hàng đầu tiên
-            foreach ($validated['items'] as $item) {
-                $product = Product::find($item['product_id']);
-                if ($product) {
-                    $earliestImport = $product->getEarliestImportDate();
-                    if ($earliestImport && $orderDate->lt($earliestImport)) {
-                        return back()->withErrors([
-                            'items' => "Không thể đặt hàng sản phẩm '{$product->name}' trước ngày nhập hàng đầu tiên (" . $earliestImport->format('d/m/Y H:i') . ")."
-                        ])->withInput();
+            // Cho phép chọn ngày (kế toán nhập sau)
+            if ($request->filled('order_date')) {
+                $orderDate = Carbon::parse($request->order_date);
+
+                // Validate: không được đặt hàng trước ngày nhập hàng đầu tiên
+                foreach ($validated['items'] as $item) {
+                    $product = Product::find($item['product_id']);
+                    if ($product) {
+                        $earliestImport = $product->getEarliestImportDate();
+                        if ($earliestImport && $orderDate->lt($earliestImport)) {
+                            throw new \Exception("Không thể đặt hàng sản phẩm '{$product->name}' trước ngày nhập hàng đầu tiên (" . $earliestImport->format('d/m/Y H:i') . ").");
+                        }
                     }
                 }
+
+                $order->update(['created_at' => $orderDate]);
             }
 
-            $order->update(['created_at' => $orderDate]);
-        }
+            foreach ($validated['items'] as $item) {
+                $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
 
-        foreach ($validated['items'] as $item) {
-            $subtotal = ($item['qty'] * $item['price']) - ($item['discount'] ?? 0);
+                $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
+                $product = Product::find($item['product_id']);
+                if ($product && $product->has_serial) {
+                    if (count($serialIds) !== (int) $item['qty']) {
+                        throw new \Exception("Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$item['qty']} Serial/IMEI trước khi lưu đơn.");
+                    }
+                    $availability = app(SerialAvailabilityService::class);
+                    $blocked = $availability->findBlockedIds($serialIds, $product->id);
+                    if (!empty($blocked)) {
+                        throw new \Exception("Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ").");
+                    }
+                } else {
+                    $serialIds = [];
+                }
 
-            // Step 22.2G: BẮT BUỘC chọn đủ Serial/IMEI cho hàng has_serial ngay khi
-            // tạo Order. Trước đây chỉ validate khi serialIds non-empty → user bỏ qua
-            // dễ dàng. Backend giờ là bức tường cuối, frontend chặn trước.
-            $serialIds = array_values(array_filter($item['serial_ids'] ?? [], fn($v) => $v !== null && $v !== ''));
-            $product = Product::find($item['product_id']);
-            if ($product && $product->has_serial) {
-                if (count($serialIds) !== (int) $item['qty']) {
-                    return back()->withErrors([
-                        'items' => "Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$item['qty']} Serial/IMEI trước khi lưu đơn (đã chọn " . count($serialIds) . ")."
-                    ])->withInput();
-                }
-                // Step 22.2A: validate qua SerialAvailabilityService (schema/legacy tolerant).
-                $availability = app(SerialAvailabilityService::class);
-                $blocked = $availability->findBlockedIds($serialIds, $product->id);
-                if (!empty($blocked)) {
-                    return back()->withErrors([
-                        'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
-                    ])->withInput();
-                }
-            } else {
-                // Product không has_serial → bỏ serial_ids để không nhiễu DB.
-                $serialIds = [];
+                $order->items()->create([
+                    'product_id' => $item['product_id'],
+                    'qty' => $item['qty'],
+                    'price' => $item['price'],
+                    'discount' => $item['discount'] ?? 0,
+                    'subtotal' => $subtotal,
+                    'serial_ids' => !empty($serialIds) ? $serialIds : null,
+                ]);
             }
 
-            $order->items()->create([
-                'product_id' => $item['product_id'],
-                'qty' => $item['qty'],
-                'price' => $item['price'],
-                'discount' => $item['discount'] ?? 0,
-                'subtotal' => $subtotal,
-                'serial_ids' => !empty($serialIds) ? $serialIds : null,
-            ]);
+            // Ghi nhận cashflow cọc
+            $this->recordOrderDepositCashFlow($order, $validated['payment_method'] ?? 'cash', $validated['bank_account_info'] ?? null);
+
+            ActivityLog::log('order_create', "Tạo đơn hàng {$order->code}, tổng: " . number_format($order->total_payment), $order);
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            if ($request->boolean('_print') || $request->wantsJson()) {
+                return response()->json(['id' => $order->id, 'code' => $order->code]);
+            }
+
+            return redirect()->route('orders.index')->with('success', 'Tạo đơn đặt hàng thành công');
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+            if ($request->wantsJson()) {
+                return response()->json(['success' => false, 'message' => 'Lỗi: ' . $e->getMessage()], 422);
+            }
+            return back()->withErrors(['items' => $e->getMessage()])->withInput();
         }
-
-        ActivityLog::log('order_create', "Tạo đơn hàng {$order->code}, tổng: " . number_format($order->total_payment), $order);
-
-        if ($request->boolean('_print') || $request->wantsJson()) {
-            return response()->json(['id' => $order->id, 'code' => $order->code]);
-        }
-
-        return redirect()->route('orders.index')->with('success', 'Tạo đơn đặt hàng thành công');
     }
 
     public function update(Request $request, Order $order)
     {
         if (Setting::get('block_change_transaction_time', false) && $request->has('created_at')) {
+            if ($request->wantsJson()) {
+                return response()->json(['error' => 'Không được phép thay đổi thời gian giao dịch.'], 422);
+            }
             return back()->with('error', 'Không được phép thay đổi thời gian giao dịch.');
         }
 
-        if (in_array($order->status, ['completed', 'cancelled'])) {
-            return back()->with('error', 'Không thể sửa đơn hàng đã hoàn thành hoặc đã hủy.');
+        if (in_array($order->status, ['completed', 'cancelled', 'ended'])) {
+            if ($request->wantsJson()) {
+                return response()->json(['error' => 'Không thể sửa đơn hàng đã hoàn thành, đã hủy hoặc đã kết thúc.'], 422);
+            }
+            return back()->with('error', 'Không thể sửa đơn hàng đã hoàn thành, đã hủy hoặc đã kết thúc.');
+        }
+
+        if ($request->has('status') && in_array($request->input('status'), ['completed', 'cancelled', 'ended'], true)) {
+            $msg = match ($request->input('status')) {
+                'completed' => 'Vui lòng dùng chức năng Xử lý đơn hàng để tạo hóa đơn.',
+                'cancelled' => 'Vui lòng dùng chức năng Hủy đơn để ghi nhận lý do hủy.',
+                'ended' => 'Vui lòng dùng chức năng Kết thúc đơn để ghi nhận lý do kết thúc.',
+            };
+            if ($request->wantsJson()) {
+                return response()->json(['error' => $msg], 422);
+            }
+            return back()->with('error', $msg);
+        }
+
+        // Check if order is partially or fully fulfilled
+        $hasFulfilled = $order->items()->where('fulfilled_quantity', '>', 0)->exists();
+        $hasInvoice = $order->invoices()->exists();
+
+        if ($hasFulfilled || $hasInvoice) {
+            if ($request->has('items')) {
+                if ($request->wantsJson()) {
+                    return response()->json(['error' => 'Không thể thay đổi danh sách hàng hóa của đơn đặt hàng đã xử lý một phần hoặc đã xuất hóa đơn.'], 422);
+                }
+                return back()->with('error', 'Không thể thay đổi danh sách hàng hóa của đơn đặt hàng đã xử lý một phần hoặc đã xuất hóa đơn.');
+            }
+            if ($request->has('amount_paid') && (float)$request->input('amount_paid') !== (float)$order->amount_paid) {
+                if ($request->wantsJson()) {
+                    return response()->json(['error' => 'Không thể sửa đổi số tiền đặt cọc của đơn đặt hàng đã xử lý một phần hoặc đã xuất hóa đơn.'], 422);
+                }
+                return back()->with('error', 'Không thể sửa đổi số tiền đặt cọc của đơn đặt hàng đã xử lý một phần hoặc đã xuất hóa đơn.');
+            }
+        }
+
+        // Chặn sửa amount_paid nếu đơn hàng đã có cashflow cọc
+        if ($request->has('amount_paid') && (float)$request->input('amount_paid') !== (float)$order->amount_paid) {
+            $hasCashflow = \App\Models\CashFlow::where('reference_type', 'Order')
+                ->where('reference_code', $order->code)
+                ->exists();
+            if ($hasCashflow) {
+                if ($request->wantsJson()) {
+                    return response()->json(['error' => 'Không thể sửa đổi trực tiếp tiền cọc của đơn hàng đã ghi nhận sổ quỹ.'], 422);
+                }
+                return back()->with('error', 'Không thể sửa đổi trực tiếp tiền cọc của đơn hàng đã ghi nhận sổ quỹ.');
+            }
         }
 
         $validated = $request->validate([
@@ -402,12 +459,18 @@ class OrderController extends Controller
 
             $qty = (int) ($item['qty'] ?? 0);
             if (count($serialIds) !== $qty) {
+                if (request()->wantsJson()) {
+                    return response()->json(['error' => "Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$qty} Serial/IMEI trước khi lưu đơn (đã chọn " . count($serialIds) . ")."], 422);
+                }
                 return back()->withErrors([
                     'items' => "Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$qty} Serial/IMEI trước khi lưu đơn (đã chọn " . count($serialIds) . ")."
                 ])->withInput();
             }
             $blocked = $availability->findBlockedIds($serialIds, $product->id);
             if (!empty($blocked)) {
+                if (request()->wantsJson()) {
+                    return response()->json(['error' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."], 422);
+                }
                 return back()->withErrors([
                     'items' => "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
                 ])->withInput();
@@ -458,14 +521,35 @@ class OrderController extends Controller
             return back()->with('error', 'Đơn hàng đã bị hủy hoặc kết thúc.');
         }
 
+        // If items is not passed, default to all remaining items in the order
+        if (!$request->has('items')) {
+            $defaultItems = [];
+            foreach ($order->items as $item) {
+                $rem = (int) $item->qty - (int) ($item->fulfilled_quantity ?? 0);
+                if ($rem > 0) {
+                    $defaultItems[] = [
+                        'order_item_id' => $item->id,
+                        'product_id' => $item->product_id,
+                        'quantity' => $rem,
+                        'serial_ids' => $item->serial_ids ?? [],
+                    ];
+                }
+            }
+            $request->merge(['items' => $defaultItems]);
+        }
+
         $validated = $request->validate([
             'amount_paid' => 'required|numeric|min:0',
             'payment_method' => 'nullable|string',
             'from_pos' => 'nullable|boolean',
-            'items' => 'nullable|array',
-            'items.*.product_id' => 'required_with:items|exists:products,id',
-            'items.*.quantity' => 'required_with:items|integer|min:1',
+            'items' => 'required|array|min:1',
+            'items.*.order_item_id' => 'nullable|exists:order_items,id',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
             'items.*.serial_ids' => 'nullable|array',
+            'keep_remaining' => 'nullable|boolean',
+            'end_remaining' => 'nullable|boolean',
+            
             'delivery' => 'nullable|array',
             'delivery.is_delivery' => 'nullable|boolean',
             'delivery.delivery_mode' => 'nullable|string',
@@ -483,70 +567,115 @@ class OrderController extends Controller
             'delivery.delivery_note' => 'nullable|string',
         ]);
 
-        if ($request->input('from_pos') && $request->has('items')) {
-            $posItems = $request->input('items', []);
-            $orderItems = $order->items;
-
-            if (count($posItems) !== $orderItems->count()) {
-                if ($request->wantsJson()) {
-                    return response()->json(['success' => false, 'message' => 'Phase hiện tại chỉ hỗ trợ xử lý toàn bộ đơn hàng. Vui lòng không thay đổi số lượng/hàng hóa.'], 422);
-                }
-                throw new \Exception("Phase hiện tại chỉ hỗ trợ xử lý toàn bộ đơn hàng. Vui lòng không thay đổi số lượng/hàng hóa.");
-            }
-
-            $orderItemsGrouped = $orderItems->groupBy('product_id');
-
-            foreach ($posItems as $posItem) {
-                $pid = $posItem['product_id'];
-                $pqty = (int) $posItem['quantity'];
-
-                if (!isset($orderItemsGrouped[$pid])) {
-                    if ($request->wantsJson()) {
-                        return response()->json(['success' => false, 'message' => 'Phase hiện tại chỉ hỗ trợ xử lý toàn bộ đơn hàng. Vui lòng không thay đổi số lượng/hàng hóa.'], 422);
-                    }
-                    throw new \Exception("Phase hiện tại chỉ hỗ trợ xử lý toàn bộ đơn hàng. Vui lòng không thay đổi số lượng/hàng hóa.");
-                }
-
-                $orderQty = $orderItemsGrouped[$pid]->sum('qty');
-                if ($orderQty !== $pqty) {
-                    if ($request->wantsJson()) {
-                        return response()->json(['success' => false, 'message' => 'Phase hiện tại chỉ hỗ trợ xử lý toàn bộ đơn hàng. Vui lòng không thay đổi số lượng/hàng hóa.'], 422);
-                    }
-                    throw new \Exception("Phase hiện tại chỉ hỗ trợ xử lý toàn bộ đơn hàng. Vui lòng không thay đổi số lượng/hàng hóa.");
-                }
-            }
-        }
-
         try {
             \Illuminate\Support\Facades\DB::beginTransaction();
 
             $order->load('items.product', 'customer');
             $customer = $order->customer;
-            $newPayment = $validated['amount_paid']; // Additional payment at conversion
-            $priorDeposit = $order->amount_paid ?? 0;
-            $totalPaid = $priorDeposit + $newPayment;
             $paymentMethod = $validated['payment_method'] ?? 'cash';
+            $requestItems = $validated['items'];
 
-            // 1) Create Invoice from Order — link via order_id
+            // 1) Calculate subtotal, discount, total, cọc for this specific partial processing
+            $invoiceSubtotal = 0;
+            $invoiceDiscount = 0;
+            $itemsToProcess = [];
+
+            foreach ($requestItems as $reqItem) {
+                $orderItem = null;
+                if (!empty($reqItem['order_item_id'])) {
+                    $orderItem = $order->items()->find($reqItem['order_item_id']);
+                } else {
+                    $orderItem = $order->items()->where('product_id', $reqItem['product_id'])->first();
+                }
+
+                if (!$orderItem) {
+                    throw new \Exception("Dòng sản phẩm đặt hàng (ID: " . ($reqItem['order_item_id'] ?? 'N/A') . ", SP ID: {$reqItem['product_id']}) không tồn tại trong đơn hàng.");
+                }
+
+                if ((int)$orderItem->product_id !== (int)$reqItem['product_id']) {
+                    throw new \Exception("Sản phẩm không khớp với dòng đặt hàng.");
+                }
+
+                $qty = (int) $reqItem['quantity'];
+                $remainingQty = $orderItem->qty - ($orderItem->fulfilled_quantity ?? 0);
+                if ($qty > $remainingQty) {
+                    throw new \Exception("Số lượng xử lý ({$qty}) cho sản phẩm ID '{$reqItem['product_id']}' vượt quá số lượng còn lại của đơn hàng ({$remainingQty}).");
+                }
+
+                $product = $orderItem->product ? Product::lockForUpdate()->find($orderItem->product->id) : null;
+                if (!$product) {
+                    throw new \Exception("Không tìm thấy sản phẩm ID '{$reqItem['product_id']}'.");
+                }
+
+                // Calculate item discount partial allocation
+                $lineSubtotalBeforeDiscount = $qty * $orderItem->price;
+                $unitDiscount = $orderItem->qty > 0 ? ($orderItem->discount / $orderItem->qty) : 0;
+                $lineDiscount = $unitDiscount * $qty;
+
+                $invoiceSubtotal += $lineSubtotalBeforeDiscount;
+                $invoiceDiscount += $lineDiscount;
+
+                $itemsToProcess[] = [
+                    'order_item' => $orderItem,
+                    'product' => $product,
+                    'qty' => $qty,
+                    'line_discount' => $lineDiscount,
+                    'req_serial_ids' => $reqItem['serial_ids'] ?? [],
+                ];
+            }
+
+            $invoiceTotal = $invoiceSubtotal - $invoiceDiscount;
+
+            // Prior deposit & progressive deposit application
+            $priorDepositTotal = $order->amount_paid ?? 0;
+            $alreadyAppliedDeposit = Invoice::where('order_id', $order->id)
+                ->where('status', '!=', 'Đã hủy')
+                ->sum('order_deposit_applied_amount');
+
+            $depositRemaining = max(0, $priorDepositTotal - $alreadyAppliedDeposit);
+            $depositAppliedThisInvoice = min($depositRemaining, $invoiceTotal);
+
+            $newPayment = $validated['amount_paid']; // Additional money customer pays right now
+            $totalPaidForInvoice = $depositAppliedThisInvoice + $newPayment;
+            $debtAmount = $invoiceTotal - $totalPaidForInvoice;
+
+            // 2) Create Invoice
             $invoiceData = [
                 'code' => 'HD' . time() . rand(10, 99),
                 'order_id' => $order->id,
-                'subtotal' => $order->total_price,
-                'discount' => $order->discount,
-                'total' => $order->total_payment,
-                'customer_paid' => $totalPaid,
+                'subtotal' => $invoiceSubtotal,
+                'discount' => $invoiceDiscount,
+                'total' => $invoiceTotal,
+                'customer_paid' => $totalPaidForInvoice,
+                'order_deposit_applied_amount' => $depositAppliedThisInvoice,
                 'customer_id' => $customer?->id,
-                'created_by_name' => $order->created_by_name,
+                'created_by_name' => auth()->user()?->name ?? $order->created_by_name,
                 'seller_name' => $order->assigned_to_name,
                 'sales_channel' => $order->sales_channel ?? 'Bán trực tiếp',
                 'price_book_name' => $order->price_book_name,
                 'payment_method' => $paymentMethod,
-                'note' => 'Từ đơn hàng ' . $order->code,
+                'note' => 'Từ đơn đặt hàng ' . $order->code,
                 'status' => 'Hoàn thành',
             ];
 
-            if ($request->input('from_pos') && $request->has('delivery')) {
-                $deliveryData = $request->input('delivery', []);
+            if ($request->has('delivery')) {
+                $deliveryData = $validated['delivery'] ?? [];
+                $order->fill([
+                    'is_delivery' => (bool) ($deliveryData['is_delivery'] ?? false),
+                    'delivery_partner' => $deliveryData['delivery_partner'] ?? null,
+                    'tracking_code' => $deliveryData['tracking_code'] ?? null,
+                    'delivery_fee' => $deliveryData['delivery_fee'] ?? 0,
+                    'cod_amount' => $deliveryData['cod_amount'] ?? 0,
+                    'receiver_name' => $deliveryData['receiver_name'] ?? null,
+                    'receiver_phone' => $deliveryData['receiver_phone'] ?? null,
+                    'receiver_address' => $deliveryData['receiver_address'] ?? null,
+                    'receiver_ward' => $deliveryData['receiver_ward'] ?? null,
+                    'receiver_district' => $deliveryData['receiver_district'] ?? null,
+                    'receiver_city' => $deliveryData['receiver_city'] ?? null,
+                    'weight' => $deliveryData['weight'] ?? 0,
+                    'delivery_note' => $deliveryData['delivery_note'] ?? null,
+                ]);
+
                 $invoiceData = array_merge($invoiceData, [
                     'is_delivery' => (bool) ($deliveryData['is_delivery'] ?? false),
                     'delivery_partner' => $deliveryData['delivery_partner'] ?? null,
@@ -566,70 +695,48 @@ class OrderController extends Controller
 
             $invoice = \App\Models\Invoice::create($invoiceData);
 
-            // 2) Create Invoice Items + Deduct stock — RR-13: qua MovingAvgCostingService + StockMovement
-            foreach ($order->items as $orderItem) {
-                $product = $orderItem->product
-                    ? Product::lockForUpdate()->find($orderItem->product->id)
-                    : null;
-                if (!$product) {
-                    continue;
-                }
+            // 3) Create Invoice Items, process serials & deduct stock
+            foreach ($itemsToProcess as $processItem) {
+                /** @var OrderItem $orderItem */
+                $orderItem = $processItem['order_item'];
+                /** @var Product $product */
+                $product = $processItem['product'];
+                $qty = $processItem['qty'];
+                $lineDiscount = $processItem['line_discount'];
+                $reqSerialIds = $processItem['req_serial_ids'];
 
-                $qty = (int) $orderItem->qty;
                 $allowOversell = Setting::get('inventory_allow_oversell', true);
-
-                // RR-13: Serial product — phải có serial_ids rõ ràng. Không chọn đại.
                 $serialIds = [];
+
                 if ($product->has_serial) {
-                    if ($request->input('from_pos') && $request->has('items')) {
-                        $posItem = collect($request->input('items'))->firstWhere('product_id', $product->id);
-                        if ($posItem && isset($posItem['serial_ids']) && is_array($posItem['serial_ids'])) {
-                            $serialIds = array_values(array_filter($posItem['serial_ids'], fn($v) => $v !== null && $v !== ''));
-                        }
-                    } else {
-                        if (isset($orderItem->serial_ids) && is_array($orderItem->serial_ids)) {
-                            $serialIds = $orderItem->serial_ids;
-                        }
+                    $serialIds = array_values(array_filter($reqSerialIds, fn($v) => $v !== null && $v !== ''));
+                    if (count($serialIds) !== $qty) {
+                        throw new \Exception("Sản phẩm '{$product->name}' là hàng Serial/IMEI. Vui lòng chọn đủ {$qty} Serial/IMEI (đang chọn " . count($serialIds) . ").");
                     }
 
-                    if (empty($serialIds)) {
-                        throw new \Exception(
-                            "Sản phẩm '{$product->name}' là hàng Serial/IMEI nhưng đơn hàng "
-                            . 'chưa lưu serial_ids. Vui lòng chọn Serial/IMEI trước khi chuyển hóa đơn.'
-                        );
-                    }
-                    if (count($serialIds) !== $qty) {
-                        throw new \Exception(
-                            "Sản phẩm '{$product->name}': số lượng serial (" . count($serialIds) . ") không khớp số lượng đặt ({$qty})."
-                        );
-                    }
-                    // Step 22.2A: validate qua SerialAvailabilityService — schema-tolerant.
+
+
                     $availability = app(SerialAvailabilityService::class);
                     $blocked = $availability->findBlockedIds($serialIds, $product->id);
                     if (!empty($blocked)) {
-                        throw new \Exception(
-                            "Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ")."
-                        );
+                        throw new \Exception("Sản phẩm '{$product->name}': Serial/IMEI không khả dụng (id: " . implode(', ', $blocked) . ").");
                     }
                 } elseif (!$allowOversell && $product->stock_quantity < $qty) {
-                    throw new \Exception(
-                        "Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho "
-                        . "(Còn: {$product->stock_quantity})"
-                    );
+                    throw new \Exception("Sản phẩm [{$product->sku}] {$product->name} không đủ tồn kho (Còn: {$product->stock_quantity})");
                 }
 
-                // RR-13: Snapshot cost TRƯỚC khi applySale (cost_price stable nhưng vẫn snapshot rõ ràng)
                 $costSnapshot = (float) ($product->cost_price ?? 0);
 
-                // RR-13: Tạo InvoiceItem TRƯỚC (pattern đúng — giống RR-02 InvoiceSaleService)
+                // Create Invoice Item
                 $invoiceItem = $invoice->items()->create([
-                    'product_id' => $orderItem->product_id,
+                    'product_id' => $product->id,
+                    'order_item_id' => $orderItem->id,
                     'quantity'   => $qty,
                     'price'      => $orderItem->price,
                     'cost_price' => $costSnapshot,
                 ]);
 
-                // RR-13: Với hàng serial, tạo InvoiceItemSerial + đánh dấu serial sold
+                // Serials
                 if ($product->has_serial && !empty($serialIds)) {
                     $soldSerials = SerialImei::whereIn('id', $serialIds)
                         ->where('product_id', $product->id)
@@ -649,14 +756,14 @@ class OrderController extends Controller
                     }
                 }
 
-                // RR-13: Trừ tồn + cập nhật BQ qua service (thay raw $product->stock_quantity -= $qty)
+                // Deduct stock
                 MovingAvgCostingService::applySale($product, $qty);
                 $product->refresh();
                 if ($product->has_serial) {
                     $product->recomputeFromSerials();
                 }
 
-                // RR-13: Ghi StockMovement out_invoice
+                // Record StockMovement
                 StockMovementService::record(
                     $product->fresh(),
                     StockMovementService::TYPE_OUT_INVOICE,
@@ -667,28 +774,29 @@ class OrderController extends Controller
                         'branch_id' => $invoice->branch_id ?? null,
                         'ref_code'  => $invoice->code,
                         'moved_at'  => $invoice->created_at ?? now(),
-                        'note'      => "Xuất bán từ đơn hàng {$order->code} sang hóa đơn {$invoice->code}",
+                        'note'      => "Xuất bán một phần từ đơn hàng {$order->code} sang hóa đơn {$invoice->code}",
                     ]
                 );
+
+                // Increment fulfilled quantity
+                $orderItem->increment('fulfilled_quantity', $qty);
             }
 
-            // 3) Customer debt tracking — debt = total - totalPaid
-            // RR-06: ghi ledger qua CustomerDebtService thay vì increment trực tiếp.
-            $debtAmount = $order->total_payment - $totalPaid;
+            // 4) Customer debt tracking
             if ($customer) {
                 if ($debtAmount != 0) {
                     app(CustomerDebtService::class)->recordSale(
                         $customer->id,
                         (float) $debtAmount,
                         $invoice,
-                        "Ghi nợ khi chuyển đơn hàng {$order->code} thành hóa đơn {$invoice->code}",
+                        "Ghi nợ khi xử lý một phần đơn hàng {$order->code} sang hóa đơn {$invoice->code}",
                         ['order_id' => $order->id]
                     );
                 }
-                $customer->increment('total_spent', $order->total_payment);
+                $customer->increment('total_spent', $invoiceTotal);
             }
 
-            // 4) CashFlow for the NEW payment at conversion time (deposit was already recorded)
+            // 5) CashFlow for the additional payment (not deposit)
             if ($newPayment > 0) {
                 \App\Models\CashFlow::create([
                     'code' => 'PT' . time() . rand(10, 99),
@@ -706,39 +814,29 @@ class OrderController extends Controller
                 ]);
             }
 
-            // Note: Không gọi DebtOffsetService - unified ledger view tự xử lý bù trừ
+            // Accumulate checkout payment to order
+            $order->amount_paid = ($order->amount_paid ?? 0) + $newPayment;
 
-            // 6) Update Order status
-            $orderUpdateData = [
-                'status' => 'completed',
-                'amount_paid' => $totalPaid,
-            ];
+            // 6) Check and update Order Status
+            $hasRemaining = $order->items()->get()->contains(function ($it) {
+                return ($it->qty - $it->fulfilled_quantity) > 0;
+            });
 
-            if ($request->input('from_pos') && $request->has('delivery')) {
-                $deliveryData = $request->input('delivery', []);
-                $orderUpdateData = array_merge($orderUpdateData, [
-                    'is_delivery' => (bool) ($deliveryData['is_delivery'] ?? false),
-                    'delivery_partner' => $deliveryData['delivery_partner'] ?? null,
-                    'tracking_code' => $deliveryData['tracking_code'] ?? null,
-                    'delivery_fee' => $deliveryData['delivery_fee'] ?? 0,
-                    'cod_amount' => $deliveryData['cod_amount'] ?? 0,
-                    'receiver_name' => $deliveryData['receiver_name'] ?? null,
-                    'receiver_phone' => $deliveryData['receiver_phone'] ?? null,
-                    'receiver_address' => $deliveryData['receiver_address'] ?? null,
-                    'receiver_ward' => $deliveryData['receiver_ward'] ?? null,
-                    'receiver_district' => $deliveryData['receiver_district'] ?? null,
-                    'receiver_city' => $deliveryData['receiver_city'] ?? null,
-                    'weight' => $deliveryData['weight'] ?? 0,
-                    'delivery_note' => $deliveryData['delivery_note'] ?? null,
-                ]);
+            if (!$hasRemaining) {
+                $order->status = 'completed';
+            } else {
+                if ($request->boolean('end_remaining')) {
+                    $order->status = 'ended';
+                } elseif ($request->boolean('keep_remaining')) {
+                    // Keep current status (confirmed or delivering)
+                }
             }
+            $order->save();
 
-            $order->update($orderUpdateData);
-
-            // 7) STEP 23.7B: Auto-generate warranty records (in-transaction → rollback-safe)
+            // Auto-generate warranty records
             app(\App\Services\WarrantyGenerationService::class)->generateForInvoice($invoice);
 
-            ActivityLog::log('order_convert', "Chuyển đơn {$order->code} → hóa đơn {$invoice->code}", $order);
+            ActivityLog::log('order_convert', "Chuyển đơn một phần {$order->code} → hóa đơn {$invoice->code}, status: {$order->status}", $order);
 
             \Illuminate\Support\Facades\DB::commit();
 
@@ -771,10 +869,22 @@ class OrderController extends Controller
     public function cancel(Request $request, Order $order)
     {
         if ($order->status === 'completed') {
+            if ($request->wantsJson()) {
+                return response()->json(['success' => false, 'message' => 'Không thể hủy đơn hàng đã hoàn thành.'], 422);
+            }
             return back()->with('error', 'Không thể hủy đơn hàng đã hoàn thành.');
         }
         if ($order->status === 'cancelled') {
+            if ($request->wantsJson()) {
+                return response()->json(['success' => false, 'message' => 'Đơn hàng đã bị hủy trước đó.'], 422);
+            }
             return back()->with('error', 'Đơn hàng đã bị hủy trước đó.');
+        }
+        if ($order->status === 'ended') {
+            if ($request->wantsJson()) {
+                return response()->json(['success' => false, 'message' => 'Đơn hàng đã kết thúc.'], 422);
+            }
+            return back()->with('error', 'Đơn hàng đã kết thúc.');
         }
 
         $order->update([
@@ -782,7 +892,11 @@ class OrderController extends Controller
             'note' => ($order->note ? $order->note . ' | ' : '') . 'Hủy: ' . ($request->reason ?? ''),
         ]);
 
-        ActivityLog::log('order_cancel', "Hủy đơn hàng {$order->code}", $order);
+        ActivityLog::log('order_cancel', "Hủy đơn hàng {$order->code}" . ($request->reason ? " - Lý do: {$request->reason}" : ""), $order);
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Đã hủy đơn hàng thành công.']);
+        }
 
         return back()->with('success', 'Đã hủy đơn hàng.');
     }
@@ -793,6 +907,9 @@ class OrderController extends Controller
     public function endOrder(Request $request, Order $order)
     {
         if (in_array($order->status, ['completed', 'cancelled', 'ended'])) {
+            if ($request->wantsJson()) {
+                return response()->json(['success' => false, 'message' => 'Đơn hàng không ở trạng thái có thể kết thúc.'], 422);
+            }
             return back()->with('error', 'Đơn hàng không ở trạng thái có thể kết thúc.');
         }
 
@@ -801,7 +918,11 @@ class OrderController extends Controller
             'note' => ($order->note ? $order->note . ' | ' : '') . 'Kết thúc: ' . ($request->reason ?? ''),
         ]);
 
-        ActivityLog::log('order_end', "Kết thúc đơn hàng {$order->code}", $order);
+        ActivityLog::log('order_end', "Kết thúc đơn hàng {$order->code}" . ($request->reason ? " - Lý do: {$request->reason}" : ""), $order);
+
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'message' => 'Đã kết thúc đơn hàng thành công.']);
+        }
 
         return back()->with('success', 'Đã kết thúc đơn hàng.');
     }
@@ -834,6 +955,16 @@ class OrderController extends Controller
             return back()->with('error', 'Không thể gộp: tất cả đơn hàng phải ở trạng thái nháp hoặc đã xác nhận.');
         }
 
+        // Chặn gộp nếu có đơn hàng đã được xử lý một phần
+        $hasFulfilledItems = $orders->contains(function ($o) {
+            return $o->items->contains(function ($item) {
+                return $item->fulfilled_quantity > 0;
+            });
+        });
+        if ($hasFulfilledItems) {
+            return back()->with('error', 'Không thể gộp: có đơn hàng đã được xử lý một phần.');
+        }
+
         try {
             \Illuminate\Support\Facades\DB::beginTransaction();
 
@@ -848,28 +979,41 @@ class OrderController extends Controller
                 'code' => 'DH' . time() . 'M',
                 'customer_id' => $customers->first(),
                 'branch_id' => $branches->first(),
-                'status' => 'draft',
+                'status' => $orders->contains('status', 'confirmed') ? 'confirmed' : 'draft',
                 'total_price' => $totalPrice,
                 'discount' => $totalDiscount,
                 'other_fees' => $totalOther,
                 'total_payment' => $totalPayment,
                 'amount_paid' => $totalDeposit,
-                'note' => 'Gộp từ: ' . $orders->pluck('code')->join(', '),
+                'note' => 'Gộp từ: ' . $orders->pluck('code')->join(', ') . ', cọc nguồn giữ ở phiếu nguồn',
                 'created_by_name' => auth()->user()?->name,
                 'assigned_to_name' => $orders->first()->assigned_to_name,
                 'price_book_name' => $orders->first()->price_book_name,
             ]);
 
-            // Copy all items
+            // Copy and group all items by product_id
+            $mergedItems = [];
             foreach ($orders as $order) {
                 foreach ($order->items as $item) {
-                    $merged->items()->create([
-                        'product_id' => $item->product_id,
-                        'qty' => $item->qty,
-                        'price' => $item->price,
-                        'discount' => $item->discount,
-                        'subtotal' => $item->subtotal,
-                    ]);
+                    $pid = $item->product_id;
+                    if (!isset($mergedItems[$pid])) {
+                        $mergedItems[$pid] = [
+                            'product_id' => $pid,
+                            'qty'        => 0.0,
+                            'price'      => $item->price,
+                            'discount'   => 0.0,
+                            'subtotal'   => 0.0,
+                            'serial_ids' => [],
+                        ];
+                    }
+                    $mergedItems[$pid]['qty'] += (float)$item->qty;
+                    $mergedItems[$pid]['discount'] += (float)$item->discount;
+                    $mergedItems[$pid]['subtotal'] += (float)$item->subtotal;
+
+                    $sIds = $item->serial_ids;
+                    if (is_array($sIds)) {
+                        $mergedItems[$pid]['serial_ids'] = array_merge($mergedItems[$pid]['serial_ids'], $sIds);
+                    }
                 }
                 // Cancel source orders
                 $order->update([
@@ -878,13 +1022,44 @@ class OrderController extends Controller
                 ]);
             }
 
+            foreach ($mergedItems as $itemData) {
+                $serialIds = array_values(array_unique($itemData['serial_ids']));
+                $merged->items()->create([
+                    'product_id' => $itemData['product_id'],
+                    'qty'        => $itemData['qty'],
+                    'price'      => $itemData['price'],
+                    'discount'   => $itemData['discount'],
+                    'subtotal'   => $itemData['subtotal'],
+                    'serial_ids' => !empty($serialIds) ? $serialIds : null,
+                ]);
+            }
+
             ActivityLog::log('order_merge', "Gộp đơn hàng: " . $orders->pluck('code')->join(', ') . " → {$merged->code}", $merged);
 
             \Illuminate\Support\Facades\DB::commit();
 
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Đã gộp thành đơn hàng {$merged->code}",
+                    'order_id' => $merged->id,
+                    'order_code' => $merged->code,
+                    'order' => [
+                        'id' => $merged->id,
+                        'code' => $merged->code,
+                    ],
+                ]);
+            }
+
             return back()->with('success', "Đã gộp thành đơn hàng {$merged->code}");
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\DB::rollBack();
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Lỗi: ' . $e->getMessage(),
+                ], 422);
+            }
             return back()->with('error', 'Lỗi: ' . $e->getMessage());
         }
     }
@@ -961,6 +1136,8 @@ class OrderController extends Controller
                     ->get(['id', 'serial_number'])
                     ->toArray();
             }
+            $fulfilledQty = (int) ($item->fulfilled_quantity ?? 0);
+            $remainingQty = max(0, (int) $item->qty - $fulfilledQty);
             return [
                 'order_item_id' => $item->id,
                 'product_id' => $item->product_id,
@@ -969,6 +1146,8 @@ class OrderController extends Controller
                 'barcode' => $item->product?->barcode,
                 'name' => $item->product?->name,
                 'qty' => (int) $item->qty,
+                'fulfilled_quantity' => $fulfilledQty,
+                'remaining_quantity' => $remainingQty,
                 'price' => (float) $item->price,
                 'discount' => (float) ($item->discount ?? 0),
                 'subtotal' => (float) ($item->qty * $item->price - ($item->discount ?? 0)),
@@ -1013,6 +1192,9 @@ class OrderController extends Controller
                     'total_payment' => (float) $order->total_payment,
                     'amount_paid' => (float) ($order->amount_paid ?? 0),
                     'remaining' => (float) ($order->total_payment - ($order->amount_paid ?? 0)),
+                    'deposit_total' => (float) ($order->amount_paid ?? 0),
+                    'deposit_applied' => (float) Invoice::where('order_id', $order->id)->where('status', '!=', 'Đã hủy')->sum('order_deposit_applied_amount'),
+                    'deposit_remaining' => (float) max(0.0, ($order->amount_paid ?? 0) - Invoice::where('order_id', $order->id)->where('status', '!=', 'Đã hủy')->sum('order_deposit_applied_amount')),
                 ],
                 'delivery' => [
                     'is_delivery' => (bool) $order->is_delivery,
@@ -1032,6 +1214,38 @@ class OrderController extends Controller
                 ],
                 'note' => $order->note,
             ]
+        ]);
+    }
+
+    private function recordOrderDepositCashFlow(Order $order, $paymentMethod = 'cash', $bankInfo = null): void
+    {
+        if ($order->amount_paid <= 0) {
+            return;
+        }
+
+        // Kiểm tra không tạo trùng
+        $exists = \App\Models\CashFlow::where('reference_type', 'Order')
+            ->where('reference_code', $order->code)
+            ->where('amount', $order->amount_paid)
+            ->exists();
+        if ($exists) {
+            return;
+        }
+
+        $customer = $order->customer;
+        \App\Models\CashFlow::create([
+            'code' => 'PT' . time() . rand(10, 99),
+            'type' => 'receipt',
+            'amount' => $order->amount_paid,
+            'time' => now(),
+            'category' => 'Thu đặt cọc đơn đặt hàng',
+            'target_type' => 'Khách hàng',
+            'target_id' => $customer?->id,
+            'target_name' => $customer?->name ?? 'Khách lẻ',
+            'reference_type' => 'Order',
+            'reference_code' => $order->code,
+            'payment_method' => $paymentMethod ?? 'cash',
+            'description' => 'Thu đặt cọc đơn đặt hàng ' . $order->code . ($bankInfo ? ' - CK: ' . $bankInfo : ''),
         ]);
     }
 }

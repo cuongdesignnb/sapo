@@ -17,6 +17,10 @@ return new class extends Migration {
 
         // 2) Expand serial_imeis.status enum to include 'used_for_repair'
         //    Idempotent: check current enum definition first
+        if (DB::connection()->getDriverName() !== 'mysql') {
+            return;
+        }
+
         $col = DB::selectOne(
             "SELECT COLUMN_TYPE FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE()
@@ -42,6 +46,10 @@ return new class extends Migration {
         }
 
         // Revert enum (remove used_for_repair)
+        if (DB::connection()->getDriverName() !== 'mysql') {
+            return;
+        }
+
         $col = DB::selectOne(
             "SELECT COLUMN_TYPE FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE()

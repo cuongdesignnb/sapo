@@ -26,9 +26,10 @@ return new class extends Migration {
         });
 
         // Migrate existing assigned_employee_id data from tasks
+        $nowFunc = DB::getDriverName() === 'sqlite' ? 'CURRENT_TIMESTAMP' : 'NOW()';
         DB::statement("
             INSERT INTO task_assignments (task_id, employee_id, assigned_by, status, assigned_at, created_at, updated_at)
-            SELECT id, assigned_employee_id, created_by, 'accepted', assigned_at, NOW(), NOW()
+            SELECT id, assigned_employee_id, created_by, 'accepted', assigned_at, {$nowFunc}, {$nowFunc}
             FROM tasks
             WHERE assigned_employee_id IS NOT NULL
         ");

@@ -64,6 +64,7 @@ const createNewTab = (type = 'sale') => ({
     bankAccountInfo: '',
     selectedCustomer: null,
     customerQuery: '',
+    expectedDeliveryDate: '',
     note: '',                        // 24.6C: per-tab invoice/order note
     saleMode: type === 'order' ? 'quick_order' : 'normal',
     returnState: type === 'return' ? emptyReturnState() : null,
@@ -137,6 +138,7 @@ const selectedCustomer = computed({
 const showCustomerDropdown = ref(false);
 const customerSearching = ref(false);
 let customerTimeout;
+const showPartialModeModal = ref(false);
 
 // Tab management
 const addTab = (type = 'sale') => {
@@ -309,12 +311,15 @@ const checkAndHydrateOrderFromUrl = async () => {
                             has_serial: item.has_serial,
                             stock_quantity: item.stock_quantity,
                         },
-                        quantity: item.qty,
-                        targetQuantity: item.qty,
+                        quantity: item.remaining_quantity,
+                        targetQuantity: item.remaining_quantity,
+                        orderedQuantity: item.qty,
+                        fulfilledQuantity: item.fulfilled_quantity,
+                        orderItemId: item.order_item_id,
                         price: item.price,
                         discount: item.discount,
                         is_serial_product: item.has_serial,
-                        serials: item.selected_serials || [],
+                        serials: [],
                         serialInput: '',
                         showSerialDropdown: false,
                         allAvailableSerials: [],
@@ -481,14 +486,12 @@ const searchSerialsForItem = (item, isFocus = false) => {
 
 const selectSerialForItem = (item, serialObj) => {
     if (activeTab.value && activeTab.value.mode === 'process_order' && item.serials.length >= item.targetQuantity) {
-        alert(`Sản phẩm này yêu cầu chính xác ${item.targetQuantity} serial. Vui lòng bỏ chọn serial cũ trước khi chọn serial mới.`);
+        alert(`Sản phẩm này yêu cầu tối đa ${item.targetQuantity} serial. Vui lòng bỏ chọn serial cũ trước khi chọn serial mới.`);
         return;
     }
     if (!item.serials.find(s => s.id === serialObj.id)) {
         item.serials.push(serialObj);
-        if (!activeTab.value || activeTab.value.mode !== 'process_order') {
-            item.quantity = item.serials.length;
-        }
+        item.quantity = item.serials.length;
         normalizeExchangeLineDiscount(item);
     }
     item.serialInput = '';
@@ -511,9 +514,7 @@ const addSerialToItem = (item) => {
 
 const removeSerialFromItem = (item, idx) => {
     item.serials.splice(idx, 1);
-    if (!activeTab.value || activeTab.value.mode !== 'process_order') {
-        item.quantity = item.serials.length;
-    }
+    item.quantity = item.serials.length;
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
 };
@@ -528,9 +529,7 @@ const selectAllSerialsForItem = (item) => {
             item.serials.push(s);
         }
     });
-    if (!activeTab.value || activeTab.value.mode !== 'process_order') {
-        item.quantity = item.serials.length;
-    }
+    item.quantity = item.serials.length;
     normalizeExchangeLineDiscount(item);
     item.serialInput = '';
     item.showSerialDropdown = false;
@@ -539,9 +538,7 @@ const selectAllSerialsForItem = (item) => {
 
 const deselectAllSerialsForItem = (item) => {
     item.serials = [];
-    if (!activeTab.value || activeTab.value.mode !== 'process_order') {
-        item.quantity = 0;
-    }
+    item.quantity = 0;
     normalizeExchangeLineDiscount(item);
     searchSerialsForItem(item);
 };
@@ -736,6 +733,59 @@ const changeDue = computed(() => {
 const isCheckingOut = ref(false);
 const toastMsg = ref('');
 
+// Helper to submit the order processing API
+const submitProcessOrderAPI = async (keepRemaining) => {
+    isCheckingOut.value = true;
+    try {
+        const processPayload = {
+            from_pos: true,
+            amount_paid: Number(customerPaid.value) || 0,
+            payment_method: paymentMethod.value,
+            bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
+            keep_remaining: keepRemaining,
+            end_remaining: !keepRemaining,
+            delivery: {
+                is_delivery: activeTab.value.delivery?.is_delivery || false,
+                delivery_mode: activeTab.value.delivery?.delivery_mode || 'none',
+                delivery_partner: activeTab.value.delivery?.delivery_partner || '',
+                tracking_code: activeTab.value.delivery?.tracking_code || '',
+                delivery_fee: Number(activeTab.value.delivery?.delivery_fee) || 0,
+                cod_amount: Number(activeTab.value.delivery?.cod_amount) || 0,
+                receiver_name: activeTab.value.delivery?.receiver_name || '',
+                receiver_phone: activeTab.value.delivery?.receiver_phone || '',
+                receiver_address: activeTab.value.delivery?.receiver_address || '',
+                receiver_ward: activeTab.value.delivery?.receiver_ward || '',
+                receiver_district: activeTab.value.delivery?.receiver_district || '',
+                receiver_city: activeTab.value.delivery?.receiver_city || '',
+                weight: Number(activeTab.value.delivery?.weight) || 0,
+                delivery_note: activeTab.value.delivery?.delivery_note || '',
+            },
+            items: cart.value.map(item => ({
+                product_id: item.product.id,
+                quantity: item.quantity,
+                order_item_id: item.orderItemId || null,
+                serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
+            }))
+        };
+
+        const response = await axios.post(`/orders/${activeTab.value.source_order_id}/process`, processPayload);
+        if (response.data.success) {
+            toastMsg.value = response.data.message;
+            setTimeout(() => toastMsg.value = '', 4000);
+            resetAfterCheckout();
+            showPartialModeModal.value = false;
+        } else {
+            alert("Lỗi: " + response.data.message);
+        }
+    } catch (err) {
+        console.error("Process Order Checkout Error:", err);
+        const msg = err.response?.data?.message || err.message || "Lỗi khi kết nối tới máy chủ.";
+        alert("Lỗi: " + msg);
+    } finally {
+        isCheckingOut.value = false;
+    }
+};
+
 // Checkout action
 const processCheckout = async () => {
     if (cart.value.length === 0) {
@@ -755,19 +805,50 @@ const processCheckout = async () => {
 
         // Bán từ Đơn đặt hàng (Xử lý đơn hàng qua POS)
         if (activeTab.value.mode === 'process_order') {
-            const invalidSerials = cart.value.filter(i => i.is_serial_product && i.serials.length !== i.targetQuantity);
+            const invalidSerials = cart.value.filter(i => i.is_serial_product && i.serials.length !== i.quantity);
             if (invalidSerials.length > 0) {
-                const names = invalidSerials.map(i => `'${i.product.name}' (yêu cầu ${i.targetQuantity}, đã chọn ${i.serials.length})`).join(', ');
+                const names = invalidSerials.map(i => `'${i.product.name}' (yêu cầu ${i.quantity}, đã chọn ${i.serials.length})`).join(', ');
                 alert(`Có sản phẩm Serial/IMEI chưa chọn đủ số lượng mã: ${names}`);
                 isCheckingOut.value = false;
                 return;
             }
 
-            const processPayload = {
-                from_pos: true,
+            const overLimit = cart.value.some(i => i.quantity > i.targetQuantity);
+            if (overLimit) {
+                alert("Số lượng xuất hóa đơn vượt quá số lượng còn lại của đơn hàng.");
+                isCheckingOut.value = false;
+                return;
+            }
+
+            const isPartial = cart.value.some(i => i.quantity < i.targetQuantity);
+            if (isPartial) {
+                isCheckingOut.value = false;
+                showPartialModeModal.value = true;
+            } else {
+                await submitProcessOrderAPI(true);
+            }
+            return;
+        }
+
+        // Đặt nhanh: tạo Order (Phiếu tạm) — không cần thanh toán
+        if (saleMode.value === 'quick_order') {
+            const orderPayload = {
+                subtotal: Number(subtotal.value) || 0,
+                discount: Number(discount.value) || 0,
+                total: Number(totalAmount.value) || 0,
+                customer_id: selectedCustomer.value?.id || null,
+                seller_key: selectedSellerKey.value || null,
+                employee_id: selectedEmployeeId.value || null,
+                sale_time: saleDate.value || null,
+                note: orderNote.value || null,
+                
                 amount_paid: Number(customerPaid.value) || 0,
+                customer_paid: Number(customerPaid.value) || 0,
                 payment_method: paymentMethod.value,
                 bank_account_info: paymentMethod.value === 'transfer' ? bankAccountInfo.value : null,
+                expected_delivery_date: activeTab.value.expectedDeliveryDate || null,
+
+                is_delivery: activeTab.value.delivery?.is_delivery || false,
                 delivery: {
                     is_delivery: activeTab.value.delivery?.is_delivery || false,
                     delivery_mode: activeTab.value.delivery?.delivery_mode || 'none',
@@ -784,39 +865,13 @@ const processCheckout = async () => {
                     weight: Number(activeTab.value.delivery?.weight) || 0,
                     delivery_note: activeTab.value.delivery?.delivery_note || '',
                 },
-                items: cart.value.map(item => ({
-                    product_id: item.product.id,
-                    quantity: item.quantity,
-                    serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
-                }))
-            };
 
-            const response = await axios.post(`/orders/${activeTab.value.source_order_id}/process`, processPayload);
-            if (response.data.success) {
-                toastMsg.value = response.data.message;
-                setTimeout(() => toastMsg.value = '', 4000);
-                resetAfterCheckout();
-            } else {
-                alert("Lỗi: " + response.data.message);
-            }
-            return;
-        }
-
-        // Đặt nhanh: tạo Order (Phiếu tạm) — không cần thanh toán
-        if (saleMode.value === 'quick_order') {
-            const orderPayload = {
-                subtotal: Number(subtotal.value) || 0,
-                discount: Number(discount.value) || 0,
-                total: Number(totalAmount.value) || 0,
-                customer_id: selectedCustomer.value?.id || null,
-                seller_key: selectedSellerKey.value || null,
-                employee_id: selectedEmployeeId.value || null,
-                sale_time: saleDate.value || null,
-                note: orderNote.value || null,
                 items: cart.value.map(item => ({
                     product_id: item.product.id,
                     quantity: item.quantity,
                     price: Number(item.price) || 0,
+                    discount: Number(item.discount) || 0,
+                    serial_ids: item.is_serial_product ? item.serials.map(s => s.id) : [],
                 }))
             };
 
@@ -1767,11 +1822,11 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                             </template>
                             <template v-else>
                                 <div class="flex items-center bg-gray-100/50 rounded-lg p-1 w-fit ring-1 ring-gray-300">
-                                    <button @click="updateQuantity(index, -1)" :disabled="activeTab.mode === 'process_order'" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
+                                    <button @click="updateQuantity(index, -1)" :disabled="activeTab.mode === 'process_order' && item.quantity <= 0" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"></path></svg>
                                     </button>
                                     <input type="text" readonly :value="item.quantity" class="w-10 text-center bg-transparent text-sm font-bold text-gray-800 focus:outline-none focus:ring-0 select-none">
-                                    <button @click="updateQuantity(index, 1)" :disabled="activeTab.mode === 'process_order'" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
+                                    <button @click="updateQuantity(index, 1)" :disabled="activeTab.mode === 'process_order' && item.quantity >= item.targetQuantity" class="w-7 h-7 flex items-center justify-center rounded bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm cursor-pointer disabled:opacity-50">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
                                     </button>
                                 </div>
@@ -1927,7 +1982,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     </template>
 
                     <!-- Payment Method -->
-                    <div class="border-t border-gray-200 pt-3">
+                    <div v-if="saleMode !== 'quick_order' || customerPaid > 0" class="border-t border-gray-200 pt-3">
                         <div class="flex items-center gap-4 text-sm">
                             <label class="flex items-center gap-1.5 cursor-pointer">
                                 <input type="radio" v-model="paymentMethod" value="cash" class="text-blue-600 focus:ring-blue-500 w-4 h-4" />
@@ -1949,8 +2004,20 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                         </div>
                     </div>
 
+                    <!-- Expected Delivery Date & Giao hàng toggle for Quick Order -->
+                    <div v-if="saleMode === 'quick_order' && activeTab.delivery" class="border-t border-gray-200 pt-3 space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="font-semibold text-gray-500">Hẹn giao:</span>
+                            <input type="datetime-local" v-model="activeTab.expectedDeliveryDate" class="border border-gray-300 rounded px-2 py-1 outline-none focus:border-orange-500 text-xs text-gray-700 bg-white" />
+                        </div>
+                        <div class="flex items-center gap-2 pt-1">
+                            <input type="checkbox" v-model="activeTab.delivery.is_delivery" id="order-is-delivery" class="rounded text-orange-600 focus:ring-orange-500 w-4 h-4" />
+                            <label for="order-is-delivery" class="text-xs font-semibold text-gray-700 cursor-pointer">Giao hàng tận nơi</label>
+                        </div>
+                    </div>
+
                     <!-- Delivery details section (Bán giao hàng) -->
-                    <div v-if="saleMode === 'delivery' && activeTab.delivery" class="border-t border-gray-200 pt-3 space-y-3 bg-gray-50/50 p-3 rounded-lg border border-gray-150 text-xs">
+                    <div v-if="(saleMode === 'delivery' || (saleMode === 'quick_order' && activeTab.delivery?.is_delivery)) && activeTab.delivery" class="border-t border-gray-200 pt-3 space-y-3 bg-gray-50/50 p-3 rounded-lg border border-gray-150 text-xs">
                         <div class="font-bold text-sm text-green-700 uppercase tracking-wide flex items-center gap-1">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1-1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l2.414 2.414a1 1 0 01.293.707V15a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"></path></svg>
                             Thông tin giao hàng
@@ -2776,6 +2843,30 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
         @close="showCreateProductModal = false"
         @created="(p) => { addToCart(p); query = ''; searchProducts(); }"
     />
+
+    <!-- Partial Fulfillment Mode Modal -->
+    <div v-if="showPartialModeModal" class="fixed inset-0 bg-black/40 flex items-center justify-center z-[100]" @click.self="showPartialModeModal = false">
+        <div class="bg-white rounded-lg shadow-xl w-[440px] max-w-full overflow-hidden font-sans">
+            <div class="px-5 py-4 border-b border-gray-200 bg-orange-50 flex items-center gap-2 text-orange-800">
+                <svg class="w-6 h-6 text-orange-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <h3 class="text-base font-bold">Xử lý đơn hàng một phần</h3>
+            </div>
+            <div class="p-5 space-y-3">
+                <p class="text-sm text-gray-600">Đơn hàng vẫn còn sản phẩm chưa giao hết. Bạn muốn làm gì với phần còn lại của đơn hàng?</p>
+                <div class="bg-gray-50 rounded-lg p-3 border border-gray-200 text-xs text-gray-500 space-y-1.5">
+                    <p>• <strong>Giữ lại xử lý sau:</strong> Đơn đặt hàng sẽ tiếp tục ở trạng thái <em>Đã xác nhận</em> để bạn có thể xuất tiếp hóa đơn lần sau.</p>
+                    <p>• <strong>Kết thúc phần còn lại:</strong> Đơn đặt hàng sẽ chuyển sang trạng thái <em>Đã kết thúc</em>. Các sản phẩm chưa giao sẽ không được giao nữa.</p>
+                </div>
+            </div>
+            <div class="px-5 py-3 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 text-sm">
+                <button @click="showPartialModeModal = false" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-100 font-medium transition-colors">Hủy</button>
+                <button @click="submitProcessOrderAPI(false)" class="px-4 py-2 bg-gray-600 text-white rounded font-medium hover:bg-gray-700 transition-colors">Kết thúc còn lại</button>
+                <button @click="submitProcessOrderAPI(true)" class="px-4 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 transition-colors">Giữ lại xử lý sau</button>
+            </div>
+        </div>
+    </div>
 </template>
 
 <style scoped>
