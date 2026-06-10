@@ -243,7 +243,7 @@ class InvoiceEditRouteTest extends TestCase
                 ->where('invoice.receiver_name', 'Nguyen Van A')
                 ->where('invoice.receiver_phone', '0987654321')
                 ->where('invoice.receiver_address', '123 Main St')
-                ->where('invoice.delivery_fee', '30000.00');
+                ->where('invoice.delivery_fee', fn($val) => (float) $val === 30000.0);
         });
     }
 

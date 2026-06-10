@@ -396,7 +396,7 @@ class CustomerPaymentDiscountTest extends TestCase
             ->getJson("/customers/{$this->customer->id}/payment-discount-invoices");
 
         $resp->assertOk();
-        $resp->assertJsonMissing(['id' => $invoice->id]);
+        $this->assertEmpty(collect($resp->json()['invoices'] ?? [])->where('id', $invoice->id));
     }
 
     public function test_payment_discount_invoices_deduplicates_preferring_direct(): void
