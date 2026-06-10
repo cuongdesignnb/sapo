@@ -404,7 +404,7 @@ class OrderPartialFulfillmentAndMergeTest extends TestCase
         $response->assertStatus(200);
 
         $order->refresh();
-        $this->assertEquals(200000, (float) $order->amount_paid);
+        $this->assertEquals(150000, (float) $order->amount_paid); // Cọc gốc không đổi
 
         $invoice1 = Invoice::where('order_id', $order->id)->latest('id')->first();
         $this->assertNotNull($invoice1);
