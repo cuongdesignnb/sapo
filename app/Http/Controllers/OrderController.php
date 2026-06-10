@@ -627,7 +627,11 @@ class OrderController extends Controller
             $invoiceTotal = $invoiceSubtotal - $invoiceDiscount;
 
             // Prior deposit & progressive deposit application
-            $initialDeposit = (float) ($order->amount_paid ?? 0);
+            $priorNewPayments = Invoice::where('order_id', $order->id)
+                ->where('status', '!=', 'Đã hủy')
+                ->get()
+                ->sum(fn($inv) => max(0.0, (float) $inv->customer_paid - (float) $inv->order_deposit_applied_amount));
+            $initialDeposit = max(0.0, (float) ($order->amount_paid ?? 0) - (float) $priorNewPayments);
             $alreadyAppliedDeposit = Invoice::where('order_id', $order->id)
                 ->where('status', '!=', 'Đã hủy')
                 ->sum('order_deposit_applied_amount');
@@ -815,6 +819,8 @@ class OrderController extends Controller
                 ]);
             }
 
+            // Accumulate checkout payment to order
+            $order->amount_paid = ($order->amount_paid ?? 0) + $newPayment;
 
             // 6) Check and update Order Status
             $hasRemaining = $order->items()->get()->contains(function ($it) {
