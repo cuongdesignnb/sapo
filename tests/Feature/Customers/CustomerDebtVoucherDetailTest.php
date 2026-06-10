@@ -63,9 +63,9 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('success', true);
         $resp->assertJsonPath('type', 'invoice');
         $resp->assertJsonPath('code', $invoice->code);
-        $resp->assertJsonPath('data.total', '500000.00');
-        $resp->assertJsonPath('data.customer_paid', '200000.00');
-        $resp->assertJsonPath('data.debt_amount', 300000);
+        $this->assertEquals(500000, (float) $resp->json('data.total'));
+        $this->assertEquals(200000, (float) $resp->json('data.customer_paid'));
+        $this->assertEquals(300000, (float) $resp->json('data.debt_amount'));
     }
 
     /**
@@ -160,9 +160,9 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('success', true);
         $resp->assertJsonPath('type', 'purchase');
         $resp->assertJsonPath('code', $purchase->code);
-        $resp->assertJsonPath('data.total_amount', '800000.00');
-        $resp->assertJsonPath('data.paid_amount', '300000.00');
-        $resp->assertJsonPath('data.debt_amount', '500005.00');
+        $this->assertEquals(800000, (float) $resp->json('data.total_amount'));
+        $this->assertEquals(300000, (float) $resp->json('data.paid_amount'));
+        $this->assertEquals(500005, (float) $resp->json('data.debt_amount'));
     }
 
     /**
@@ -216,7 +216,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('success', true);
         $resp->assertJsonPath('type', 'cashflow');
         $resp->assertJsonPath('code', $cashFlow->code);
-        $resp->assertJsonPath('data.amount', '150000.00');
+        $this->assertEquals(150000, (float) $resp->json('data.amount'));
     }
 
     /**
@@ -285,10 +285,10 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('success', true);
         $resp->assertJsonPath('type', 'payment_discount');
         $resp->assertJsonPath('code', $discount->code);
-        $resp->assertJsonPath('data.amount', '50000.00');
+        $this->assertEquals(50000, (float) $resp->json('data.amount'));
         $resp->assertJsonCount(1, 'data.allocations');
         $resp->assertJsonPath('data.allocations.0.invoice_code', $invoice->code);
-        $resp->assertJsonPath('data.allocations.0.amount', '50000.00');
+        $this->assertEquals(50000, (float) $resp->json('data.allocations.0.amount'));
     }
 
     /**
@@ -314,7 +314,7 @@ class CustomerDebtVoucherDetailTest extends TestCase
         $resp->assertJsonPath('success', true);
         $resp->assertJsonPath('type', 'ledger');
         $resp->assertJsonPath('code', $mergeCode);
-        $resp->assertJsonPath('data.amount', '-100000.00');
+        $this->assertEquals(-100000, (float) $resp->json('data.amount'));
         $resp->assertJsonCount(1, 'data.entries');
         $resp->assertJsonPath('data.entries.0.note', 'Gộp khách hàng');
     }

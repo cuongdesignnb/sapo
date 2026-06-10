@@ -403,6 +403,9 @@ class OrderPartialFulfillmentAndMergeTest extends TestCase
         $response = $this->postJson(route('orders.process', $order), $payload1);
         $response->assertStatus(200);
 
+        $order->refresh();
+        $this->assertEquals(200000, (float) $order->amount_paid);
+
         $invoice1 = Invoice::where('order_id', $order->id)->latest('id')->first();
         $this->assertNotNull($invoice1);
         $this->assertEquals(150000, $invoice1->order_deposit_applied_amount); // Lần 1 ăn trọn 150k cọc
@@ -438,6 +441,12 @@ class OrderPartialFulfillmentAndMergeTest extends TestCase
         $cf2 = CashFlow::where('reference_code', $invoice2->code)->first();
         $this->assertNotNull($cf2);
         $this->assertEquals(200000, $cf2->amount);
+
+        // Cọc áp dụng lũy tiến không vượt cọc gốc của order
+        $this->assertLessThanOrEqual(
+            (float) $order->amount_paid,
+            (float) Invoice::where('order_id', $order->id)->sum('order_deposit_applied_amount')
+        );
     }
 
     // 8. OrderProcessSerialPartialTest: test xử lý hàng serial một phần, chỉ serial thực xử lý chuyển sang sold.
@@ -632,5 +641,122 @@ class OrderPartialFulfillmentAndMergeTest extends TestCase
             ->first();
         $this->assertNotNull($log);
         $this->assertStringContainsString('Khách đổi ý', $log->description);
+    }
+
+    // Hotfix 1: Khách trả dư không tạo công nợ dương
+    public function test_order_process_overpaid_does_not_create_positive_debt(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $order = Order::create([
+            'code'          => 'DH-' . uniqid(),
+            'customer_id'   => $this->customer->id,
+            'branch_id'     => $this->branch->id,
+            'status'        => 'confirmed',
+            'total_price'   => 400000,
+            'total_payment' => 400000,
+            'amount_paid'   => 150000, // cọc 150k
+        ]);
+        $orderItem = $order->items()->create([
+            'product_id' => $product->id,
+            'qty'        => 2,
+            'price'      => 200000,
+            'discount'   => 0,
+            'subtotal'   => 400000,
+        ]);
+
+        $this->actingAs($this->admin);
+
+        $initialDebt = $this->customer->fresh()->debt_amount;
+
+        $payload = [
+            'from_pos' => true,
+            'amount_paid' => 100000, // trả thêm 100k
+            'payment_method' => 'cash',
+            'keep_remaining' => false,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 1, // Xử lý 1 item (giá trị 200k)
+                    'order_item_id' => $orderItem->id,
+                ]
+            ]
+        ];
+
+        $response = $this->postJson(route('orders.process', $order), $payload);
+        $response->assertStatus(200);
+
+        $invoice = Invoice::where('order_id', $order->id)->latest('id')->first();
+        $this->assertNotNull($invoice);
+        // total invoice = 200k, cọc áp dụng = 150k, trả thêm = 100k -> customer_paid = 250k
+        $this->assertEquals(250000, $invoice->customer_paid);
+
+        // Assert: không có row customer_debts type sale phát sinh cho invoice này
+        $debtExists = \App\Models\CustomerDebt::where('ref_code', $invoice->code)
+            ->where('type', 'sale')
+            ->exists();
+        $this->assertFalse($debtExists, 'Không được tạo công nợ cho hóa đơn này.');
+
+        // customers.debt_amount không tăng
+        $this->assertEquals($initialDebt, $this->customer->fresh()->debt_amount);
+
+        // cashflow chỉ ghi phần trả thêm 100k
+        $cf = CashFlow::where('reference_type', 'Invoice')
+            ->where('reference_code', $invoice->code)
+            ->first();
+        $this->assertNotNull($cf);
+        $this->assertEquals(100000, $cf->amount);
+    }
+
+    // Hotfix 2: Invoice giữ đúng branch của order
+    public function test_order_process_invoice_keeps_branch_id(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $order = Order::create([
+            'code'          => 'DH-' . uniqid(),
+            'customer_id'   => $this->customer->id,
+            'branch_id'     => $this->branch->id,
+            'status'        => 'confirmed',
+            'total_price'   => 400000,
+            'total_payment' => 400000,
+            'amount_paid'   => 0,
+        ]);
+        $orderItem = $order->items()->create([
+            'product_id' => $product->id,
+            'qty'        => 2,
+            'price'      => 200000,
+            'discount'   => 0,
+            'subtotal'   => 400000,
+        ]);
+
+        $this->actingAs($this->admin);
+
+        $payload = [
+            'from_pos' => true,
+            'amount_paid' => 400000,
+            'payment_method' => 'cash',
+            'keep_remaining' => false,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 2,
+                    'order_item_id' => $orderItem->id,
+                ]
+            ]
+        ];
+
+        $response = $this->postJson(route('orders.process', $order), $payload);
+        $response->assertStatus(200);
+
+        $invoice = Invoice::where('order_id', $order->id)->first();
+        $this->assertNotNull($invoice);
+        $this->assertEquals($order->branch_id, $invoice->branch_id);
+
+        // Assert stock movement branch_id
+        $movement = \App\Models\StockMovement::where('reference_type', 'Invoice')
+            ->where('reference_id', $invoice->id)
+            ->first();
+        if ($movement) {
+            $this->assertEquals($order->branch_id, $movement->branch_id);
+        }
     }
 }

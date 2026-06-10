@@ -547,6 +547,7 @@ class PartnerDebtLedgerService
                     'supplier_balance_effect' => $supplierBalanceEffect,
                     'supplier_effect' => $supplierBalanceEffect,
                     'affects_debt_balance' => $affects,
+                    'is_reference_only' => true,
                     'source' => 'supplier_ledger_mirror',
                     'time' => $supEntry['time'],
                     'created_at' => $supEntry['created_at'],
@@ -1144,7 +1145,7 @@ class PartnerDebtLedgerService
             'note' => $debt->note,
             'debt_total' => (float) $debt->debt_total,
             'ledger_debt_total' => (float) $debt->debt_total,
-            'type_raw' => $debt->type,
+            'type_raw' => ($debt->type === 'adjustment' && $eventKind === 'invoice_cancel') ? 'invoice_cancel_reversal' : $debt->type,
             'detail_available' => true,
         ]);
 
@@ -1288,7 +1289,14 @@ class PartnerDebtLedgerService
      */
     private function cancelledStatuses(): array
     {
-        return ['đã hủy', 'da huy', 'cancelled', 'canceled', 'void', 'deleted'];
+        return [
+            'đã hủy', 'Đã hủy', 'đã huỷ', 'Đã huỷ', 'Đã Hủy', 'ĐÃ HỦY',
+            'da huy', 'Da huy', 'Da Huy', 'DA HUY',
+            'cancelled', 'Cancelled', 'CANCELLED',
+            'canceled', 'Canceled', 'CANCELED',
+            'void', 'Void', 'VOID',
+            'deleted', 'Deleted', 'DELETED'
+        ];
     }
 
     private function isCancelledStatus(?string $status): bool

@@ -627,22 +627,23 @@ class OrderController extends Controller
             $invoiceTotal = $invoiceSubtotal - $invoiceDiscount;
 
             // Prior deposit & progressive deposit application
-            $priorDepositTotal = $order->amount_paid ?? 0;
+            $initialDeposit = (float) ($order->amount_paid ?? 0);
             $alreadyAppliedDeposit = Invoice::where('order_id', $order->id)
                 ->where('status', '!=', 'Đã hủy')
                 ->sum('order_deposit_applied_amount');
 
-            $depositRemaining = max(0, $priorDepositTotal - $alreadyAppliedDeposit);
+            $depositRemaining = max(0.0, $initialDeposit - $alreadyAppliedDeposit);
             $depositAppliedThisInvoice = min($depositRemaining, $invoiceTotal);
 
             $newPayment = $validated['amount_paid']; // Additional money customer pays right now
             $totalPaidForInvoice = $depositAppliedThisInvoice + $newPayment;
-            $debtAmount = $invoiceTotal - $totalPaidForInvoice;
+            $debtAmount = max(0.0, $invoiceTotal - $totalPaidForInvoice);
 
             // 2) Create Invoice
             $invoiceData = [
                 'code' => 'HD' . time() . rand(10, 99),
                 'order_id' => $order->id,
+                'branch_id' => $order->branch_id,
                 'subtotal' => $invoiceSubtotal,
                 'discount' => $invoiceDiscount,
                 'total' => $invoiceTotal,
@@ -784,7 +785,7 @@ class OrderController extends Controller
 
             // 4) Customer debt tracking
             if ($customer) {
-                if ($debtAmount != 0) {
+                if ($debtAmount > 0) {
                     app(CustomerDebtService::class)->recordSale(
                         $customer->id,
                         (float) $debtAmount,
@@ -814,8 +815,6 @@ class OrderController extends Controller
                 ]);
             }
 
-            // Accumulate checkout payment to order
-            $order->amount_paid = ($order->amount_paid ?? 0) + $newPayment;
 
             // 6) Check and update Order Status
             $hasRemaining = $order->items()->get()->contains(function ($it) {
@@ -1158,6 +1157,10 @@ class OrderController extends Controller
             ];
         });
 
+        $initialDeposit = (float) ($order->amount_paid ?? 0);
+        $depositApplied = (float) Invoice::where('order_id', $order->id)->where('status', '!=', 'Đã hủy')->sum('order_deposit_applied_amount');
+        $depositRemaining = max(0.0, $initialDeposit - $depositApplied);
+
         return response()->json([
             'success' => true,
             'resolved_by' => [
@@ -1192,9 +1195,9 @@ class OrderController extends Controller
                     'total_payment' => (float) $order->total_payment,
                     'amount_paid' => (float) ($order->amount_paid ?? 0),
                     'remaining' => (float) ($order->total_payment - ($order->amount_paid ?? 0)),
-                    'deposit_total' => (float) ($order->amount_paid ?? 0),
-                    'deposit_applied' => (float) Invoice::where('order_id', $order->id)->where('status', '!=', 'Đã hủy')->sum('order_deposit_applied_amount'),
-                    'deposit_remaining' => (float) max(0.0, ($order->amount_paid ?? 0) - Invoice::where('order_id', $order->id)->where('status', '!=', 'Đã hủy')->sum('order_deposit_applied_amount')),
+                    'deposit_total' => $initialDeposit,
+                    'deposit_applied' => $depositApplied,
+                    'deposit_remaining' => $depositRemaining,
                 ],
                 'delivery' => [
                     'is_delivery' => (bool) $order->is_delivery,
