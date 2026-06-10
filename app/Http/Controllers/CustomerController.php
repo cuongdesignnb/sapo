@@ -104,10 +104,10 @@ class CustomerController extends Controller
 
         if ($request->filled('net_debt_from') || $request->filled('net_debt_to')) {
             if ($request->filled('net_debt_from')) {
-                $query->where($netDebtExpr, '>=', (float) $request->net_debt_from);
+                $query->where($netDebtExpr, '>=', DB::raw('(? + 0)'))->addBinding((float) $request->net_debt_from);
             }
             if ($request->filled('net_debt_to')) {
-                $query->where($netDebtExpr, '<=', (float) $request->net_debt_to);
+                $query->where($netDebtExpr, '<=', DB::raw('(? + 0)'))->addBinding((float) $request->net_debt_to);
             }
         }
 
@@ -186,10 +186,10 @@ class CustomerController extends Controller
                 }
 
                 if ($request->filled('total_sales_from')) {
-                    $query->whereRaw('(' . $sumSubquery->toSql() . ') >= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_from]));
+                    $query->whereRaw('(' . $sumSubquery->toSql() . ') >= (? + 0)', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_from]));
                 }
                 if ($request->filled('total_sales_to')) {
-                    $query->whereRaw('(' . $sumSubquery->toSql() . ') <= ?', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_to]));
+                    $query->whereRaw('(' . $sumSubquery->toSql() . ') <= (? + 0)', array_merge($sumSubquery->getBindings(), [(float) $request->total_sales_to]));
                 }
             } else {
                 // Lifetime: use materialized customers.total_spent
