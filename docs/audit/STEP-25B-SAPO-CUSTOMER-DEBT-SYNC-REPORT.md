@@ -9,8 +9,8 @@ Báo cáo chi tiết quá trình đồng bộ logic công nợ khách hàng và 
 *   **Repo nguồn**: `cuongdesignnb/kiot` (tham chiếu logic công nợ)
 *   **Repo đích**: `cuongdesignnb/sapo` (nơi áp dụng sửa đổi)
 *   **Branch**: `main`
-*   **Commit trước**: `67d3c7d1e713f10704d77f56a9112f729daa581b`
-*   **Commit sau**: *Sẽ được cập nhật sau khi commit*
+*   **Commit trước**: `7771506dba093395f1805dbfda195d3721e2a2f6`
+*   **Commit sau**: `f0fea822dee42ca53cdeb9973fcc477d48d48310`
 
 ---
 
