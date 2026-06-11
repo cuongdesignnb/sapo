@@ -21,6 +21,7 @@ use App\Services\CustomerDebtService;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\OrderPaymentSummaryService;
+use App\Services\PartnerTransactionGuard;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use App\Support\Status\BusinessStatus;
@@ -213,6 +214,11 @@ class OrderController extends Controller
             'expected_delivery_date' => 'nullable|date',
         ]);
 
+        app(PartnerTransactionGuard::class)->assertCanTransact(
+            isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
+            'customer_id'
+        );
+
         // Lock period check
         $txDate = $request->order_date ? Carbon::parse($request->order_date) : now();
         app(LockPeriodService::class)->assertNotLocked($txDate, 'order_create');
@@ -234,6 +240,10 @@ class OrderController extends Controller
 
         try {
             \Illuminate\Support\Facades\DB::beginTransaction();
+            app(PartnerTransactionGuard::class)->assertCanTransact(
+                isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
+                'customer_id'
+            );
 
             $order = Order::create([
                 'code' => 'DH' . time(), // Simple unique code for now
@@ -540,6 +550,8 @@ class OrderController extends Controller
      */
     public function processOrder(Request $request, Order $order)
     {
+        app(PartnerTransactionGuard::class)->assertCanTransact($order->customer_id, 'customer_id');
+
         if ($order->status === 'completed') {
             if ($request->wantsJson()) {
                 return response()->json(['success' => false, 'message' => 'Đơn hàng đã được xử lý trước đó.'], 422);
@@ -602,6 +614,7 @@ class OrderController extends Controller
 
         try {
             \Illuminate\Support\Facades\DB::beginTransaction();
+            app(PartnerTransactionGuard::class)->assertCanTransact($order->customer_id, 'customer_id');
 
             $order->load('items.product', 'customer');
             $customer = $order->customer;
@@ -819,9 +832,10 @@ class OrderController extends Controller
             // 4) Customer debt tracking
             if ($customer) {
                 if (abs($debtAmount) >= 0.01) {
-                    app(CustomerDebtService::class)->recordAdjustment(
+                    app(CustomerDebtService::class)->recordInvoiceBalanceEffect(
                         $customer->id,
                         (float) $debtAmount,
+                        $invoice,
                         "Ghi nợ khi xử lý một phần đơn hàng {$order->code} sang hóa đơn {$invoice->code}",
                         [
                             'order_id' => $order->id,

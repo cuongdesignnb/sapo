@@ -16,9 +16,11 @@ use App\Services\CustomerDebtService;
 use App\Services\DebtOffsetService;
 use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
+use App\Services\PartnerTransactionGuard;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use App\Support\Reports\SellerResolver;
+use App\Support\Status\BusinessStatus;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -202,6 +204,11 @@ class InvoiceController extends Controller
             'items.*.serial_ids.*' => 'integer|exists:serial_imeis,id',
         ]);
 
+        app(PartnerTransactionGuard::class)->assertCanTransact(
+            isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
+            'customer_id'
+        );
+
         $priceBookName = 'Bảng giá chung';
         if (!empty($validated['price_book_id'])) {
             $priceBook = PriceBook::find($validated['price_book_id']);
@@ -327,7 +334,7 @@ class InvoiceController extends Controller
     public function destroy(Invoice $invoice, Request $request)
     {
         // RR-01 Guard: Không cho hủy lặp — idempotent check
-        if ($invoice->status === 'Đã hủy') {
+        if (BusinessStatus::isCancelled($invoice->status)) {
             return back()->with('error', 'Hóa đơn này đã được hủy trước đó.');
         }
 
@@ -357,6 +364,13 @@ class InvoiceController extends Controller
 
         try {
             DB::beginTransaction();
+
+            $invoice = Invoice::query()->lockForUpdate()->findOrFail($invoice->id);
+            if (BusinessStatus::isCancelled($invoice->status)) {
+                DB::rollBack();
+
+                return back()->with('error', 'Hóa đơn này đã được hủy trước đó.');
+            }
 
             $invoice->load('items');
 
@@ -416,9 +430,10 @@ class InvoiceController extends Controller
                     // RR-06: ghi ledger qua service thay vì decrement trực tiếp.
                     $debtAmount = $invoice->total - ($invoice->customer_paid ?? 0);
                     if ($debtAmount != 0) {
-                        app(CustomerDebtService::class)->recordAdjustment(
+                        app(CustomerDebtService::class)->recordInvoiceBalanceReversal(
                             $customer->id,
-                            -(float) $debtAmount,
+                            (float) $debtAmount,
+                            $invoice,
                             "Đảo công nợ do hủy hóa đơn {$invoice->code}",
                             ['ref_code' => $invoice->code, 'type' => 'adjustment']
                         );
