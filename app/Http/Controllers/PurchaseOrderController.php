@@ -16,6 +16,7 @@ use App\Models\Setting;
 use App\Enums\PurchaseOrderStatus;
 use App\Support\Filters\FilterableIndex;
 use App\Services\LockPeriodService;
+use App\Services\PartnerTransactionGuard;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -53,7 +54,11 @@ class PurchaseOrderController extends Controller
             'filterOptions' => [
                 'branches' => $branches->map(fn($b) => ['value' => $b->id, 'label' => $b->name]),
                 'statuses' => PurchaseOrderStatus::options(),
-                'suppliers' => Customer::where('is_supplier', true)->orderBy('name')->get(['id', 'name'])->map(fn($s) => ['value' => $s->id, 'label' => $s->name]),
+                'suppliers' => app(PartnerTransactionGuard::class)->availablePartners()
+                    ->where('is_supplier', true)
+                    ->orderBy('name')
+                    ->get(['id', 'name'])
+                    ->map(fn($s) => ['value' => $s->id, 'label' => $s->name]),
             ],
         ]);
     }
@@ -67,7 +72,9 @@ class PurchaseOrderController extends Controller
         $products = Product::where('is_active', true)->get();
         $branches = Branch::all();
         $defaultBranch = Branch::first();
-        $suppliers = Customer::where('is_supplier', true)->get();
+        $suppliers = app(PartnerTransactionGuard::class)->availablePartners()
+            ->where('is_supplier', true)
+            ->get();
 
         return Inertia::render('PurchaseOrders/Create', [
             'products' => $products,
@@ -94,6 +101,10 @@ class PurchaseOrderController extends Controller
             'expected_date' => 'nullable|date',
             'note' => 'nullable|string'
         ]);
+        app(PartnerTransactionGuard::class)->assertCanTransact(
+            $request->filled('supplier_id') ? (int) $request->supplier_id : null,
+            'supplier_id'
+        );
 
         // Lock period check
         $txDate = $request->order_date ? Carbon::parse($request->order_date) : now();
@@ -101,6 +112,10 @@ class PurchaseOrderController extends Controller
 
         try {
             DB::beginTransaction();
+            app(PartnerTransactionGuard::class)->assertCanTransact(
+                $request->filled('supplier_id') ? (int) $request->supplier_id : null,
+                'supplier_id'
+            );
 
             $totalAmount = array_sum(array_column($request->items, 'total_value'));
             $discount = $request->input('discount', 0);

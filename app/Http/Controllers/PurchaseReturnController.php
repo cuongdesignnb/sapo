@@ -20,6 +20,7 @@ use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use App\Services\DebtOffsetService;
+use App\Services\PartnerTransactionGuard;
 
 class PurchaseReturnController extends Controller
 {
@@ -258,7 +259,8 @@ class PurchaseReturnController extends Controller
     {
         return Inertia::render('PurchaseReturns/CreateQuick', [
             'returnCode'   => 'PTN' . date('YmdHis'),
-            'suppliers'    => Customer::where('is_supplier', true)
+            'suppliers'    => app(PartnerTransactionGuard::class)->availablePartners()
+                ->where('is_supplier', true)
                 ->orderBy('name')
                 ->get(['id', 'name', 'code', 'phone', 'supplier_debt_amount']),
             'products'     => Product::select('id', 'name', 'sku', 'stock_quantity', 'cost_price', 'has_serial')
@@ -287,6 +289,10 @@ class PurchaseReturnController extends Controller
         ]);
 
         $purchase = Purchase::with('items')->findOrFail($request->purchase_id);
+        app(PartnerTransactionGuard::class)->assertCanTransact(
+            $purchase->supplier_id ? (int) $purchase->supplier_id : null,
+            'supplier_id'
+        );
 
         // Validate returnable quantities
         $returnedQty = PurchaseReturnItem::whereHas('purchaseReturn', function ($q) use ($purchase) {
@@ -341,6 +347,10 @@ class PurchaseReturnController extends Controller
 
         try {
             DB::beginTransaction();
+            app(PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $purchase->supplier_id,
+                'supplier_id'
+            );
 
             $totalAmount = collect($request->items)->sum(fn($item) => $item['quantity'] * $item['price']);
             $refundAmount = $request->refund_amount ?? $totalAmount;
@@ -498,9 +508,17 @@ class PurchaseReturnController extends Controller
             'payment_method' => 'nullable|string|in:cash,transfer',
             'bank_account_info' => 'nullable|string',
         ]);
+        app(PartnerTransactionGuard::class)->assertCanTransact(
+            (int) $request->supplier_id,
+            'supplier_id'
+        );
 
         try {
             DB::beginTransaction();
+            app(PartnerTransactionGuard::class)->assertCanTransact(
+                (int) $request->supplier_id,
+                'supplier_id'
+            );
 
             $productIds = collect($request->items)->pluck('product_id')->unique()->values();
             $products = Product::whereIn('id', $productIds)->lockForUpdate()->get()->keyBy('id');

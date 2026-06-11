@@ -21,6 +21,9 @@ class PartnerMergeService
         $targetSupplierDebt = (float) $target->supplier_debt_amount;
         $debtAfter = $sourceDebt + $targetDebt;
         $supplierDebtAfter = $sourceSupplierDebt + $targetSupplierDebt;
+        $totalSpentAfter = (float) $source->total_spent + (float) $target->total_spent;
+        $totalReturnsAfter = (float) $source->total_returns + (float) $target->total_returns;
+        $totalBoughtAfter = (float) $source->total_bought + (float) $target->total_bought;
 
         return [
             'before' => [
@@ -30,6 +33,9 @@ class PartnerMergeService
             'after' => [
                 'debt_amount' => $debtAfter,
                 'supplier_debt_amount' => $supplierDebtAfter,
+                'total_spent' => $totalSpentAfter,
+                'total_returns' => $totalReturnsAfter,
+                'total_bought' => $totalBoughtAfter,
                 'customer_net_position' => $debtAfter - $supplierDebtAfter,
                 'supplier_net_position' => $supplierDebtAfter - $debtAfter,
             ],
@@ -82,6 +88,17 @@ class PartnerMergeService
                 'source_supplier_debt_amount' => $lockedSource->supplier_debt_amount,
                 'target_debt_amount_before' => $lockedTarget->debt_amount,
                 'target_supplier_debt_amount_before' => $lockedTarget->supplier_debt_amount,
+                'source_total_spent_before' => $lockedSource->total_spent,
+                'source_total_returns_before' => $lockedSource->total_returns,
+                'source_total_bought_before' => $lockedSource->total_bought,
+                'target_total_spent_before' => $lockedTarget->total_spent,
+                'target_total_returns_before' => $lockedTarget->total_returns,
+                'target_total_bought_before' => $lockedTarget->total_bought,
+                'target_debt_amount_after' => $preview['after']['debt_amount'],
+                'target_supplier_debt_amount_after' => $preview['after']['supplier_debt_amount'],
+                'target_total_spent_after' => $preview['after']['total_spent'],
+                'target_total_returns_after' => $preview['after']['total_returns'],
+                'target_total_bought_after' => $preview['after']['total_bought'],
                 'merged_by' => auth()->id(),
                 'merged_at' => now(),
             ]);
@@ -90,19 +107,22 @@ class PartnerMergeService
 
             $lockedTarget->debt_amount = $preview['after']['debt_amount'];
             $lockedTarget->supplier_debt_amount = $preview['after']['supplier_debt_amount'];
-            $lockedTarget->total_spent = (float) $lockedTarget->total_spent + (float) $lockedSource->total_spent;
-            $lockedTarget->total_returns = (float) $lockedTarget->total_returns + (float) $lockedSource->total_returns;
-            $lockedTarget->total_bought = (float) $lockedTarget->total_bought + (float) $lockedSource->total_bought;
+            $lockedTarget->total_spent = $preview['after']['total_spent'];
+            $lockedTarget->total_returns = $preview['after']['total_returns'];
+            $lockedTarget->total_bought = $preview['after']['total_bought'];
             $lockedTarget->is_customer = (bool) ($lockedTarget->is_customer || $lockedSource->is_customer);
             $lockedTarget->is_supplier = (bool) ($lockedTarget->is_supplier || $lockedSource->is_supplier);
             $lockedTarget->save();
 
             CustomerDebt::firstOrCreate(
-                ['customer_id' => $lockedTarget->id, 'ref_code' => $markerCode],
+                [
+                    'customer_id' => $lockedTarget->id,
+                    'ref_code' => $markerCode,
+                    'type' => 'merge_marker',
+                ],
                 [
                     'amount' => 0,
                     'debt_total' => (float) $lockedTarget->debt_amount,
-                    'type' => 'merge_marker',
                     'note' => "Gộp hồ sơ {$lockedSource->code} vào {$lockedTarget->code}",
                     'created_by' => auth()->id(),
                     'recorded_at' => now(),
@@ -124,7 +144,12 @@ class PartnerMergeService
                 'partner_merge',
                 "Gộp đối tác {$lockedSource->code} vào {$lockedTarget->code}",
                 $lockedTarget,
-                ['source_partner_id' => $lockedSource->id, 'marker_code' => $markerCode]
+                [
+                    'source_partner_id' => $lockedSource->id,
+                    'marker_code' => $markerCode,
+                    'before' => $preview['before'],
+                    'after' => $preview['after'],
+                ]
             );
 
             return $preview;
@@ -185,6 +210,7 @@ class PartnerMergeService
             'debt_amount' => (float) $partner->debt_amount,
             'supplier_debt_amount' => (float) $partner->supplier_debt_amount,
             'total_spent' => (float) $partner->total_spent,
+            'total_returns' => (float) $partner->total_returns,
             'total_bought' => (float) $partner->total_bought,
             'document_counts' => [
                 'invoices' => $partner->invoices()->count(),
