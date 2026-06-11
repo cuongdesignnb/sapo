@@ -4,12 +4,15 @@ namespace Tests\Feature\CustomerDebt;
 
 use App\Models\CashFlow;
 use App\Models\Customer;
+use App\Models\CustomerDebt;
 use App\Models\CustomerPaymentAllocation;
 use App\Models\Invoice;
 use App\Models\User;
 use App\Services\CustomerDebtService;
 use App\Services\CustomerPaymentService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 use Tests\TestCase;
 
 class CustomerOverpaymentFlowTest extends TestCase
@@ -76,6 +79,172 @@ class CustomerOverpaymentFlowTest extends TestCase
         $this->assertNotNull($payment);
         $this->assertEquals(-1_500_000, $payment['customer_display_balance_effect']);
         $this->assertEquals(-200_000, $entries->first()['customer_display_running_balance']);
+    }
+
+    public function test_sale_helpers_reject_negative_input_while_signed_invoice_effect_preserves_credit(): void
+    {
+        $service = app(CustomerDebtService::class);
+
+        try {
+            $service->recordSale($this->customer->id, -300_000);
+            $this->fail('recordSale must reject negative values.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertStringContainsString('signed invoice balance', $exception->getMessage());
+        }
+
+        try {
+            $service->recordSaleReversal($this->customer->id, -300_000);
+            $this->fail('recordSaleReversal must reject negative values.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertStringContainsString('signed invoice balance', $exception->getMessage());
+        }
+
+        $service->recordInvoiceBalanceEffect($this->customer->id, -300_000);
+        $this->assertEquals(-300_000, (float) $this->customer->fresh()->debt_amount);
+    }
+
+    public function test_manual_allocations_are_validated_inside_service(): void
+    {
+        $invoice = $this->createReceivableInvoice(1_000_000);
+        $secondInvoice = $this->createReceivableInvoice(500_000);
+        $service = app(CustomerPaymentService::class);
+
+        foreach ([-1, 0] as $invalidAmount) {
+            try {
+                $service->collect($this->customer, 1_000_000, 'manual', [
+                    ['invoice_id' => $invoice->id, 'amount' => $invalidAmount],
+                ]);
+                $this->fail('Non-positive allocation must be rejected.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('allocations', $exception->errors());
+            }
+        }
+
+        $invalidCases = [
+            [
+                ['invoice_id' => $invoice->id, 'amount' => 600_000],
+                ['invoice_id' => $invoice->id, 'amount' => 400_000],
+            ],
+            [
+                ['invoice_id' => $invoice->id, 'amount' => 1_000_001],
+            ],
+            [
+                ['invoice_id' => $invoice->id, 'amount' => 700_000],
+                ['invoice_id' => $secondInvoice->id, 'amount' => 400_000],
+            ],
+        ];
+
+        foreach ($invalidCases as $allocations) {
+            try {
+                $service->collect($this->customer, 1_000_000, 'manual', $allocations);
+                $this->fail('Invalid manual allocation must be rejected.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('allocations', $exception->errors());
+            }
+        }
+
+        $secondInvoice->update(['status' => 'Đã hủy']);
+        try {
+            $service->collect($this->customer, 100_000, 'manual', [
+                ['invoice_id' => $secondInvoice->id, 'amount' => 100_000],
+            ]);
+            $this->fail('Cancelled invoice allocation must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('allocations', $exception->errors());
+        }
+    }
+
+    public function test_dirty_ledger_reference_cannot_allocate_another_customers_invoice(): void
+    {
+        $owner = Customer::create([
+            'code' => 'KH-OWNER-' . uniqid(),
+            'name' => 'Invoice Owner',
+            'debt_amount' => 500_000,
+            'is_customer' => true,
+        ]);
+        $invoice = Invoice::create([
+            'code' => 'HD-DIRTY-' . uniqid(),
+            'customer_id' => $owner->id,
+            'subtotal' => 500_000,
+            'total' => 500_000,
+            'customer_paid' => 0,
+            'status' => 'completed',
+        ]);
+        CustomerDebt::create([
+            'customer_id' => $this->customer->id,
+            'ref_code' => $invoice->code,
+            'amount' => 500_000,
+            'debt_total' => 500_000,
+            'type' => 'sale',
+            'recorded_at' => now(),
+        ]);
+
+        $auto = app(CustomerPaymentService::class)->collect($this->customer, 100_000);
+        $this->assertEquals(0, $auto['allocated_amount']);
+        $this->assertEquals(100_000, $auto['unallocated_amount']);
+        $this->assertEquals(0, (float) $invoice->fresh()->customer_paid);
+
+        try {
+            app(CustomerPaymentService::class)->collect($this->customer, 100_000, 'manual', [
+                ['invoice_id' => $invoice->id, 'amount' => 100_000],
+            ]);
+            $this->fail('Cross-customer allocation must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('allocations', $exception->errors());
+        }
+    }
+
+    public function test_cancel_endpoint_reports_already_cancelled_without_second_reversal(): void
+    {
+        $invoice = $this->createReceivableInvoice(300_000);
+        $result = app(CustomerPaymentService::class)->collect($this->customer, 300_000);
+        $cashFlow = CashFlow::findOrFail($result['cash_flow_id']);
+
+        $this->actingAs($this->admin)
+            ->deleteJson(route('cash_flows.destroy', $cashFlow->id))
+            ->assertOk()
+            ->assertJsonPath('status', CustomerPaymentService::CANCELLED);
+
+        $this->assertEquals(300_000, (float) $this->customer->fresh()->debt_amount);
+        $this->assertEquals(0, (float) $invoice->fresh()->customer_paid);
+
+        $this->deleteJson(route('cash_flows.destroy', $cashFlow->id))
+            ->assertStatus(409)
+            ->assertJsonPath('status', CustomerPaymentService::ALREADY_CANCELLED)
+            ->assertJsonPath('message', 'Phiếu thu này đã bị hủy trước đó.');
+
+        $this->assertEquals(300_000, (float) $this->customer->fresh()->debt_amount);
+        $this->assertEquals(0, (float) $invoice->fresh()->customer_paid);
+    }
+
+    public function test_customer_credit_refund_effect_moves_negative_balance_toward_zero(): void
+    {
+        app(CustomerDebtService::class)->recordInvoiceBalanceEffect($this->customer->id, -300_000);
+
+        foreach ([200_000, 100_000] as $refund) {
+            CashFlow::create([
+                'code' => 'PC-CREDIT-' . uniqid(),
+                'type' => 'payment',
+                'amount' => $refund,
+                'time' => now(),
+                'category' => 'Hoàn tiền khách dư',
+                'target_type' => 'Khách hàng',
+                'target_id' => $this->customer->id,
+                'target_name' => $this->customer->name,
+                'reference_type' => 'CustomerCreditRefund',
+                'status' => 'active',
+                'accounting_result' => false,
+            ]);
+            app(CustomerDebtService::class)->recordAdjustment(
+                $this->customer->id,
+                $refund,
+                'Hoàn tiền khách dư',
+                ['type' => 'credit_refund']
+            );
+        }
+
+        $this->assertEquals(0, (float) $this->customer->fresh()->debt_amount);
+        $this->assertEquals(0, (float) $this->customer->fresh()->total_spent);
     }
 
     public function test_cancelling_debt_payment_reverses_allocations_and_customer_credit(): void

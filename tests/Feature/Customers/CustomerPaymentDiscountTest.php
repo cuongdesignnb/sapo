@@ -306,7 +306,7 @@ class CustomerPaymentDiscountTest extends TestCase
         ]);
     }
 
-    public function test_payment_discount_invoices_ledger_source(): void
+    public function test_payment_discount_invoices_excludes_dirty_cross_customer_ledger_source(): void
     {
         $otherCustomer = Customer::create([
             'code' => 'KH-OTHER-' . uniqid(),
@@ -337,14 +337,9 @@ class CustomerPaymentDiscountTest extends TestCase
             ->getJson("/customers/{$this->customer->id}/payment-discount-invoices");
 
         $resp->assertOk();
-        $resp->assertJsonFragment([
-            'id' => $invoice->id,
-            'code' => $invoice->code,
-            'total' => 300000.0,
-            'customer_paid' => 50000.0,
-            'remaining' => 250000.0,
-            'source' => 'ledger_invoice',
-        ]);
+        $this->assertEmpty(
+            collect($resp->json()['invoices'] ?? [])->where('id', $invoice->id)
+        );
     }
 
     public function test_payment_discount_invoices_excludes_purchase_from_ledger(): void
@@ -432,7 +427,7 @@ class CustomerPaymentDiscountTest extends TestCase
         $this->assertEquals('direct_invoice', $first['source']);
     }
 
-    public function test_payment_discount_allocation_to_ledger_invoice(): void
+    public function test_payment_discount_rejects_ledger_invoice_owned_by_another_customer(): void
     {
         $otherCustomer = Customer::create([
             'code' => 'KH-OTHER-' . uniqid(),
@@ -477,18 +472,15 @@ class CustomerPaymentDiscountTest extends TestCase
         $resp = $this->actingAs($this->admin)
             ->postJson("/customers/{$this->customer->id}/payment-discounts", $payload);
 
-        $resp->assertOk();
-        $resp->assertJsonPath('success', true);
+        $resp->assertStatus(422);
 
-        // Assert allocation table has record
-        $this->assertDatabaseHas('customer_payment_discount_allocations', [
+        $this->assertDatabaseMissing('customer_payment_discount_allocations', [
             'invoice_id' => $invoice->id,
             'amount' => 100000,
         ]);
 
-        // Assert customer debt decreased
         $this->customer->refresh();
-        $this->assertEquals(150000, (float) $this->customer->debt_amount);
+        $this->assertEquals(250000, (float) $this->customer->debt_amount);
 
         // Assert invoice customer_paid unchanged
         $invoice->refresh();
@@ -501,7 +493,7 @@ class CustomerPaymentDiscountTest extends TestCase
         ]);
     }
 
-    public function test_manual_debt_payment_allocation_to_ledger_invoice_after_cktt(): void
+    public function test_manual_debt_payment_allocation_to_direct_invoice_after_cktt(): void
     {
         $otherCustomer = Customer::create([
             'code' => 'KH-OTHER-' . uniqid(),
@@ -513,7 +505,7 @@ class CustomerPaymentDiscountTest extends TestCase
 
         $invoice = Invoice::create([
             'code' => 'HD-MANUAL-' . uniqid(),
-            'customer_id' => $otherCustomer->id,
+            'customer_id' => $this->customer->id,
             'total' => 300000,
             'customer_paid' => 50000,
             'status' => 'Hoàn thành',

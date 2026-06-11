@@ -272,8 +272,8 @@ class CancelInvoicePaymentDebtFlowTest extends TestCase
             'note' => 'Trả nợ cho hóa đơn đã hủy'
         ]);
 
-        // Check it throws/returns error
-        $paymentResponse->assertStatus(302); // Redirect back with error if web request
-        $this->assertEquals('Không thể thu nợ cho hóa đơn đã hủy.', session('error'));
+        $paymentResponse
+            ->assertStatus(302)
+            ->assertSessionHasErrors('allocations');
     }
 }

@@ -5,6 +5,7 @@ namespace Tests\Feature\Customers;
 use App\Models\Customer;
 use App\Models\CustomerDebt;
 use App\Models\PartnerMerge;
+use App\Models\SupplierDebtTransaction;
 use App\Models\User;
 use App\Services\PartnerMergeService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -34,6 +35,16 @@ class PartnerMergeBalanceNeutralTest extends TestCase
     {
         $source = $this->partner('SOURCE', 300_000, 0, true, false);
         $target = $this->partner('TARGET', 0, 500_000, false, true);
+        $source->update([
+            'total_spent' => 1_500_000,
+            'total_returns' => 100_000,
+            'total_bought' => 250_000,
+        ]);
+        $target->update([
+            'total_spent' => 500_000,
+            'total_returns' => 50_000,
+            'total_bought' => 750_000,
+        ]);
 
         $preview = app(PartnerMergeService::class)->merge($source, $target);
         $markerCode = "MERGE-PARTNER-{$source->id}-TO-{$target->id}";
@@ -49,15 +60,26 @@ class PartnerMergeBalanceNeutralTest extends TestCase
         $this->assertEquals(500_000, (float) $target->supplier_debt_amount);
         $this->assertTrue((bool) $target->is_customer);
         $this->assertTrue((bool) $target->is_supplier);
+        $this->assertEquals(2_000_000, (float) $target->total_spent);
+        $this->assertEquals(150_000, (float) $target->total_returns);
+        $this->assertEquals(1_000_000, (float) $target->total_bought);
         $this->assertSame('inactive', $source->status);
         $this->assertEquals($target->id, $source->merged_into_id);
+        $this->assertEquals(0, (float) $source->debt_amount);
+        $this->assertEquals(0, (float) $source->total_spent);
 
         $marker = CustomerDebt::where('customer_id', $target->id)
             ->where('ref_code', $markerCode)
             ->firstOrFail();
         $this->assertEquals(0, (float) $marker->amount);
         $this->assertSame('merge_marker', $marker->type);
+        $merge = PartnerMerge::where('ref_code', $markerCode)->firstOrFail();
+        $this->assertEquals(1_500_000, (float) $merge->source_total_spent_before);
+        $this->assertEquals(500_000, (float) $merge->target_total_spent_before);
+        $this->assertEquals(2_000_000, (float) $merge->target_total_spent_after);
+        $this->assertEquals(300_000, (float) $merge->target_debt_amount_after);
         $this->assertSame(1, PartnerMerge::where('ref_code', $markerCode)->count());
+        $this->assertSame(0, SupplierDebtTransaction::where('code', $markerCode)->count());
 
         try {
             app(PartnerMergeService::class)->merge($source->fresh(), $target->fresh());
