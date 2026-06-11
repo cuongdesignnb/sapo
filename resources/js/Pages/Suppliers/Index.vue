@@ -376,6 +376,7 @@ const setSupplierTab = async (id, tab) => {
 // HOTFIX FOLLOW-UP — opt-in paginated supplier debt-transactions
 // (KiotViet 10/page). Caller passes ?page=N to activate.
 const supplierDebtPage = reactive({});
+const supplierDebtFilter = reactive({});     // { [supplierId]: 'all', ... }
 const supplierDebtPerPage = 10;
 const shouldShowDebtReconcileWarning = (reconcile) =>
     reconcile?.severity === "warning" || reconcile?.user_warning === true;
@@ -455,8 +456,9 @@ const loadSupplierDebt = async (id, page = null) => {
     supplierDataLoading[id] = true;
     const targetPage = page ?? supplierDebtPage[id] ?? 1;
     supplierDebtPage[id] = targetPage;
+    const filter = supplierDebtFilter[id] ?? 'all';
     try {
-        const params = { page: targetPage, per_page: supplierDebtPerPage };
+        const params = { page: targetPage, per_page: supplierDebtPerPage, filter };
         if (isDualRoleSupplier(id)) {
             params.view = 'partner';
         }
@@ -468,6 +470,11 @@ const loadSupplierDebt = async (id, page = null) => {
         supplierDebt[id] = { entries: [], summary: null, pagination: { total: 0, last_page: 1, current_page: 1, from: 0, to: 0 } };
     }
     supplierDataLoading[id] = false;
+};
+
+const onSupplierDebtFilterChange = (id, filterValue) => {
+    supplierDebtFilter[id] = filterValue;
+    loadSupplierDebt(id, 1);
 };
 
 const changeSupplierDebtPage = (id, newPage) => {
@@ -495,9 +502,7 @@ const showPurchaseDetail = async (purchaseId) => {
 
 const filteredDebt = (id) => {
     const raw = supplierDebt[id];
-    const data = Array.isArray(raw) ? raw : (raw?.entries || []);
-    if (debtFilter.value === 'all') return data;
-    return data.filter(d => d.type === debtFilter.value || d.event_kind === debtFilter.value);
+    return Array.isArray(raw) ? raw : (raw?.entries || []);
 };
 
 // HOTFIX 24.15 — per-supplier-tab sort state. Default = newest first.
@@ -1297,12 +1302,18 @@ const submitActivate = (supplier) => {
                                                     {{ supplierDebt[supplier.id].reconcile.message }}
                                                 </div>
                                                 <div class="flex justify-end mb-3">
-                                                    <select v-model="debtFilter" class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none">
+                                                    <select
+                                                        :value="supplierDebtFilter[supplier.id] || 'all'"
+                                                        @change="onSupplierDebtFilterChange(supplier.id, $event.target.value)"
+                                                        class="border border-gray-300 rounded px-3 py-1.5 text-sm outline-none"
+                                                    >
                                                         <option value="all">Tất cả giao dịch</option>
                                                         <option value="purchase">Nhập hàng</option>
-                                                        <option value="payment">Thanh toán</option>
+                                                        <option value="payment">Thanh toán NCC</option>
+                                                        <option value="return">Trả hàng nhập</option>
+                                                        <option value="sale">Bán hàng cho đối tác</option>
+                                                        <option value="customer_payment">Đối tác thanh toán</option>
                                                         <option value="adjustment">Điều chỉnh</option>
-                                                        <option value="discount">Chiết khấu</option>
                                                         <option value="offset">Đối trừ CN</option>
                                                     </select>
                                                 </div>

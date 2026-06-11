@@ -679,6 +679,37 @@ class SupplierController extends Controller
             ? $ledgerService->buildSupplierDualRolePartnerTimeline($supplier)
             : $ledgerService->buildSupplierPayableLedger($supplier);
 
+        $filter = $request->input('filter');
+        if ($filter && $filter !== 'all') {
+            $entries = collect($ledger['entries'] ?? []);
+            $filtered = $entries->filter(function ($entry) use ($filter) {
+                $type = $entry['type'] ?? '';
+                $eventKind = $entry['event_kind'] ?? '';
+                $displayType = $entry['display_type'] ?? '';
+                $badge = $entry['badge_label'] ?? '';
+                
+                switch ($filter) {
+                    case 'purchase':
+                        return $type === 'purchase' || $displayType === 'Nhập hàng' || str_contains($eventKind, 'purchase');
+                    case 'payment':
+                        return $type === 'payment' || $displayType === 'Thanh toán' || str_contains($eventKind, 'payment');
+                    case 'return':
+                        return $type === 'return' || $displayType === 'Trả hàng nhập' || str_contains($eventKind, 'return') || str_contains($eventKind, 'sales_return');
+                    case 'sale':
+                        return $displayType === 'Bán hàng' || $eventKind === 'customer_sale' || str_contains($eventKind, 'customer_sale') || ($badge === 'Phải thu KH' && ($type === 'sale' || $type === 'invoice'));
+                    case 'customer_payment':
+                        return $displayType === 'Khách thanh toán' || $displayType === 'Thanh toán hóa đơn' || $eventKind === 'customer_payment' || ($badge === 'Phải thu KH' && $type === 'payment');
+                    case 'adjustment':
+                        return $displayType === 'Điều chỉnh' || $eventKind === 'virtual_opening_balance' || $badge === 'Số dư đầu kỳ' || $type === 'adjustment';
+                    case 'offset':
+                        return $displayType === 'Cấn trừ' || $eventKind === 'debt_offset' || $eventKind === 'debt_offset_cancel' || $type === 'offset' || $type === 'offset_cancel';
+                    default:
+                        return true;
+                }
+            });
+            $ledger['entries'] = $filtered->values()->all();
+        }
+
         // HOTFIX FOLLOW-UP — opt-in server-side pagination matching
         // KiotViet (10 rows per page). Caller activates by sending
         // ?page=N. Without that param, the full ledger is returned
@@ -719,6 +750,7 @@ class SupplierController extends Controller
         $response = [
             'entries' => $pagedEntries,
             'summary' => [
+                'current_debt'                => $usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt,
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
                 'customer_receivable_balance' => $customerDebt,
                 'supplier_payable_balance'    => $supplierDebt,

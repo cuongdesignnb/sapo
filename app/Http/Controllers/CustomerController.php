@@ -585,6 +585,40 @@ class CustomerController extends Controller
     {
         $ledger = app(\App\Services\PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
 
+        $filter = $request->input('filter');
+        if ($filter && $filter !== 'all') {
+            $entries = collect($ledger['entries'] ?? []);
+            $filtered = $entries->filter(function ($entry) use ($filter) {
+                $type = $entry['type'] ?? '';
+                $eventKind = $entry['event_kind'] ?? '';
+                $displayType = $entry['display_type'] ?? '';
+                $badge = $entry['badge_label'] ?? '';
+                
+                switch ($filter) {
+                    case 'sale':
+                        return $displayType === 'Bán hàng' || $eventKind === 'customer_sale';
+                    case 'payment':
+                        return $displayType === 'Khách thanh toán' || $eventKind === 'customer_payment' || $type === 'customer_payment';
+                    case 'receipt':
+                    case 'invoice_payment':
+                        return $displayType === 'Thanh toán hóa đơn' || $eventKind === 'invoice_payment' || $type === 'invoice_payment' || $type === 'payment';
+                    case 'return':
+                        return $displayType === 'Trả hàng bán' || $eventKind === 'sales_return' || $type === 'return';
+                    case 'purchase':
+                        return str_contains($eventKind, 'supplier_mirror_purchase') || $type === 'purchase' || ($badge === 'Phải trả NCC' && $type === 'purchase');
+                    case 'supplier_payment':
+                        return str_contains($eventKind, 'supplier_mirror_payment') || ($type === 'payment' && $badge === 'Phải trả NCC') || $type === 'supplier_payment';
+                    case 'adjustment':
+                        return $displayType === 'Điều chỉnh' || $eventKind === 'virtual_opening_balance' || $badge === 'Số dư đầu kỳ' || $type === 'adjustment';
+                    case 'offset':
+                        return $displayType === 'Cấn trừ' || $eventKind === 'debt_offset' || $eventKind === 'debt_offset_cancel' || $type === 'offset' || $type === 'offset_cancel';
+                    default:
+                        return true;
+                }
+            });
+            $ledger['entries'] = $filtered->values()->all();
+        }
+
         // HOTFIX FOLLOW-UP — opt-in server-side pagination to match KiotViet
         // (10/page). Caller activates by sending ?page=N; without that
         // param, the full ledger is returned for backward compat with

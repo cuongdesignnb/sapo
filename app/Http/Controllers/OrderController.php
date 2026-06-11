@@ -51,10 +51,15 @@ class OrderController extends Controller
 
         $query = Order::with(['customer', 'branch', 'items.product'])
             ->when($request->filled('has_debt'), function ($q) use ($request) {
-                if ((string) $request->input('has_debt') === '1') {
-                    $q->whereColumn('total_payment', '>', 'amount_paid');
+                $hasDebt = (string) $request->input('has_debt') === '1';
+                $invoicePaidSubquery = \App\Models\Invoice::selectRaw('COALESCE(SUM(customer_paid - order_deposit_applied_amount), 0)')
+                    ->whereColumn('order_id', 'orders.id')
+                    ->where('status', '!=', 'cancelled');
+
+                if ($hasDebt) {
+                    $q->whereRaw("total_payment > amount_paid + ({$invoicePaidSubquery->toSql()})", $invoicePaidSubquery->getBindings());
                 } else {
-                    $q->whereColumn('total_payment', '<=', 'amount_paid');
+                    $q->whereRaw("total_payment <= amount_paid + ({$invoicePaidSubquery->toSql()})", $invoicePaidSubquery->getBindings());
                 }
             });
 

@@ -31,7 +31,7 @@ class InvoiceDetailPaymentBreakdownTest extends TestCase
         $this->customer = Customer::create([
             'code'        => 'KH-' . uniqid(),
             'name'        => 'Test Customer Breakdown',
-            'phone'       => '0912345678',
+            'phone'       => '09' . rand(10000000, 99999999),
             'debt_amount' => 0,
             'total_spent' => 0,
         ]);

@@ -20,92 +20,20 @@ class PartnerFinancialTimelineService
 {
     public function buildForCustomer(Customer $customer): array
     {
-        $hasSupplierColumn = Schema::hasColumn('customers', 'supplier_debt_amount');
-        $isDualRole = (bool) ($customer->is_customer && ($hasSupplierColumn ? $customer->is_supplier : false));
-
-        $customerDebts = CustomerDebt::query()
-            ->where('customer_id', $customer->id)
-            ->orderBy('recorded_at')
-            ->orderBy('id')
-            ->get();
-
-        $hasCustomerLedger = $customerDebts->isNotEmpty();
-        [$ledgerEntries, $ledgerEntriesRaw] = $this->buildCustomerLedgerEntries($customerDebts);
-
-        $legacyEntries = $hasCustomerLedger
-            ? $this->buildCustomerLegacyReferenceEntries($customer, $customerDebts)
-            : $this->buildCustomerLegacyAffectingEntries($customer);
-
-        $supplierEntries = $isDualRole
-            ? $this->buildSupplierDocumentEntriesForCustomerScreen($customer)
-                ->concat($this->buildSupplierReferenceEntries($customer))
-                ->values()
-            : collect();
-
-        $ledgerCodes = $ledgerEntries->pluck('code')->filter()->map(fn ($code) => (string) $code)->all();
-        $legacyFiltered = $legacyEntries
-            ->filter(fn ($entry) => !in_array((string) ($entry['code'] ?? ''), $ledgerCodes, true))
-            ->values();
-
-        $combined = $ledgerEntries
-            ->concat($legacyFiltered)
-            ->concat($supplierEntries)
-            ->values();
-
-        $customerDebt = (float) ($customer->debt_amount ?? 0);
-        $supplierDebt = $hasSupplierColumn ? (float) ($customer->supplier_debt_amount ?? 0) : 0.0;
-        $netDebt = $customerDebt - $supplierDebt;
-        $combined = $this->injectCustomerVirtualOpeningBalance($combined, $customer, $netDebt);
-        [$computedEntries, $ledgerBalance] = $this->computeRunningBalance($combined);
-        $displayFinalBalance = (float) ($computedEntries->sortBy(fn ($entry) => $this->timestamp($entry))->last()['customer_display_running_balance'] ?? 0.0);
-        $virtualOpening = $computedEntries->firstWhere('is_virtual_opening', true);
-        $hasVirtualOpening = (bool) $virtualOpening;
-        $reconcile = $this->buildDisplayReconcilePayload(
-            $netDebt,
-            $ledgerBalance,
-            $netDebt,
-            $displayFinalBalance,
-            $hasVirtualOpening,
-            'Nợ hiện tại'
-        );
-
-        return [
-            'entries' => $computedEntries->sortByDesc(fn ($entry) => $this->timestamp($entry))->values(),
-            'ledger_entries' => $ledgerEntriesRaw->sortByDesc(fn ($entry) => $this->timestamp($entry))->values(),
-            'legacy_entries' => $legacyEntries->sortByDesc(fn ($entry) => $this->timestamp($entry))->values(),
-            'reconcile' => $reconcile,
-            'summary' => array_merge([
-                // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
-                'customer_receivable_balance' => $customerDebt,
-                'supplier_payable_balance'    => $supplierDebt,
-                'partner_net_position'        => $netDebt,
-                'has_debt_offset_voucher'     => $this->hasActiveDebtOffsetVoucher($customer),
-                'is_actual_offset'            => false,
-                'is_net_view'                 => true,
-                'display_timeline_mode'        => true,
-                'has_virtual_opening_balance'  => $hasVirtualOpening,
-                'virtual_opening_balance'      => (float) ($virtualOpening['customer_display_effect'] ?? 0.0),
-                'display_balance_target'       => $netDebt,
-                'display_balance_final'        => $displayFinalBalance,
-
-                // Backward-compatible keys (FE + existing tests still read these)
-                'net' => $netDebt,
-                'current_debt' => $netDebt,
-                'customer_debt_amount' => $customerDebt,
-                'supplier_debt_amount' => $supplierDebt,
-                'net_debt_amount' => $netDebt,
-                'net_debt_direction' => $netDebt > 0
-                    ? 'customer_owes_store'
-                    : ($netDebt < 0 ? 'store_owes_customer_supplier' : 'settled'),
-                'is_dual_role' => $isDualRole,
-                'source' => 'partner_financial_timeline',
-                'count' => $computedEntries->count(),
-                'ledger_count' => $ledgerEntriesRaw->count(),
-                'legacy_count' => $legacyEntries->count(),
-                'supplier_count' => $supplierEntries->count(),
-                'dedup_skipped' => $legacyEntries->count() - $legacyFiltered->count(),
-            ], []),
-        ];
+        $ledger = app(PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
+        
+        $ledger['ledger_entries'] = collect();
+        $ledger['legacy_entries'] = collect();
+        
+        if (isset($ledger['summary'])) {
+            $ledger['summary']['ledger_count'] = 0;
+            $ledger['summary']['legacy_count'] = 0;
+            $ledger['summary']['supplier_count'] = 0;
+            $ledger['summary']['dedup_skipped'] = 0;
+            $ledger['summary']['source'] = 'partner_financial_timeline';
+        }
+        
+        return $ledger;
     }
 
     /**

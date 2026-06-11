@@ -131,6 +131,7 @@ const getCustomerSalesReturnEntries = (customerId) => {
 
 // HOTFIX FOLLOW-UP — paginated debt-history (KiotViet 10/page).
 const debtHistoryPage = reactive({});       // { [customerId]: 1, ... }
+const customerDebtFilter = reactive({});     // { [customerId]: 'all', ... }
 const debtHistoryPerPage = 10;
 const shouldShowDebtReconcileWarning = (reconcile) =>
     reconcile?.severity === "warning" || reconcile?.user_warning === true;
@@ -141,16 +142,22 @@ const loadDebtHistory = async (customerId, page = null) => {
     tabLoading[customerId] = true;
     const targetPage = page ?? debtHistoryPage[customerId] ?? 1;
     debtHistoryPage[customerId] = targetPage;
+    const filter = customerDebtFilter[customerId] ?? 'all';
     try {
         const { data } = await axios.get(
             `/customers/${customerId}/debt-history`,
-            { params: { page: targetPage, per_page: debtHistoryPerPage } },
+            { params: { page: targetPage, per_page: debtHistoryPerPage, filter } },
         );
         debtHistoryData[customerId] = data;
     } catch (e) {
         debtHistoryData[customerId] = { entries: [], pagination: { total: 0, last_page: 1, current_page: 1, from: 0, to: 0 } };
     }
     tabLoading[customerId] = false;
+};
+
+const onCustomerDebtFilterChange = (customerId, filterValue) => {
+    customerDebtFilter[customerId] = filterValue;
+    loadDebtHistory(customerId, 1);
 };
 
 const changeDebtHistoryPage = (customerId, newPage) => {
@@ -2284,25 +2291,36 @@ const createdDateRange = computed({
                                                     class="flex items-center justify-end mb-3"
                                                 >
                                                     <select
+                                                        :value="customerDebtFilter[customer.id] || 'all'"
+                                                        @change="onCustomerDebtFilterChange(customer.id, $event.target.value)"
                                                         class="border border-gray-300 rounded px-3 py-1.5 text-[13px] text-gray-600 focus:outline-none focus:border-blue-400"
                                                     >
-                                                        <option>
+                                                        <option value="all">
                                                             Tất cả giao dịch
                                                         </option>
-                                                        <option>
+                                                        <option value="sale">
                                                             Bán hàng
                                                         </option>
-                                                        <option>
+                                                        <option value="payment">
                                                             Khách thanh toán
                                                         </option>
-                                                        <option>
-                                                            Nhập hàng
+                                                        <option value="receipt">
+                                                            Thu nợ
                                                         </option>
-                                                        <option>
+                                                        <option value="return">
+                                                            Trả hàng
+                                                        </option>
+                                                        <option value="purchase">
+                                                            Nhập hàng từ đối tác
+                                                        </option>
+                                                        <option value="supplier_payment">
                                                             Thanh toán NCC
                                                         </option>
-                                                        <option>
-                                                            Trả hàng
+                                                        <option value="adjustment">
+                                                            Điều chỉnh
+                                                        </option>
+                                                        <option value="offset">
+                                                            Cấn trừ
                                                         </option>
                                                     </select>
                                                 </div>

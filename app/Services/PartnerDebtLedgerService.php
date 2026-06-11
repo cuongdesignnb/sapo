@@ -392,7 +392,7 @@ class PartnerDebtLedgerService
         );
 
         return [
-            'entries' => $ledger->values(),
+            'entries' => $ledger->sortByDesc(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))->values(),
             'closing_balance' => $balance,
             'reconcile' => $reconcile,
             'summary' => [
@@ -515,8 +515,8 @@ class PartnerDebtLedgerService
         if ($isDualRole) {
             $supplierLedger = $this->buildSupplierPayableLedger($customer);
             foreach ($supplierLedger['entries'] as $supEntry) {
-                // Mirror sign: customer_effect = -1 * supplier_effect
                 $affects = (bool) ($supEntry['affects_debt_balance'] ?? true);
+                
                 $supplierDisplayEffect = $this->firstNumeric($supEntry, [
                     'supplier_display_effect',
                     'display_effect',
@@ -603,7 +603,7 @@ class PartnerDebtLedgerService
             ->exists();
 
         return [
-            'entries' => $computedEntries->sortByDesc(fn ($entry) => $this->timestamp($entry))->values(),
+            'entries' => $computedEntries->sortByDesc(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))->values(),
             'reconcile' => $reconcile,
             'summary' => [
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
@@ -673,14 +673,15 @@ class PartnerDebtLedgerService
                     'financial_effect',
                     'customer_effect',
                 ], 0.0);
-                [$partnerDisplayEffect, $partnerBalanceEffect] = $this->resolveSupplierPartnerEffects($entry, $sourceLedger);
+                [$partnerDisplayEffect, $partnerLedgerBalanceEffect, $partnerDisplayBalanceEffect] = $this->resolveSupplierPartnerEffects($entry, $sourceLedger);
 
                 $entry['orientation'] = 'supplier';
                 $entry['display_effect'] = $partnerDisplayEffect;
                 $entry['financial_effect'] = $partnerDisplayEffect;
-                $entry['balance_effect'] = $partnerBalanceEffect;
+                $entry['balance_effect'] = $partnerLedgerBalanceEffect;
                 $entry['supplier_display_effect'] = $partnerDisplayEffect;
-                $entry['supplier_balance_effect'] = $partnerBalanceEffect;
+                $entry['supplier_balance_effect'] = $partnerLedgerBalanceEffect;
+                $entry['supplier_display_balance_effect'] = $partnerDisplayBalanceEffect;
                 $entry['supplier_partner_effect'] = $partnerDisplayEffect;
                 $entry['partner_effect'] = $partnerDisplayEffect;
                 $entry['affects_partner_net'] = $affects;
@@ -716,10 +717,10 @@ class PartnerDebtLedgerService
         $supplierOrientedBalance = -1 * $partnerNetPosition;
         $entries = $this->injectSupplierVirtualOpeningBalance($entries, $partner, $supplierOrientedBalance, true);
         $entries = $this->computeSupplierDisplayRunningBalance($entries, true)
-            ->sortByDesc(fn ($entry) => $this->timestamp($entry))
+            ->sortByDesc(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))
             ->values();
 
-        $chronologicalEntries = $entries->sortBy(fn ($entry) => $this->timestamp($entry))->values();
+        $chronologicalEntries = $entries->sortBy(fn ($entry) => $this->timestamp($entry) . '-' . ($entry['id'] ?? ''))->values();
         $virtualOpening = $chronologicalEntries->firstWhere('is_virtual_opening', true);
         $hasVirtualOpening = (bool) $virtualOpening;
         $displayFinalBalance = (float) ($chronologicalEntries->last()['supplier_display_running_balance'] ?? 0.0);
@@ -815,13 +816,19 @@ class PartnerDebtLedgerService
                 'financial_effect',
                 'supplier_effect',
             ], 0.0);
-            $balance = $this->firstNumeric($entry, [
+            $ledger = $this->firstNumeric($entry, [
                 'supplier_balance_effect',
                 'balance_effect',
                 'supplier_effect',
             ], 0.0);
+            $displayBalance = $this->firstNumeric($entry, [
+                'supplier_display_balance_effect',
+                'supplier_display_effect',
+                'display_effect',
+                'supplier_effect',
+            ], 0.0);
 
-            return [$display, $balance];
+            return [$display, $ledger, $displayBalance];
         }
 
         $customerDisplay = $this->firstNumeric($entry, [
@@ -831,13 +838,21 @@ class PartnerDebtLedgerService
             'customer_effect',
             'amount',
         ], 0.0);
-        $customerBalance = $this->firstNumeric($entry, [
+        $customerLedger = $this->firstNumeric($entry, [
+            'customer_balance_effect',
+            'balance_effect',
+            'customer_effect',
+        ], 0.0);
+        $customerDisplayBalance = $this->firstNumeric($entry, [
+            'customer_display_balance_effect',
+            'customer_display_effect',
+            'display_effect',
             'customer_balance_effect',
             'balance_effect',
             'customer_effect',
         ], 0.0);
 
-        return [-1 * $customerDisplay, -1 * $customerBalance];
+        return [-1 * $customerDisplay, -1 * $customerLedger, -1 * $customerDisplayBalance];
     }
 
     // ==========================================
@@ -942,12 +957,6 @@ class PartnerDebtLedgerService
                     ->where('type', 'receipt')
                     ->where('target_type', 'Khách hàng')
                     ->where('target_id', $customer->id)
-                    ->where(function ($q) use ($invoice) {
-                        // Cash flow must not be filtered out
-                        $q->where('reference_type', '!=', 'Invoice')
-                          ->orWhereNull('reference_type')
-                          ->orWhere('reference_code', '!=', $invoice->code);
-                    })
                     ->where(function ($q) use ($invoice, $orderCode) {
                         $q->where('reference_code', $invoice->code)
                           ->orWhere('description', 'like', '%' . $invoice->code . '%');
@@ -973,6 +982,9 @@ class PartnerDebtLedgerService
                     ->exists();
 
                 $paymentLineShouldAffectBalance = !$hasCustomerLedger && !$hasLedgerForInvoice && !$hasRealPaymentForInvoice;
+                $displayEffect = -(float) $invoice->customer_paid;
+                $balanceEffect = $paymentLineShouldAffectBalance ? -(float) $invoice->customer_paid : 0.0;
+                $displayBalanceEffect = $hasRealPaymentForInvoice ? 0.0 : -(float) $invoice->customer_paid;
 
                 $entries->push($this->entry([
                     'id' => 'invpay-' . $invoice->id,
@@ -982,12 +994,13 @@ class PartnerDebtLedgerService
                     'domain' => 'customer',
                     'document_amount' => (float) $invoice->customer_paid,
                     'amount' => (float) $invoice->customer_paid,
-                    'display_effect' => -(float) $invoice->customer_paid,
-                    'financial_effect' => -(float) $invoice->customer_paid,
-                    'balance_effect' => $paymentLineShouldAffectBalance ? -(float) $invoice->customer_paid : 0.0,
-                    'customer_display_effect' => -(float) $invoice->customer_paid,
-                    'customer_balance_effect' => $paymentLineShouldAffectBalance ? -(float) $invoice->customer_paid : 0.0,
-                    'customer_effect' => $paymentLineShouldAffectBalance ? -(float) $invoice->customer_paid : 0.0,
+                    'display_effect' => $displayEffect,
+                    'financial_effect' => $displayEffect,
+                    'balance_effect' => $balanceEffect,
+                    'customer_display_effect' => $displayEffect,
+                    'customer_display_balance_effect' => $displayBalanceEffect,
+                    'customer_balance_effect' => $balanceEffect,
+                    'customer_effect' => $balanceEffect,
                     'affects_debt_balance' => $paymentLineShouldAffectBalance,
                     'is_reference_only' => !$paymentLineShouldAffectBalance,
                     'source' => !$paymentLineShouldAffectBalance || $hasCustomerLedger ? 'reference' : 'legacy',
@@ -1126,8 +1139,8 @@ class PartnerDebtLedgerService
             ->whereNotIn('reference_type', ['DebtOffset', 'DebtOffsetCancel'])
             ->orderBy('created_at')
             ->get()
-            ->filter(function ($cashFlow) use ($invoiceCodes) {
-                return !($cashFlow->reference_type === 'Invoice' && in_array($cashFlow->reference_code, $invoiceCodes, true));
+            ->filter(function ($cashFlow) {
+                return true;
             })
             ->map(function ($cashFlow) use ($hasCustomerLedger) {
                 $businessTime = $this->normalizeDisplayTime($cashFlow->time, $cashFlow->created_at);

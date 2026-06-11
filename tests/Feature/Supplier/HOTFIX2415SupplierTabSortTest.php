@@ -124,7 +124,7 @@ class HOTFIX2415SupplierTabSortTest extends TestCase
 
         // Backend MUST keep the running balance chronological — flipping that
         // would break debt_remain. Sort by created_at asc and verify it grows.
-        $chronological = $entries->sortBy('created_at')->values();
+        $chronological = $entries->sortBy(fn($e) => $e['time'] ?? $e['created_at'])->values();
         $expected = 0;
         foreach ($chronological as $entry) {
             $expected += (float) ($entry['supplier_effect'] ?? 0);
