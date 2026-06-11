@@ -637,6 +637,8 @@ const mergeModal = reactive({
     searchResults: [],
     searching: false,
     selected: null,
+    preview: null,
+    previewing: false,
     submitting: false,
 });
 
@@ -647,12 +649,14 @@ const openMergeModal = (supplier) => {
     mergeModal.searchQuery = '';
     mergeModal.searchResults = [];
     mergeModal.selected = null;
+    mergeModal.preview = null;
     mergeModal.submitting = false;
 };
 
 const searchMergeTarget = () => {
     clearTimeout(mergeSearchTimeout);
     mergeModal.selected = null;
+    mergeModal.preview = null;
     if (!mergeModal.searchQuery || mergeModal.searchQuery.length < 1) {
         mergeModal.searchResults = [];
         return;
@@ -675,9 +679,21 @@ const searchMergeTarget = () => {
     }, 300);
 };
 
-const selectMergeTarget = (target) => {
+const selectMergeTarget = async (target) => {
     mergeModal.selected = target;
     mergeModal.searchResults = [];
+    mergeModal.preview = null;
+    mergeModal.previewing = true;
+    try {
+        const { data } = await axios.get(`/customers/${mergeModal.source.id}/merge-preview`, {
+            params: { target_id: target.id },
+        });
+        mergeModal.preview = data;
+    } catch (e) {
+        alert(e.response?.data?.message || 'Không thể tải preview gộp đối tác.');
+    } finally {
+        mergeModal.previewing = false;
+    }
 };
 
 const submitMerge = () => {
@@ -2185,20 +2201,25 @@ const submitActivate = (supplier) => {
                     <!-- Preview after merge -->
                     <div v-if="mergeModal.selected" class="bg-gray-50 border border-gray-300 rounded-lg p-4">
                         <div class="text-sm font-bold text-gray-700 mb-2">Thông tin sau khi gộp</div>
+                        <div v-if="mergeModal.previewing" class="text-sm text-gray-400 mb-2">Đang tính số dư...</div>
                         <div class="grid grid-cols-2 gap-2 text-sm">
                             <div>Nợ cần thu (KH):</div>
-                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.debt_amount || 0) + (mergeModal.source?.debt_amount || 0)) }}</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview?.after?.debt_amount || 0) }}</div>
                             <div>Nợ cần trả (NCC):</div>
-                            <div class="font-bold text-right">{{ formatCurrency((mergeModal.selected.supplier_debt_amount || 0) + (mergeModal.source?.supplier_debt_amount || 0)) }}</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview?.after?.supplier_debt_amount || 0) }}</div>
+                            <div>Ròng màn khách:</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview?.after?.customer_net_position || 0) }}</div>
+                            <div>Ròng màn NCC:</div>
+                            <div class="font-bold text-right">{{ formatCurrency(mergeModal.preview?.after?.supplier_net_position || 0) }}</div>
                         </div>
-                        <div class="text-xs text-gray-500 mt-2">NCC <strong>{{ mergeModal.source?.name }}</strong> sẽ bị xóa, mọi giao dịch sẽ chuyển sang <strong>{{ mergeModal.selected.name }}</strong>.</div>
+                        <div class="text-xs text-gray-500 mt-2">Hồ sơ nguồn sẽ chuyển sang không hoạt động. Marker gộp có giá trị 0 và không phát sinh công nợ mới.</div>
                     </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
                     <button @click="mergeModal.show = false" class="px-5 py-2 border border-gray-300 rounded text-gray-700 font-medium hover:bg-gray-50">Bỏ qua</button>
                     <button
                         @click="submitMerge"
-                        :disabled="!mergeModal.selected || mergeModal.submitting"
+                        :disabled="!mergeModal.selected || !mergeModal.preview || mergeModal.previewing || mergeModal.submitting"
                         class="px-5 py-2 rounded text-white font-medium bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {{ mergeModal.submitting ? 'Đang gộp...' : 'Xác nhận gộp' }}

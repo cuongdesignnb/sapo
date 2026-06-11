@@ -7,6 +7,11 @@ import QuickCreateCustomerModal from '@/Components/QuickCreateCustomerModal.vue'
 import QuickCreateProductModal from '@/Components/QuickCreateProductModal.vue';
 import DateTimePicker from '@/Components/DateTimePicker.vue';
 import MoneyInput from '@/Components/MoneyInput.vue';
+import {
+    findOrderProcessTabIndex,
+    hydrateOrderProcessTab,
+    resetPosSaleTab,
+} from '@/utils/orderPosHydration.js';
 
 const props = defineProps({
     employees: Array,
@@ -73,6 +78,7 @@ const createNewTab = (type = 'sale') => ({
     source_order_id: null,
     source_order_code: '',
     orderDepositAmount: 0,
+    orderPaymentSummary: null,
     delivery: {
         is_delivery: false,
         delivery_mode: 'none',       // 'none' | 'self' | 'partner'
@@ -253,87 +259,27 @@ const checkAndHydrateOrderFromUrl = async () => {
             if (res.data && res.data.success) {
                 const orderData = res.data.order;
                 
-                // Check if this order tab already exists
-                const existingIndex = tabs.value.findIndex(t => t.source_order_id === orderData.id);
-                if (existingIndex !== -1) {
-                    activeTabIndex.value = existingIndex;
-                    hydrated = true;
-                    return;
-                }
-
-                // If first tab is empty and has no customer, we can reuse it
+                const existingIndex = findOrderProcessTabIndex(tabs.value, orderData);
                 let tabToUse;
-                if (tabs.value.length === 1 && tabs.value[0].cart.length === 0 && !tabs.value[0].selectedCustomer && tabs.value[0].mode === 'normal') {
+                let targetIndex;
+                if (existingIndex !== -1) {
+                    targetIndex = existingIndex;
+                    tabToUse = tabs.value[existingIndex];
+                } else if (tabs.value.length === 1 && tabs.value[0].cart.length === 0 && !tabs.value[0].selectedCustomer && tabs.value[0].mode === 'normal') {
+                    targetIndex = 0;
                     tabToUse = tabs.value[0];
                 } else {
                     tabToUse = createNewTab('sale');
                     tabs.value.push(tabToUse);
-                    activeTabIndex.value = tabs.value.length - 1;
+                    targetIndex = tabs.value.length - 1;
                 }
 
-                // Prefill tab details
-                tabToUse.mode = 'process_order';
-                tabToUse.source_order_id = orderData.id;
-                tabToUse.source_order_code = orderData.code;
-                tabToUse.selectedCustomer = orderData.customer;
-                tabToUse.discount = orderData.totals.discount;
-                tabToUse.orderDepositAmount = orderData.totals.amount_paid;
-                tabToUse.note = orderData.note;
-                tabToUse.saleMode = orderData.delivery.is_delivery ? 'delivery' : 'normal';
-                
-                // Delivery fields
-                tabToUse.delivery = {
-                    is_delivery: orderData.delivery.is_delivery,
-                    delivery_mode: orderData.delivery.delivery_mode || (orderData.delivery.is_delivery ? 'self' : 'none'),
-                    delivery_partner: orderData.delivery.delivery_partner || '',
-                    tracking_code: orderData.delivery.tracking_code || '',
-                    delivery_fee: orderData.delivery.delivery_fee || 0,
-                    cod_amount: orderData.delivery.cod_amount || 0,
-                    receiver_name: orderData.delivery.receiver_name || orderData.customer?.name || '',
-                    receiver_phone: orderData.delivery.receiver_phone || orderData.customer?.phone || '',
-                    receiver_address: orderData.delivery.receiver_address || orderData.customer?.address || '',
-                    receiver_ward: orderData.delivery.receiver_ward || '',
-                    receiver_district: orderData.delivery.receiver_district || '',
-                    receiver_city: orderData.delivery.receiver_city || '',
-                    weight: orderData.delivery.weight || 0,
-                    delivery_note: orderData.delivery.delivery_note || '',
-                };
-
-                // Cart items
-                tabToUse.cart = orderData.items.map(item => {
-                    const cartItem = {
-                        product: {
-                            id: item.product_id,
-                            sku: item.sku,
-                            name: item.name,
-                            cost_price: item.cost_price || 0,
-                            retail_price: item.price,
-                            has_serial: item.has_serial,
-                            stock_quantity: item.stock_quantity,
-                        },
-                        quantity: item.remaining_quantity,
-                        targetQuantity: item.remaining_quantity,
-                        orderedQuantity: item.qty,
-                        fulfilledQuantity: item.fulfilled_quantity,
-                        orderItemId: item.order_item_id,
-                        price: item.price,
-                        discount: item.discount,
-                        is_serial_product: item.has_serial,
-                        serials: [],
-                        serialInput: '',
-                        showSerialDropdown: false,
-                        allAvailableSerials: [],
-                        availableSerials: [],
-                        serialLoading: false,
-                    };
-                    if (item.has_serial) {
-                        loadSerialsForProduct(cartItem);
-                    }
-                    return cartItem;
+                tabToUse = hydrateOrderProcessTab(tabToUse, orderData);
+                tabs.value[targetIndex] = tabToUse;
+                activeTabIndex.value = targetIndex;
+                tabToUse.cart.forEach((item) => {
+                    if (item.is_serial_product) loadSerialsForProduct(item);
                 });
-
-                // Default pay additional: remaining debt (or 0 if negative)
-                tabToUse.customerPaid = Math.max(0, orderData.totals.remaining);
 
                 saveDraft();
                 hydrated = true;
@@ -712,7 +658,11 @@ const totalAmount = computed(() => {
 });
 
 const priorDeposit = computed(() => {
-    return activeTab.value ? (activeTab.value.orderDepositAmount || 0) : 0;
+    if (!activeTab.value) return 0;
+    return Math.min(
+        Number(activeTab.value.orderDepositAmount) || 0,
+        Math.max(0, Number(totalAmount.value) || 0),
+    );
 });
 
 const totalPaidOverall = computed(() => {
@@ -722,6 +672,13 @@ const totalPaidOverall = computed(() => {
 const remainingDebt = computed(() => {
     return totalAmount.value - totalPaidOverall.value;
 });
+
+const orderPaymentSummary = computed(() => activeTab.value?.orderPaymentSummary || {});
+const orderPaidCumulative = computed(() => Number(orderPaymentSummary.value.order_paid_total) || 0);
+const originalOrderDeposit = computed(() => Number(orderPaymentSummary.value.original_deposit) || 0);
+const paidAfterDeposit = computed(() => Number(orderPaymentSummary.value.paid_after_deposit) || 0);
+const customerReceivableBefore = computed(() => Number(orderPaymentSummary.value.customer_receivable_before) || 0);
+const customerReceivableAfter = computed(() => customerReceivableBefore.value + remainingDebt.value);
 
 const changeDue = computed(() => {
     if (activeTab.value && activeTab.value.mode === 'process_order') {
@@ -735,6 +692,14 @@ const toastMsg = ref('');
 
 // Helper to submit the order processing API
 const submitProcessOrderAPI = async (keepRemaining) => {
+    if (remainingDebt.value < 0) {
+        const confirmed = window.confirm(
+            `Khách đang trả dư ${formatCurrency(Math.abs(remainingDebt.value))}. `
+            + 'Khoản này sẽ được ghi nhận là tiền khách dư/công nợ âm. Tiếp tục?',
+        );
+        if (!confirmed) return;
+    }
+
     isCheckingOut.value = true;
     try {
         const processPayload = {
@@ -928,17 +893,11 @@ const processCheckout = async () => {
 
 const resetAfterCheckout = () => {
     if (tabs.value.length > 1) {
-        closeTab(activeTabIndex.value);
+        tabs.value.splice(activeTabIndex.value, 1);
+        activeTabIndex.value = Math.min(activeTabIndex.value, tabs.value.length - 1);
     } else {
-        const t = activeTab.value;
-        t.cart = [];
-        t.discount = 0;
-        t.customerPaid = 0;
-        t.paymentMethod = 'cash';
-        t.bankAccountInfo = '';
-        t.selectedCustomer = null;
-        t.customerQuery = '';
-        t.note = '';
+        tabs.value[0] = resetPosSaleTab(createNewTab);
+        activeTabIndex.value = 0;
     }
     // Reset saleDate to current time after checkout
     const now = new Date();
@@ -1956,17 +1915,49 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     </div>
 
                     <template v-if="activeTab.mode === 'process_order'">
+                        <div class="rounded-lg bg-blue-50 p-3 space-y-2 text-sm">
+                            <div class="flex justify-between font-semibold text-gray-800">
+                                <span>Tổng đơn hàng</span>
+                                <span>{{ formatCurrency(orderPaymentSummary.order_total || totalAmount || 0) }}</span>
+                            </div>
+                            <div class="flex justify-between text-gray-700">
+                                <span>Khách đã trả</span>
+                                <span class="font-semibold">{{ formatCurrency(orderPaidCumulative) }}</span>
+                            </div>
+                            <div class="pl-3 flex justify-between text-xs text-gray-500">
+                                <span>Cọc gốc</span>
+                                <span>{{ formatCurrency(originalOrderDeposit) }}</span>
+                            </div>
+                            <div class="pl-3 flex justify-between text-xs text-gray-500">
+                                <span>Đã thu sau cọc</span>
+                                <span>{{ formatCurrency(paidAfterDeposit) }}</span>
+                            </div>
+                            <div class="flex justify-between text-gray-700">
+                                <span>Còn phải thu trước lần này</span>
+                                <span>{{ formatCurrency(orderPaymentSummary.amount_to_collect_before_this_time || 0) }}</span>
+                            </div>
+                        </div>
                         <div class="flex justify-between items-center text-gray-700 font-medium pt-2">
-                            <span>Khách đã đặt cọc</span>
+                            <span>Cọc áp dụng lần này</span>
                             <span class="font-bold text-gray-800">{{ formatCurrency(priorDeposit || 0) }}</span>
                         </div>
                         <div class="flex justify-between items-center pt-2 text-gray-700 font-medium">
-                            <span>Khách trả thêm</span>
+                            <span>Khách thanh toán lần này</span>
                             <MoneyInput v-model="customerPaid" :min="0" :placeholder="String(Math.max(0, totalAmount - priorDeposit))" input-class="w-32 text-right border-b border-gray-300 focus:border-blue-500 outline-none font-bold text-gray-900" />
                         </div>
-                        <div class="flex justify-between items-center pb-2 text-gray-500 text-sm font-medium">
-                            <span :class="remainingDebt > 0 ? 'text-red-500 font-semibold' : ''">{{ remainingDebt > 0 ? 'Còn nợ' : 'Tiền thừa trả khách' }}</span>
-                            <span :class="remainingDebt > 0 ? 'text-red-500 font-semibold' : ''">{{ formatCurrency(Math.abs(remainingDebt) || 0) }}</span>
+                        <div class="space-y-1 pb-2 text-sm font-medium">
+                            <div class="flex justify-between" :class="remainingDebt > 0 ? 'text-red-600' : remainingDebt < 0 ? 'text-green-600' : 'text-gray-500'">
+                                <span>{{ remainingDebt > 0 ? 'Còn nợ đơn này' : remainingDebt < 0 ? 'Tiền khách trả dư' : 'Còn nợ đơn này' }}</span>
+                                <span>{{ formatCurrency(Math.abs(remainingDebt) || 0) }}</span>
+                            </div>
+                            <div class="flex justify-between text-gray-500">
+                                <span>Nợ KH trước xử lý</span>
+                                <span>{{ formatCurrency(customerReceivableBefore) }}</span>
+                            </div>
+                            <div class="flex justify-between font-semibold" :class="customerReceivableAfter > 0 ? 'text-red-600' : customerReceivableAfter < 0 ? 'text-green-600' : 'text-gray-700'">
+                                <span>Nợ KH sau xử lý</span>
+                                <span>{{ formatCurrency(customerReceivableAfter) }}</span>
+                            </div>
                         </div>
                     </template>
                     <template v-else>

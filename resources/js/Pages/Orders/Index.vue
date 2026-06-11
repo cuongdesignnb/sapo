@@ -8,6 +8,7 @@ import SortableHeader from "@/Components/SortableHeader.vue";
 import MoneyInput from "@/Components/MoneyInput.vue";
 import SidebarFilter from "@/Components/Filters/SidebarFilter.vue";
 import { useFilters } from "@/composables/useFilters.js";
+import { usePermission } from "@/composables/usePermission.js";
 
 const props = defineProps({
     orders: Object,
@@ -16,6 +17,7 @@ const props = defineProps({
     filters: Object,
     filterOptions: Object,
 });
+const { can } = usePermission();
 
 const salesChannels = [
     "Trực tiếp",
@@ -84,6 +86,14 @@ const sidebarConfig = computed(() => [
         type: "select",
         label: "Đặt cọc / công nợ",
         options: props.filterOptions?.debtOptions || [],
+        placeholder: "-- Tất cả --",
+        zone: "main",
+    },
+    {
+        key: "payment_status",
+        type: "select",
+        label: "Trạng thái thanh toán",
+        options: props.filterOptions?.paymentStatusOptions || [],
         placeholder: "-- Tất cả --",
         zone: "main",
     },
@@ -326,7 +336,7 @@ const openProcessModal = (order) => {
 };
 
 const openProcessOrderInPos = (order) => {
-    const key = order?.id || order?.code;
+    const key = order?.code || order?.id;
     if (!key) {
         alert('Không xác định được đơn hàng để xử lý.');
         return;
@@ -541,14 +551,16 @@ const submitProcessOrder = () => {
                             <SortableHeader label="Thời gian" field="created_at" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-2 py-2" @sort="handleSort" />
                             <th class="px-2 py-2">Khách hàng</th>
                             <SortableHeader label="Khách cần trả" field="total_payment" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
-                            <SortableHeader label="Khách đã trả" field="amount_paid" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Khách đã trả" field="order_paid_total" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <SortableHeader label="Còn nợ" field="order_remaining_debt" default-direction="desc" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" align="right" class="px-4 py-2 text-right" @sort="handleSort" />
+                            <th class="px-4 py-2 text-left">Thanh toán</th>
                             <SortableHeader label="Trạng thái" field="status" :current-sort="filters.sort_by" :current-direction="filters.sort_direction" class="px-4 py-2" @sort="handleSort" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         <tr v-if="orders.data.length === 0">
                             <td
-                                colspan="8"
+                                colspan="10"
                                 class="p-16 text-center text-gray-500"
                             >
                                 <div
@@ -651,10 +663,34 @@ const submitProcessOrder = () => {
                                     {{ order.customer?.name || "Khách lẻ" }}
                                 </td>
                                 <td class="px-4 py-2 text-right font-medium">
-                                    {{ formatCurrency(order.total_payment) }}
+                                    {{ formatCurrency(order.order_total ?? order.total_payment) }}
                                 </td>
                                 <td class="px-4 py-2 text-right">
-                                    {{ formatCurrency(order.amount_paid) }}
+                                    {{ formatCurrency(order.order_paid_total ?? order.amount_paid) }}
+                                    <div v-if="Number(order.order_credit_total || 0) > 0" class="text-xs text-green-600">
+                                        Dư {{ formatCurrency(order.order_credit_total) }}
+                                    </div>
+                                </td>
+                                <td class="px-4 py-2 text-right" :class="Number(order.order_remaining_debt || 0) > 0 ? 'text-red-600' : 'text-gray-500'">
+                                    {{ formatCurrency(order.order_remaining_debt || 0) }}
+                                </td>
+                                <td class="px-4 py-2 text-left">
+                                    <span
+                                        class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold"
+                                        :class="{
+                                            'bg-gray-100 text-gray-600': order.payment_status === 'unpaid',
+                                            'bg-orange-100 text-orange-700': order.payment_status === 'partial',
+                                            'bg-green-100 text-green-700': order.payment_status === 'paid',
+                                            'bg-blue-100 text-blue-700': order.payment_status === 'overpaid',
+                                        }"
+                                    >
+                                        {{
+                                            order.payment_status === 'unpaid' ? 'Chưa trả'
+                                                : order.payment_status === 'partial' ? 'Còn nợ'
+                                                : order.payment_status === 'overpaid' ? 'Trả dư'
+                                                : 'Đã trả đủ'
+                                        }}
+                                    </span>
                                 </td>
                                 <td class="px-4 py-2 text-left">
                                     <span
@@ -680,7 +716,7 @@ const submitProcessOrder = () => {
                                 class="border-b-4 border-blue-50"
                             >
                                 <td
-                                    colspan="8"
+                                    colspan="10"
                                     class="p-0 border-0 bg-white shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)]"
                                 >
                                     <div
@@ -1794,7 +1830,7 @@ const submitProcessOrder = () => {
                                                     Đóng
                                                 </button>
                                                 <button
-                                                    v-if="order.status === 'draft' || order.status === 'confirmed'"
+                                                    v-if="can('pos.use') && (order.status === 'draft' || order.status === 'confirmed')"
                                                     @click.stop="openProcessOrderInPos(order)"
                                                     class="bg-green-600 text-white px-4 py-1.5 rounded font-bold hover:bg-green-700 shadow-sm flex items-center gap-1"
                                                 >
