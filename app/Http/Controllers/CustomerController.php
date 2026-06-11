@@ -1342,6 +1342,13 @@ class CustomerController extends Controller
 
             $invoice->load(['customer', 'items.product', 'branch', 'employee']);
 
+            $invoiceTotal = (float) ($invoice->total ?? 0);
+            $totalPaid = (float) ($invoice->customer_paid ?? 0);
+            $depositApplied = (float) ($invoice->order_deposit_applied_amount ?? 0);
+
+            $remainingAmount = max(0.0, $invoiceTotal - $totalPaid);
+            $paidExcludingDeposit = max(0.0, $totalPaid - $depositApplied);
+
             $data = [
                 'id' => $invoice->id,
                 'code' => $invoice->code,
@@ -1352,12 +1359,17 @@ class CustomerController extends Controller
                 'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
                 'branch_name' => $invoice->branch->name ?? '',
                 'note' => $invoice->note,
-                'subtotal' => $invoice->subtotal,
-                'discount' => $invoice->discount,
-                'total' => $invoice->total,
-                'customer_paid' => $invoice->customer_paid,
-                'effective_paid' => $invoice->customer_paid,
-                'debt_amount' => max(0, $invoice->total - $invoice->customer_paid),
+                'subtotal' => (float) $invoice->subtotal,
+                'discount' => (float) $invoice->discount,
+                'total' => $invoiceTotal,
+                'customer_paid' => $totalPaid,
+                'effective_paid' => $totalPaid,
+                'total_paid' => $totalPaid,
+                'order_deposit_applied_amount' => $depositApplied,
+                'paid_excluding_deposit' => $paidExcludingDeposit,
+                'paid_after_invoice' => $paidExcludingDeposit,
+                'remaining_amount' => $remainingAmount,
+                'debt_amount' => $remainingAmount,
                 'payment_method' => $invoice->payment_method,
                 'items' => $invoice->items->map(fn($item) => [
                     'product_code' => $item->product->code ?? '',

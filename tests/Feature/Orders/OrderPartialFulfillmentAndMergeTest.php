@@ -752,8 +752,8 @@ class OrderPartialFulfillmentAndMergeTest extends TestCase
         $this->assertEquals($order->branch_id, $invoice->branch_id);
 
         // Assert stock movement branch_id
-        $movement = \App\Models\StockMovement::where('reference_type', 'Invoice')
-            ->where('reference_id', $invoice->id)
+        $movement = \App\Models\StockMovement::where('ref_type', 'App\\Models\\Invoice')
+            ->where('ref_id', $invoice->id)
             ->first();
         if ($movement) {
             $this->assertEquals($order->branch_id, $movement->branch_id);

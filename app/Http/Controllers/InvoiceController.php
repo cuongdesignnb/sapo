@@ -594,6 +594,13 @@ class InvoiceController extends Controller
     {
         $invoice->load(['customer', 'items.product']);
 
+        $invoiceTotal = (float) ($invoice->total ?? 0);
+        $totalPaid = (float) ($invoice->customer_paid ?? 0);
+        $depositApplied = (float) ($invoice->order_deposit_applied_amount ?? 0);
+
+        $remainingAmount = max(0.0, $invoiceTotal - $totalPaid);
+        $paidExcludingDeposit = max(0.0, $totalPaid - $depositApplied);
+
         return response()->json([
             'id' => $invoice->id,
             'code' => $invoice->code,
@@ -603,10 +610,16 @@ class InvoiceController extends Controller
             'customer_name' => $invoice->customer->name ?? 'Khách lẻ',
             'customer_code' => $invoice->customer->code ?? '',
             'note' => $invoice->note,
-            'subtotal' => $invoice->subtotal,
-            'discount' => $invoice->discount,
-            'total' => $invoice->total,
-            'customer_paid' => $invoice->customer_paid,
+            'subtotal' => (float) $invoice->subtotal,
+            'discount' => (float) $invoice->discount,
+            'total' => $invoiceTotal,
+            'customer_paid' => $totalPaid,
+            'total_paid' => $totalPaid,
+            'order_deposit_applied_amount' => $depositApplied,
+            'paid_excluding_deposit' => $paidExcludingDeposit,
+            'paid_after_invoice' => $paidExcludingDeposit,
+            'remaining_amount' => $remainingAmount,
+            'debt_amount' => $remainingAmount,
             'delivery_fee' => $invoice->delivery_fee ?? 0,
             'is_delivery' => $invoice->is_delivery,
             'delivery_partner' => $invoice->delivery_partner,

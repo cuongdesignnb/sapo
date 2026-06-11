@@ -37,11 +37,16 @@ class HOTFIXFollowUpDebtHistoryPaginationTest extends TestCase
 
     private function dualRolePartnerWithPurchases(int $purchaseCount): Customer
     {
+        $expectedPayable = 0;
+        for ($i = 1; $i <= $purchaseCount; $i++) {
+            $expectedPayable += 100_000 * $i;
+        }
+
         $partner = Customer::create([
             'code'                 => 'PAG-' . uniqid(),
             'name'                 => 'Pag partner',
             'debt_amount'          => 0,
-            'supplier_debt_amount' => 0,
+            'supplier_debt_amount' => $expectedPayable,
             'is_customer'          => true,
             'is_supplier'          => true,
         ]);

@@ -3967,8 +3967,23 @@ const createdDateRange = computed({
                                 <div v-if="invoiceDetail.data.discount > 0" class="flex justify-between"><span class="text-gray-500">Giảm giá:</span><span class="font-medium text-red-500">-{{ formatCurrency(invoiceDetail.data.discount) }}</span></div>
                                 <div v-if="invoiceDetail.data.delivery_fee > 0" class="flex justify-between"><span class="text-gray-500">Phí giao hàng:</span><span class="font-medium">{{ formatCurrency(invoiceDetail.data.delivery_fee) }}</span></div>
                                 <div class="flex justify-between font-bold text-base border-t pt-1"><span>Tổng cộng:</span><span class="text-blue-600">{{ formatCurrency(invoiceDetail.data.total) }}</span></div>
-                                <div class="flex justify-between"><span class="text-gray-500">Khách đã trả:</span><span class="font-medium">{{ formatCurrency(invoiceDetail.data.customer_paid) }}</span></div>
-                                <div v-if="invoiceDetail.data.total - invoiceDetail.data.customer_paid > 0" class="flex justify-between"><span class="text-gray-500">Còn nợ:</span><span class="font-medium text-red-500">{{ formatCurrency(invoiceDetail.data.total - invoiceDetail.data.customer_paid) }}</span></div>
+                                <div class="flex justify-between"><span class="text-gray-500">Khách đã thanh toán lũy kế:</span><span class="font-medium text-green-600">{{ formatCurrency(invoiceDetail.data.total_paid ?? invoiceDetail.data.customer_paid) }}</span></div>
+                                <div v-if="(invoiceDetail.data.order_deposit_applied_amount ?? 0) > 0" class="flex justify-between pl-4 text-xs text-gray-500">
+                                    <span>- Cọc đơn hàng đã áp dụng:</span>
+                                    <span>{{ formatCurrency(invoiceDetail.data.order_deposit_applied_amount) }}</span>
+                                </div>
+                                <div v-if="(invoiceDetail.data.paid_excluding_deposit ?? 0) > 0 || (invoiceDetail.data.order_deposit_applied_amount ?? 0) > 0" class="flex justify-between pl-4 text-xs text-gray-500">
+                                    <span>- Thanh toán/thu thêm:</span>
+                                    <span>{{ formatCurrency(invoiceDetail.data.paid_excluding_deposit ?? (invoiceDetail.data.customer_paid - (invoiceDetail.data.order_deposit_applied_amount ?? 0))) }}</span>
+                                </div>
+                                <div v-if="(invoiceDetail.data.remaining_amount ?? (invoiceDetail.data.total - invoiceDetail.data.customer_paid)) > 0" class="flex justify-between border-t border-dashed pt-1">
+                                    <span class="text-gray-600 font-medium">Còn phải thu hóa đơn:</span>
+                                    <span class="font-bold text-red-500">{{ formatCurrency(invoiceDetail.data.remaining_amount ?? (invoiceDetail.data.total - invoiceDetail.data.customer_paid)) }}</span>
+                                </div>
+                                <div v-else class="flex justify-between border-t border-dashed pt-1">
+                                    <span class="text-gray-500 font-medium">Trạng thái thanh toán:</span>
+                                    <span class="font-semibold text-green-600">Đã thanh toán đủ</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -4139,14 +4154,26 @@ const createdDateRange = computed({
                                         <span>Khách cần trả (Tổng cộng):</span>
                                         <span class="text-blue-600">{{ formatCurrency(debtVoucherDetailModal.data.total) }}</span>
                                     </div>
-                                    <div class="flex justify-between text-gray-500">
-                                        <span>Khách đã thanh toán:</span>
-                                        <span class="font-semibold text-green-600">{{ formatCurrency(debtVoucherDetailModal.data.customer_paid) }}</span>
-                                    </div>
-                                    <div class="flex justify-between font-bold border-t border-gray-200 pt-2 text-gray-850">
-                                        <span>Dư nợ hóa đơn:</span>
-                                        <span class="text-red-500">{{ formatCurrency(debtVoucherDetailModal.data.debt_amount) }}</span>
-                                    </div>
+                                     <div class="flex justify-between text-gray-500">
+                                         <span>Khách đã thanh toán lũy kế:</span>
+                                         <span class="font-semibold text-green-600">{{ formatCurrency(debtVoucherDetailModal.data.total_paid ?? debtVoucherDetailModal.data.customer_paid) }}</span>
+                                     </div>
+                                     <div v-if="(debtVoucherDetailModal.data.order_deposit_applied_amount ?? 0) > 0" class="flex justify-between pl-4 text-gray-500">
+                                         <span>- Cọc đơn hàng đã áp dụng:</span>
+                                         <span>{{ formatCurrency(debtVoucherDetailModal.data.order_deposit_applied_amount) }}</span>
+                                     </div>
+                                     <div v-if="(debtVoucherDetailModal.data.paid_excluding_deposit ?? 0) > 0 || (debtVoucherDetailModal.data.order_deposit_applied_amount ?? 0) > 0" class="flex justify-between pl-4 text-gray-500">
+                                         <span>- Thanh toán/thu thêm:</span>
+                                         <span>{{ formatCurrency(debtVoucherDetailModal.data.paid_excluding_deposit ?? (debtVoucherDetailModal.data.customer_paid - (debtVoucherDetailModal.data.order_deposit_applied_amount ?? 0))) }}</span>
+                                     </div>
+                                     <div v-if="(debtVoucherDetailModal.data.remaining_amount ?? debtVoucherDetailModal.data.debt_amount) > 0" class="flex justify-between font-bold border-t border-gray-200 pt-2 text-gray-850">
+                                         <span>Còn phải thu hóa đơn:</span>
+                                         <span class="text-red-500">{{ formatCurrency(debtVoucherDetailModal.data.remaining_amount ?? debtVoucherDetailModal.data.debt_amount) }}</span>
+                                     </div>
+                                     <div v-else class="flex justify-between font-bold border-t border-gray-200 pt-2 text-gray-850">
+                                         <span>Trạng thái thanh toán:</span>
+                                         <span class="text-green-600 font-semibold">Đã thanh toán đủ</span>
+                                     </div>
                                 </div>
                             </div>
                         </div>

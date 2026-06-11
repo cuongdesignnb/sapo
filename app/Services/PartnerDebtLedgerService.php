@@ -882,7 +882,7 @@ class PartnerDebtLedgerService
         $invoices = Invoice::query()
             ->where('customer_id', $customer->id)
             ->orderBy('created_at')
-            ->get(['id', 'code', 'total', 'customer_paid', 'status', 'created_at', 'transaction_date']);
+            ->get(['id', 'code', 'total', 'customer_paid', 'status', 'created_at', 'transaction_date', 'order_id']);
 
         foreach ($invoices as $invoice) {
             if ($this->isCancelledStatus($invoice->status)) {
@@ -921,6 +921,59 @@ class PartnerDebtLedgerService
             ]));
 
             if ((float) $invoice->customer_paid > 0) {
+                $hasLedgerForInvoice = CustomerDebt::query()
+                    ->where('customer_id', $customer->id)
+                    ->where(function ($q) use ($invoice) {
+                        $q->where('ref_code', $invoice->code)
+                          ->orWhere('order_id', $invoice->order_id);
+                    })
+                    ->exists();
+
+                $orderCode = null;
+                if ($invoice->order_id) {
+                    $order = \App\Models\Order::find($invoice->order_id);
+                    if ($order) {
+                        $orderCode = $order->code;
+                    }
+                }
+
+
+                $hasRealPaymentForInvoice = CashFlow::query()
+                    ->where('type', 'receipt')
+                    ->where('target_type', 'Khách hàng')
+                    ->where('target_id', $customer->id)
+                    ->where(function ($q) use ($invoice) {
+                        // Cash flow must not be filtered out
+                        $q->where('reference_type', '!=', 'Invoice')
+                          ->orWhereNull('reference_type')
+                          ->orWhere('reference_code', '!=', $invoice->code);
+                    })
+                    ->where(function ($q) use ($invoice, $orderCode) {
+                        $q->where('reference_code', $invoice->code)
+                          ->orWhere('description', 'like', '%' . $invoice->code . '%');
+                        
+                        if ($orderCode) {
+                            $q->orWhere('reference_code', $orderCode)
+                              ->orWhere('description', 'like', '%' . $orderCode . '%');
+                        }
+                        if ($invoice->order_id) {
+                            $q->orWhere(function ($qq) use ($invoice, $orderCode) {
+                                $qq->where('reference_type', 'Order');
+                                if ($orderCode) {
+                                    $qq->where('reference_code', $orderCode);
+                                } else {
+                                    $qq->where('reference_code', (string) $invoice->order_id);
+                                }
+                            });
+                        }
+                    })
+                    ->where(function ($q) {
+                        $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
+                    })
+                    ->exists();
+
+                $paymentLineShouldAffectBalance = !$hasCustomerLedger && !$hasLedgerForInvoice && !$hasRealPaymentForInvoice;
+
                 $entries->push($this->entry([
                     'id' => 'invpay-' . $invoice->id,
                     'code' => 'TTHD' . preg_replace('/^HD/', '', (string) $invoice->code),
@@ -931,16 +984,16 @@ class PartnerDebtLedgerService
                     'amount' => (float) $invoice->customer_paid,
                     'display_effect' => -(float) $invoice->customer_paid,
                     'financial_effect' => -(float) $invoice->customer_paid,
-                    'balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
+                    'balance_effect' => $paymentLineShouldAffectBalance ? -(float) $invoice->customer_paid : 0.0,
                     'customer_display_effect' => -(float) $invoice->customer_paid,
-                    'customer_balance_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
-                    'customer_effect' => $hasCustomerLedger ? 0.0 : -(float) $invoice->customer_paid,
-                    'affects_debt_balance' => !$hasCustomerLedger,
-                    'is_reference_only' => $hasCustomerLedger,
-                    'source' => $hasCustomerLedger ? 'reference' : 'legacy',
+                    'customer_balance_effect' => $paymentLineShouldAffectBalance ? -(float) $invoice->customer_paid : 0.0,
+                    'customer_effect' => $paymentLineShouldAffectBalance ? -(float) $invoice->customer_paid : 0.0,
+                    'affects_debt_balance' => $paymentLineShouldAffectBalance,
+                    'is_reference_only' => !$paymentLineShouldAffectBalance,
+                    'source' => !$paymentLineShouldAffectBalance || $hasCustomerLedger ? 'reference' : 'legacy',
                     'badge_label' => 'Thanh toán',
-                    'badge_title' => $hasCustomerLedger ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
-                    'balance_note' => $hasCustomerLedger ? 'Đã phản ánh trong Số dư đầu kỳ/Gộp công nợ hoặc ledger công nợ, không cộng lại công nợ.' : null,
+                    'badge_title' => !$paymentLineShouldAffectBalance ? 'Chứng từ tham chiếu, không cộng lại số dư công nợ.' : null,
+                    'balance_note' => !$paymentLineShouldAffectBalance ? 'Đã phản ánh qua cash flow hoặc ledger, không cộng lại công nợ.' : null,
                     'display_time' => $businessTime,
                     'time' => $businessTime,
                     'transaction_date' => $invoice->transaction_date,
