@@ -546,13 +546,17 @@ class CustomerPaymentDiscountTest extends TestCase
         $resp = $this->actingAs($this->admin)
             ->postJson("/customers/{$this->customer->id}/debt-payment", [
                 'mode' => 'manual',
+                'amount' => 200000,
                 'allocations' => [
                     [
                         'invoice_id' => $invoice->id,
-                        'amount' => 200000,
+                        'amount' => 150000,
                     ]
                 ],
-            ]);
+            ])
+            ->assertJsonPath('payment.payment_amount', 200000)
+            ->assertJsonPath('payment.allocated_amount', 150000)
+            ->assertJsonPath('payment.unallocated_amount', 50000);
 
         $resp->assertOk();
 
@@ -561,7 +565,7 @@ class CustomerPaymentDiscountTest extends TestCase
         $this->assertEquals(200000, (float) $invoice->customer_paid);
     }
 
-    public function test_auto_debt_payment_rejection_when_no_receivable_invoices(): void
+    public function test_auto_debt_payment_without_invoice_still_records_full_legacy_debt_payment(): void
     {
         // Khách hàng có nợ nhưng không có hóa đơn nào (direct hoặc ledger)
         $this->customer->update(['debt_amount' => 100000]);
@@ -572,16 +576,18 @@ class CustomerPaymentDiscountTest extends TestCase
                 'amount' => 50000,
             ]);
 
-        $resp->assertStatus(422);
+        $resp->assertOk()
+            ->assertJsonPath('payment.payment_amount', 50000)
+            ->assertJsonPath('payment.allocated_amount', 0)
+            ->assertJsonPath('payment.unallocated_amount', 50000);
 
-        // Verify no cash flow created
-        $this->assertDatabaseMissing('cash_flows', [
+        $this->assertDatabaseHas('cash_flows', [
             'target_id' => $this->customer->id,
-            'category' => 'Thu nợ khách hàng',
+            'amount' => 50000,
+            'reference_type' => 'DebtPayment',
         ]);
 
-        // Verify debt unchanged
         $this->customer->refresh();
-        $this->assertEquals(100000, (float) $this->customer->debt_amount);
+        $this->assertEquals(50000, (float) $this->customer->debt_amount);
     }
 }

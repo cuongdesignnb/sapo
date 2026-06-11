@@ -158,6 +158,33 @@ class FinancialReportPnlCashFlowExclusionTest extends TestCase
         );
     }
 
+    public function test_customer_debt_payment_is_not_other_income(): void
+    {
+        CashFlow::create([
+            'code' => 'PT-DEBT-' . uniqid(),
+            'type' => 'receipt',
+            'amount' => 1_500_000,
+            'time' => now(),
+            'category' => 'Thu nợ khách hàng',
+            'reference_type' => 'DebtPayment',
+            'payment_method' => 'cash',
+            'status' => 'active',
+        ]);
+
+        $response = $this->actingAs($this->admin)
+            ->get('/reports/financial-report?' . http_build_query([
+                'time_mode' => 'custom',
+                'date_from' => $this->startDate->format('Y-m-d'),
+                'date_to' => $this->endDate->format('Y-m-d'),
+            ]));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) =>
+            $page->component('Reports/FinancialReport')
+                ->where('report.totalOtherIncome', 0)
+        );
+    }
+
     /**
      * Case 5 — Hủy đối trừ công nợ không vào Chi phí
      */

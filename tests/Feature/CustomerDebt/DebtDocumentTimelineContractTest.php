@@ -100,7 +100,8 @@ class DebtDocumentTimelineContractTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('summary.current_debt', 5_000_000)
-            ->assertJsonPath('reconcile.status', 'ok');
+            ->assertJsonPath('reconcile.status', 'ok')
+            ->assertJsonPath('reconciliation.status', 'ok');
 
         $entries = collect($response->json('entries'));
         $this->assertCount(3, $entries);

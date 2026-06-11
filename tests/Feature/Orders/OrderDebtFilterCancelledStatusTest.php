@@ -74,19 +74,56 @@ class OrderDebtFilterCancelledStatusTest extends TestCase
             'status' => 'completed',
         ]);
 
+        $overpaidOrder = $this->createOrder($customer->id, $branch->id, 1_500_000, 0);
+        Invoice::create([
+            'code' => 'HD-OVERPAID-' . uniqid(),
+            'customer_id' => $customer->id,
+            'branch_id' => $branch->id,
+            'order_id' => $overpaidOrder->id,
+            'subtotal' => 1_500_000,
+            'total' => 1_500_000,
+            'discount' => 0,
+            'customer_paid' => 1_800_000,
+            'order_deposit_applied_amount' => 0,
+            'status' => 'completed',
+        ]);
+
         $debtResponse = $this->actingAs($admin)->get('/orders?has_debt=1');
         $debtResponse->assertOk();
         $debtIds = collect($this->props($debtResponse)['orders']['data'] ?? [])->pluck('id');
         $this->assertContains($cancelledOrder->id, $debtIds);
         $this->assertNotContains($paidOrder->id, $debtIds);
         $this->assertNotContains($clampedOrder->id, $debtIds);
+        $this->assertNotContains($overpaidOrder->id, $debtIds);
 
         $paidResponse = $this->actingAs($admin)->get('/orders?has_debt=0');
         $paidResponse->assertOk();
-        $paidIds = collect($this->props($paidResponse)['orders']['data'] ?? [])->pluck('id');
+        $paidRows = collect($this->props($paidResponse)['orders']['data'] ?? []);
+        $paidIds = $paidRows->pluck('id');
         $this->assertNotContains($cancelledOrder->id, $paidIds);
         $this->assertContains($paidOrder->id, $paidIds);
         $this->assertContains($clampedOrder->id, $paidIds);
+        $this->assertContains($overpaidOrder->id, $paidIds);
+
+        $overpaidRow = $paidRows->firstWhere('id', $overpaidOrder->id);
+        $this->assertEquals(1_500_000, $overpaidRow['order_total']);
+        $this->assertEquals(1_800_000, $overpaidRow['order_paid_total']);
+        $this->assertEquals(0, $overpaidRow['order_remaining_debt']);
+        $this->assertEquals(300_000, $overpaidRow['order_credit_total']);
+        $this->assertSame('overpaid', $overpaidRow['payment_status']);
+
+        $overpaidFilter = $this->actingAs($admin)->get('/orders?payment_status=overpaid');
+        $overpaidFilter->assertOk();
+        $overpaidIds = collect($this->props($overpaidFilter)['orders']['data'] ?? [])->pluck('id');
+        $this->assertSame([$overpaidOrder->id], $overpaidIds->values()->all());
+
+        $export = $this->actingAs($admin)->get(route('orders.export', ['payment_status' => 'overpaid']));
+        $export->assertOk();
+        $csv = $export->streamedContent() ?: $export->getContent();
+        $this->assertStringContainsString($overpaidOrder->code, $csv);
+        $this->assertStringContainsString('1800000', $csv);
+        $this->assertStringContainsString('300000', $csv);
+        $this->assertStringNotContainsString($cancelledOrder->code, $csv);
     }
 
     private function createOrder(int $customerId, int $branchId, float $total, float $paid): Order

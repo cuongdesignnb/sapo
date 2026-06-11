@@ -644,7 +644,7 @@ class OrderPartialFulfillmentAndMergeTest extends TestCase
     }
 
     // Hotfix 1: Khách trả dư không tạo công nợ dương
-    public function test_order_process_overpaid_does_not_create_positive_debt(): void
+    public function test_order_process_overpaid_creates_customer_credit_without_increasing_sales(): void
     {
         $product = $this->makeProduct(false, 10, 100000);
         $order = Order::create([
@@ -690,14 +690,15 @@ class OrderPartialFulfillmentAndMergeTest extends TestCase
         // total invoice = 200k, cọc áp dụng = 150k, trả thêm = 100k -> customer_paid = 250k
         $this->assertEquals(250000, $invoice->customer_paid);
 
-        // Assert: không có row customer_debts type sale phát sinh cho invoice này
-        $debtExists = \App\Models\CustomerDebt::where('ref_code', $invoice->code)
+        $debtEntry = \App\Models\CustomerDebt::where('ref_code', $invoice->code)
             ->where('type', 'sale')
-            ->exists();
-        $this->assertFalse($debtExists, 'Không được tạo công nợ cho hóa đơn này.');
+            ->first();
+        $this->assertNotNull($debtEntry);
+        $this->assertEquals(-50000, (float) $debtEntry->amount);
 
         // customers.debt_amount không tăng
-        $this->assertEquals($initialDebt, $this->customer->fresh()->debt_amount);
+        $this->assertEquals($initialDebt - 50000, $this->customer->fresh()->debt_amount);
+        $this->assertEquals(200000, $this->customer->fresh()->total_spent);
 
         // cashflow chỉ ghi phần trả thêm 100k
         $cf = CashFlow::where('reference_type', 'Invoice')

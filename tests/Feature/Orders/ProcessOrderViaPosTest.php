@@ -9,6 +9,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceItemSerial;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\Role;
 use App\Models\SerialImei;
 use App\Models\StockMovement;
 use App\Models\CashFlow;
@@ -61,6 +62,23 @@ class ProcessOrderViaPosTest extends TestCase
         ]);
     }
 
+    private function userWithPermissions(array $permissions): User
+    {
+        $role = Role::create([
+            'name' => 'order-pos-' . uniqid(),
+            'display_name' => 'Order POS',
+            'permissions' => $permissions,
+            'is_system' => false,
+        ]);
+
+        return User::create([
+            'name' => 'POS User',
+            'email' => 'order-pos-user-' . uniqid() . '@test.local',
+            'password' => bcrypt('password'),
+            'role_id' => $role->id,
+        ]);
+    }
+
     private function makeOrder(Product $product, int $qty, float $price): Order
     {
         $order = Order::create([
@@ -99,7 +117,13 @@ class ProcessOrderViaPosTest extends TestCase
         $response->assertJsonPath('order.id', $order->id);
         $response->assertJsonPath('order.code', $order->code);
         $response->assertJsonPath('order.items.0.product_id', $product->id);
+        $response->assertJsonPath('order.items.0.product.id', $product->id);
+        $response->assertJsonPath('order.items.0.product.name', $product->name);
         $response->assertJsonPath('order.items.0.qty', 3);
+        $response->assertJsonPath('order.items.0.quantity', 3);
+        $response->assertJsonPath('order.items.0.price', 200000);
+        $response->assertJsonPath('order.items.0.discount', 0);
+        $response->assertJsonPath('order.items.0.total', 600000);
 
         $order->refresh();
         $this->assertSame('draft', $order->status);
@@ -118,6 +142,127 @@ class ProcessOrderViaPosTest extends TestCase
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('order.id', $order->id);
         $response->assertJsonPath('order.code', $order->code);
+    }
+
+    public function test_pos_only_user_can_load_payload_by_id_and_code(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $order = $this->makeOrder($product, 1, 200000);
+        $user = $this->userWithPermissions(['pos.use']);
+
+        $this->actingAs($user)
+            ->getJson(route('orders.pos-payload', ['orderKey' => $order->id]))
+            ->assertOk()
+            ->assertJsonPath('order.code', $order->code);
+
+        $this->actingAs($user)
+            ->getJson(route('orders.pos-payload', ['orderKey' => $order->code]))
+            ->assertOk()
+            ->assertJsonPath('order.id', $order->id);
+    }
+
+    public function test_pos_payload_uses_option_a_payments_and_ignores_cancelled_invoices(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $paidOrder = $this->makeOrder($product, 1, 10_000_000);
+        $paidOrder->update(['amount_paid' => 2_000_000]);
+        Invoice::create([
+            'code' => 'HD-POS-PAID-' . uniqid(),
+            'order_id' => $paidOrder->id,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 10_000_000,
+            'total' => 10_000_000,
+            'customer_paid' => 10_000_000,
+            'order_deposit_applied_amount' => 2_000_000,
+            'status' => 'completed',
+        ]);
+
+        $cancelledOrder = $this->makeOrder($product, 1, 10_000_000);
+        $cancelledOrder->update(['amount_paid' => 2_000_000]);
+        Invoice::create([
+            'code' => 'HD-POS-CANCELLED-' . uniqid(),
+            'order_id' => $cancelledOrder->id,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 10_000_000,
+            'total' => 10_000_000,
+            'customer_paid' => 10_000_000,
+            'order_deposit_applied_amount' => 2_000_000,
+            'status' => 'Đã hủy',
+        ]);
+
+        $clampedOrder = $this->makeOrder($product, 1, 2_000_000);
+        $clampedOrder->update(['amount_paid' => 2_000_000]);
+        Invoice::create([
+            'code' => 'HD-POS-CLAMP-' . uniqid(),
+            'order_id' => $clampedOrder->id,
+            'customer_id' => $this->customer->id,
+            'subtotal' => 2_000_000,
+            'total' => 2_000_000,
+            'customer_paid' => 1_000_000,
+            'order_deposit_applied_amount' => 2_000_000,
+            'status' => 'completed',
+        ]);
+
+        $this->actingAs($this->admin)
+            ->getJson(route('orders.pos-payload', ['orderKey' => $paidOrder->id]))
+            ->assertOk()
+            ->assertJsonPath('order.totals.order_deposit_original', 2_000_000)
+            ->assertJsonPath('order.totals.paid_after_deposit', 8_000_000)
+            ->assertJsonPath('order.totals.total_paid_for_order', 10_000_000)
+            ->assertJsonPath('order.totals.remaining', 0)
+            ->assertJsonPath('order.totals.deposit_remaining', 0);
+
+        $this->actingAs($this->admin)
+            ->getJson(route('orders.pos-payload', ['orderKey' => $cancelledOrder->id]))
+            ->assertOk()
+            ->assertJsonPath('order.totals.paid_after_deposit', 0)
+            ->assertJsonPath('order.totals.remaining', 8_000_000)
+            ->assertJsonPath('order.totals.deposit_remaining', 2_000_000);
+
+        $this->actingAs($this->admin)
+            ->getJson(route('orders.pos-payload', ['orderKey' => $clampedOrder->id]))
+            ->assertOk()
+            ->assertJsonPath('order.totals.paid_after_deposit', 0)
+            ->assertJsonPath('order.totals.remaining', 0);
+    }
+
+    public function test_pos_only_user_can_process_order(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $order = $this->makeOrder($product, 1, 200000);
+        $user = $this->userWithPermissions(['pos.use']);
+
+        $response = $this->actingAs($user)->postJson(route('orders.process', $order), [
+            'from_pos' => true,
+            'amount_paid' => 200000,
+            'payment_method' => 'cash',
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+            ]],
+        ]);
+
+        $response->assertOk()->assertJsonPath('success', true);
+        $this->assertSame('completed', $order->fresh()->status);
+    }
+
+    public function test_orders_edit_user_can_process_order_without_pos_permission(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $order = $this->makeOrder($product, 1, 200000);
+        $user = $this->userWithPermissions(['orders.edit']);
+
+        $response = $this->actingAs($user)->postJson(route('orders.process', $order), [
+            'from_pos' => true,
+            'amount_paid' => 200000,
+            'payment_method' => 'cash',
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+            ]],
+        ]);
+
+        $response->assertOk()->assertJsonPath('success', true);
     }
 
     public function test_pos_payload_missing_order_returns_404_json(): void
@@ -312,5 +457,40 @@ class ProcessOrderViaPosTest extends TestCase
         $newCashFlows = CashFlow::where('reference_code', $invoice->code)->get();
         $this->assertCount(1, $newCashFlows);
         $this->assertSame(250000.0, (float) $newCashFlows->first()->amount);
+    }
+
+    public function test_cancelling_overpaid_invoice_restores_credit_and_total_spent(): void
+    {
+        $product = $this->makeProduct(false, 10, 100000);
+        $order = $this->makeOrder($product, 1, 200000);
+
+        $this->actingAs($this->admin)
+            ->postJson(route('orders.process', $order), [
+                'from_pos' => true,
+                'amount_paid' => 250000,
+                'payment_method' => 'cash',
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                ]],
+            ])
+            ->assertOk();
+
+        $invoice = Invoice::where('order_id', $order->id)->firstOrFail();
+        $this->assertEquals(-50000, (float) $this->customer->fresh()->debt_amount);
+        $this->assertEquals(200000, (float) $this->customer->fresh()->total_spent);
+
+        $this->delete(route('invoices.destroy', $invoice))->assertRedirect();
+
+        $this->assertEquals(0, (float) $this->customer->fresh()->debt_amount);
+        $this->assertEquals(0, (float) $this->customer->fresh()->total_spent);
+        $this->assertSame('Đã hủy', $invoice->fresh()->status);
+        $this->assertSame(
+            'cancelled',
+            CashFlow::where('reference_type', 'Invoice')
+                ->where('reference_code', $invoice->code)
+                ->firstOrFail()
+                ->status
+        );
     }
 }
