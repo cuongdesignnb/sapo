@@ -4,9 +4,7 @@ namespace App\Services;
 
 use App\Models\CashFlow;
 use App\Models\Customer;
-use App\Models\CustomerDebt;
 use App\Models\CustomerPaymentAllocation;
-use App\Models\CustomerPaymentDiscountAllocation;
 use App\Models\Invoice;
 use App\Support\Status\BusinessStatus;
 use Carbon\Carbon;
@@ -15,6 +13,10 @@ use Illuminate\Validation\ValidationException;
 
 class CustomerPaymentService
 {
+    public const CANCELLED = 'cancelled';
+    public const ALREADY_CANCELLED = 'already_cancelled';
+    public const SOURCE_DOCUMENT_REQUIRED = 'source_document_required';
+
     public function collect(
         Customer $customer,
         float $paymentAmount,
@@ -35,6 +37,7 @@ class CustomerPaymentService
             $note,
             $paidAt
         ) {
+            app(PartnerTransactionGuard::class)->assertCanTransact($customer->id, 'customer_id');
             $lockedCustomer = Customer::query()->lockForUpdate()->findOrFail($customer->id);
             $debtBefore = (float) $lockedCustomer->debt_amount;
             $allocations = $mode === 'manual'
@@ -104,27 +107,33 @@ class CustomerPaymentService
         });
     }
 
-    public function cancel(CashFlow $cashFlow): void
+    public function cancel(CashFlow $cashFlow): string
     {
-        DB::transaction(function () use ($cashFlow) {
+        return DB::transaction(function () use ($cashFlow) {
             $flow = CashFlow::withTrashed()->lockForUpdate()->findOrFail($cashFlow->id);
             if (!BusinessStatus::isValidCashFlow($flow->status) || $flow->trashed()) {
-                return;
+                return self::ALREADY_CANCELLED;
             }
 
             if ($flow->reference_type === 'DebtPayment') {
                 $this->cancelDebtPayment($flow);
             } elseif ($flow->reference_type === 'Invoice') {
                 $this->cancelInvoicePayment($flow);
-            } elseif (in_array($flow->reference_type, ['Order', 'OrderReturn', 'Purchase', 'PurchaseReturn'], true)) {
-                throw ValidationException::withMessages([
-                    'cash_flow' => 'Phiếu liên kết chứng từ nguồn phải được hủy từ chứng từ đó.',
-                ]);
+            } elseif (in_array($flow->reference_type, [
+                'Order',
+                'OrderReturn',
+                'Purchase',
+                'PurchaseReturn',
+                'SupplierPayment',
+            ], true)) {
+                return self::SOURCE_DOCUMENT_REQUIRED;
             }
 
             $flow->status = 'cancelled';
             $flow->save();
             $flow->delete();
+
+            return self::CANCELLED;
         });
     }
 
@@ -137,6 +146,7 @@ class CustomerPaymentService
             'OrderReturn',
             'Purchase',
             'PurchaseReturn',
+            'SupplierPayment',
         ], true);
     }
 
@@ -144,14 +154,14 @@ class CustomerPaymentService
     {
         $remaining = $paymentAmount;
         $allocations = [];
-        $invoices = $this->receivableInvoices($customer)->get();
+        $invoices = app(CustomerReceivableInvoiceService::class)->query($customer)->get();
 
         foreach ($invoices as $invoice) {
             if ($remaining < 0.01) {
                 break;
             }
 
-            $invoiceRemaining = $this->invoiceRemaining($invoice);
+            $invoiceRemaining = app(CustomerReceivableInvoiceService::class)->remaining($invoice);
             $allocated = min($remaining, $invoiceRemaining);
             if ($allocated < 0.01) {
                 continue;
@@ -170,10 +180,25 @@ class CustomerPaymentService
     ): array {
         $allocations = [];
         $allocatedTotal = 0.0;
+        $seenInvoiceIds = [];
 
         foreach ($requestedAllocations as $requested) {
-            $invoice = $this->receivableInvoices($customer)
-                ->whereKey((int) $requested['invoice_id'])
+            $invoiceId = (int) ($requested['invoice_id'] ?? 0);
+            $amount = (float) ($requested['amount'] ?? 0);
+            if ($amount <= 0) {
+                throw ValidationException::withMessages([
+                    'allocations' => 'Số tiền phân bổ phải lớn hơn 0.',
+                ]);
+            }
+            if (isset($seenInvoiceIds[$invoiceId])) {
+                throw ValidationException::withMessages([
+                    'allocations' => 'Mỗi hóa đơn chỉ được xuất hiện một lần trong danh sách phân bổ.',
+                ]);
+            }
+            $seenInvoiceIds[$invoiceId] = true;
+
+            $invoice = app(CustomerReceivableInvoiceService::class)->query($customer)
+                ->whereKey($invoiceId)
                 ->lockForUpdate()
                 ->first();
             if (!$invoice) {
@@ -182,8 +207,7 @@ class CustomerPaymentService
                 ]);
             }
 
-            $invoiceRemaining = $this->invoiceRemaining($invoice);
-            $amount = (float) $requested['amount'];
+            $invoiceRemaining = app(CustomerReceivableInvoiceService::class)->remaining($invoice);
             if ($amount > $invoiceRemaining + 0.01) {
                 throw ValidationException::withMessages([
                     'allocations' => "Số phân bổ cho hóa đơn {$invoice->code} vượt số còn phải thu.",
@@ -199,47 +223,6 @@ class CustomerPaymentService
         }
 
         return $allocations;
-    }
-
-    private function receivableInvoices(Customer $customer)
-    {
-        $query = Invoice::query()
-            ->where(function ($invoiceQuery) use ($customer) {
-                $invoiceQuery
-                    ->where('customer_id', $customer->id)
-                    ->orWhereIn(
-                        'code',
-                        CustomerDebt::query()
-                            ->select('ref_code')
-                            ->where('customer_id', $customer->id)
-                            ->where('type', 'sale')
-                            ->where('amount', '>', 0)
-                            ->whereNotNull('ref_code')
-                            ->where('ref_code', 'like', 'HD%')
-                    );
-            })
-            ->whereRaw('COALESCE(total, 0) > COALESCE(customer_paid, 0)')
-            ->addSelect([
-                'payment_discount_allocated' => CustomerPaymentDiscountAllocation::query()
-                    ->selectRaw('COALESCE(SUM(amount), 0)')
-                    ->whereColumn('invoice_id', 'invoices.id')
-                    ->whereHas('discount', fn ($discountQuery) => $discountQuery->where('status', 'active')),
-            ])
-            ->orderByRaw('COALESCE(transaction_date, created_at) ASC')
-            ->orderBy('id');
-        BusinessStatus::scopeNotCancelled($query, 'status');
-
-        return $query;
-    }
-
-    private function invoiceRemaining(Invoice $invoice): float
-    {
-        return max(
-            0.0,
-            (float) $invoice->total
-                - (float) $invoice->customer_paid
-                - (float) ($invoice->payment_discount_allocated ?? 0)
-        );
     }
 
     private function cancelDebtPayment(CashFlow $flow): void

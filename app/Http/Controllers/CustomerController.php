@@ -628,6 +628,11 @@ class CustomerController extends Controller
      */
     public function debtPayment(Request $request, Customer $customer)
     {
+        app(\App\Services\PartnerTransactionGuard::class)->assertCanTransact(
+            $customer->id,
+            'customer_id'
+        );
+
         $mode = $request->input('mode', 'auto');
         $rules = [
             'amount' => ($mode === 'manual' ? 'nullable' : 'required') . '|numeric|min:1',

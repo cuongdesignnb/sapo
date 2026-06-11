@@ -419,6 +419,9 @@ const deleteFlow = (id) => {
     }
 };
 
+const canCancelFlow = (flow) =>
+    flow?.status !== "cancelled" && !flow?.deleted_at;
+
 const printFlow = (flow) => {
     window.open(
         `/cash-flows/${flow.id}/print`,
@@ -855,11 +858,18 @@ const printFlow = (flow) => {
                                             class="flex justify-between items-center"
                                         >
                                             <button
+                                                v-if="canCancelFlow(flow)"
                                                 @click="deleteFlow(flow.id)"
                                                 class="px-5 py-1.5 border border-red-500 rounded text-red-500 hover:bg-red-50 font-medium text-[14px] transition-colors"
                                             >
                                                 Hủy phiếu
                                             </button>
+                                            <span
+                                                v-else
+                                                class="px-5 py-1.5 rounded bg-gray-100 text-gray-500 text-[14px] font-medium"
+                                            >
+                                                Phiếu đã hủy
+                                            </span>
                                             <div
                                                 class="flex items-center gap-2"
                                             >

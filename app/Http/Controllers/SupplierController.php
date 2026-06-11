@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use App\Services\DebtOffsetService;
+use App\Services\PartnerTransactionGuard;
 
 class SupplierController extends Controller
 {
@@ -814,6 +815,7 @@ class SupplierController extends Controller
         ]);
 
         $supplier = Customer::findOrFail($id);
+        app(PartnerTransactionGuard::class)->assertCanTransact($supplier->id, 'supplier_id');
         $currentDebt = $this->calculateDebt($id);
         $totalPay = abs($data['amount']);
         $mode = $data['mode'] ?? 'auto';
