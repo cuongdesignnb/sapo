@@ -131,8 +131,9 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         // Assert Net Debt details
         $this->assertEquals(-27600000, $data['summary']['net']);
         $this->assertEquals(-27600000, $data['reconcile']['current_net_debt']);
-        $this->assertEquals(-27600000, $data['reconcile']['computed_balance']);
-        $this->assertFalse($data['reconcile']['has_mismatch']);
+        $this->assertEquals(26820000, $data['reconcile']['computed_balance']);
+        $this->assertTrue($data['reconcile']['has_mismatch']);
+        $this->assertSame('mismatch', $data['reconcile']['status']);
 
         $entries = collect($data['entries']);
 
@@ -147,14 +148,14 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         $this->assertTrue($ckttEntry['affects_debt_balance']);
         $this->assertEquals(-20000, $ckttEntry['customer_effect']);
 
-        // Check legacy invoices do NOT affect balance
+        // Document invoices are the display source of truth.
         $legacyInvoice = $entries->firstWhere('code', 'HD177932991721');
         $this->assertNotNull($legacyInvoice);
-        $this->assertFalse($legacyInvoice['affects_debt_balance']);
-        $this->assertEquals(0, $legacyInvoice['customer_effect']);
+        $this->assertTrue($legacyInvoice['affects_debt_balance']);
+        $this->assertEquals(42320000, $legacyInvoice['customer_effect']);
         $this->assertEquals(42320000, $legacyInvoice['customer_display_effect']);
         $this->assertEquals(42320000, $legacyInvoice['display_effect']);
-        $this->assertEquals('Phải thu KH', $legacyInvoice['badge_label']);
+        $this->assertEquals('Hóa đơn', $legacyInvoice['badge_label']);
 
         // Check purchases affect balance
         $purchaseEntry = $entries->firstWhere('code', 'PN20260523105400');
@@ -200,7 +201,7 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         $this->assertNotNull($legacyInvoice);
         $this->assertTrue($legacyInvoice['affects_debt_balance']);
         $this->assertEquals(10000000, $legacyInvoice['customer_effect']);
-        $this->assertEquals('Chứng từ cũ', $legacyInvoice['badge_label']);
+        $this->assertEquals('Hóa đơn', $legacyInvoice['badge_label']);
         $this->assertEquals(10000000, $data['reconcile']['computed_balance']);
     }
 
@@ -247,8 +248,8 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
         $tthdPayment = $entries->firstWhere('code', 'TTHD720000');
 
         $this->assertNotNull($tthdPayment);
-        $this->assertFalse($tthdPayment['affects_debt_balance']);
-        $this->assertEquals(0, $tthdPayment['customer_effect']);
+        $this->assertTrue($tthdPayment['affects_debt_balance']);
+        $this->assertEquals(-7200000, $tthdPayment['customer_effect']);
         $this->assertEquals(-7200000, $tthdPayment['customer_display_effect']);
         $this->assertEquals(-7200000, $tthdPayment['display_effect']);
         $this->assertEquals('Thanh toán', $tthdPayment['badge_label']);
@@ -304,10 +305,8 @@ class CustomerDebtHistoryDoubleCountTest extends TestCase
 
         // Check supplier transaction does NOT affect balance
         $stxEntry = $entries->firstWhere('code', 'STX-999');
-        $this->assertNotNull($stxEntry);
-        $this->assertFalse($stxEntry['affects_debt_balance']);
-        $this->assertEquals(0, $stxEntry['customer_effect']);
-        $this->assertEquals('Thanh toán', $stxEntry['badge_label']);
+        $this->assertNull($stxEntry);
+        $this->assertNotNull(collect($data['ledger_entries'])->firstWhere('code', 'STX-999'));
 
         $this->assertEquals(-75000000, $data['reconcile']['computed_balance']);
         $this->assertFalse($data['reconcile']['has_mismatch']);

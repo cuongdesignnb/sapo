@@ -21,12 +21,11 @@ class PartnerFinancialTimelineService
     public function buildForCustomer(Customer $customer): array
     {
         $ledger = app(PartnerDebtLedgerService::class)->buildCustomerNetLedger($customer);
-        
-        $ledger['ledger_entries'] = collect();
+
         $ledger['legacy_entries'] = collect();
-        
+
         if (isset($ledger['summary'])) {
-            $ledger['summary']['ledger_count'] = 0;
+            $ledger['summary']['ledger_count'] = collect($ledger['ledger_entries'] ?? [])->count();
             $ledger['summary']['legacy_count'] = 0;
             $ledger['summary']['supplier_count'] = 0;
             $ledger['summary']['dedup_skipped'] = 0;

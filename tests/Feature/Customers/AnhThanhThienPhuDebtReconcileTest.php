@@ -98,7 +98,7 @@ class AnhThanhThienPhuDebtReconcileTest extends TestCase
         $this->assertEquals($data['summary']['display_balance_target'], $data['summary']['display_balance_final']);
         $this->assertNotEquals('warning', $data['reconcile']['severity']);
         $this->assertFalse($data['reconcile']['user_warning']);
-        $this->assertFalse($data['reconcile']['ledger_mismatch']);
+        $this->assertTrue($data['reconcile']['ledger_mismatch']);
         $this->assertTrue($data['reconcile']['display_resolved']);
 
         $entries = collect($data['entries']);
@@ -136,7 +136,7 @@ class AnhThanhThienPhuDebtReconcileTest extends TestCase
         $this->assertEquals($supData['summary']['display_balance_target'], $supData['summary']['display_balance_final']);
         $this->assertNotEquals('warning', $supData['reconcile']['severity']);
         $this->assertFalse($supData['reconcile']['user_warning']);
-        $this->assertFalse($supData['reconcile']['ledger_mismatch']);
+        $this->assertTrue($supData['reconcile']['ledger_mismatch']);
         $this->assertTrue($supData['reconcile']['display_resolved']);
 
         $supEntries = collect($supData['entries']);

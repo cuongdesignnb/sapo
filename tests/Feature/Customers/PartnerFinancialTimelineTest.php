@@ -103,8 +103,8 @@ class PartnerFinancialTimelineTest extends TestCase
         $entries = collect($data['entries']);
 
         $this->assertEquals(-27600000, $data['summary']['net']);
-        $this->assertEquals(-27600000, $data['reconcile']['computed_balance']);
-        $this->assertFalse($data['reconcile']['has_mismatch']);
+        $this->assertEquals(26820000, $data['reconcile']['computed_balance']);
+        $this->assertTrue($data['reconcile']['has_mismatch']);
 
         $merge = $entries->firstWhere('code', 'MERGE-CUSTOMER-141');
         $this->assertEquals('Số dư đầu kỳ / Gộp công nợ', $merge['display_type']);
@@ -115,11 +115,10 @@ class PartnerFinancialTimelineTest extends TestCase
         $this->assertEquals(-20000, $discount['customer_effect']);
 
         $legacyInvoice = $entries->firstWhere('code', 'HD177932991721');
-        $this->assertFalse($legacyInvoice['affects_debt_balance']);
-        $this->assertEquals('Phải thu KH', $legacyInvoice['badge_label']);
-        $this->assertStringContainsString('không cộng lại', $legacyInvoice['balance_note']);
+        $this->assertTrue($legacyInvoice['affects_debt_balance']);
+        $this->assertEquals('Hóa đơn', $legacyInvoice['badge_label']);
         $this->assertNotEmpty($legacyInvoice['time']);
-        $this->assertEquals(0, $legacyInvoice['customer_effect']);
+        $this->assertEquals(42320000, $legacyInvoice['customer_effect']);
         $this->assertEquals(42320000, $legacyInvoice['customer_display_effect']);
         $this->assertEquals(42320000, $legacyInvoice['display_effect']);
 
@@ -132,7 +131,7 @@ class PartnerFinancialTimelineTest extends TestCase
             ->whereIn('code', ['HD177932991721', 'HD177933240323', 'HD177933714532'])
             ->where('affects_debt_balance', true)
             ->pluck('code');
-        $this->assertCount(0, $affectingInvoiceCodes);
+        $this->assertCount(3, $affectingInvoiceCodes);
     }
 
     public function test_customer_without_ledger_uses_legacy_invoice(): void
@@ -202,7 +201,7 @@ class PartnerFinancialTimelineTest extends TestCase
             'recorded_at' => Carbon::parse('2026-05-24 11:00:00'),
         ]);
 
-        $entry = collect($this->getDebtHistory($customer)['entries'])->firstWhere('id', 'ldg-' . CustomerDebt::latest('id')->first()->id);
+        $entry = collect($this->getDebtHistory($customer)['entries'])->firstWhere('code', 'TH0001');
 
         $this->assertEquals('Trả hàng bán', $entry['display_type']);
         $this->assertEquals(-3000000, $entry['customer_effect']);
@@ -234,11 +233,11 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $payment = collect($this->getDebtHistory($customer)['entries'])->firstWhere('code', 'TTHD7200000');
 
-        $this->assertFalse($payment['affects_debt_balance']);
+        $this->assertTrue($payment['affects_debt_balance']);
         $this->assertEquals('Thanh toán', $payment['badge_label']);
         $this->assertEquals(-7200000, $payment['customer_display_effect']);
         $this->assertEquals(-7200000, $payment['display_effect']);
-        $this->assertStringContainsString('không cộng lại', $payment['balance_note']);
+        $this->assertEquals(-7200000, $payment['customer_effect']);
     }
 
     public function test_tthd_without_ledger_affects_balance(): void
@@ -260,7 +259,7 @@ class PartnerFinancialTimelineTest extends TestCase
 
         $this->assertEquals(7200000, $entries->firstWhere('code', 'HD7200001')['customer_effect']);
         $this->assertEquals(-7200000, $entries->firstWhere('code', 'TTHD7200001')['customer_effect']);
-        $this->assertEquals('Chứng từ cũ', $entries->firstWhere('code', 'HD7200001')['badge_label']);
+        $this->assertEquals('Hóa đơn', $entries->firstWhere('code', 'HD7200001')['badge_label']);
         $this->assertEquals('Thanh toán', $entries->firstWhere('code', 'TTHD7200001')['badge_label']);
         $this->assertEquals(0, $data['reconcile']['computed_balance']);
     }

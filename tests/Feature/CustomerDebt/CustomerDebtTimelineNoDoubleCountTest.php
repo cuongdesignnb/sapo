@@ -96,22 +96,16 @@ class CustomerDebtTimelineNoDoubleCountTest extends TestCase
         $data = $response->json();
         $entries = collect($data['entries']);
 
-        // Find TTHD... and PT... entries
+        // The order deposit is represented once as an applied-deposit document.
         $tthdEntry = $entries->first(fn($e) => str_starts_with($e['code'] ?? '', 'TTHD'));
         $cfEntry = $entries->first(fn($e) => str_starts_with($e['code'] ?? '', 'PT'));
+        $depositEntry = $entries->first(fn($e) => str_starts_with($e['code'] ?? '', 'COC-'));
 
-        $this->assertNotNull($tthdEntry, 'Should have virtual TTHD payment entry');
-        $this->assertNotNull($cfEntry, 'Should have real cash flow payment entry');
-
-        // The TTHD entry should be reference-only and not affect running balance
-        $this->assertTrue($tthdEntry['is_reference_only']);
-        $this->assertFalse($tthdEntry['affects_debt_balance']);
-        $this->assertEquals(0.0, (float)$tthdEntry['balance_effect']);
-        $this->assertEquals(-1000000.0, (float)$tthdEntry['display_effect']);
-
-        // The CF entry should affect the balance
-        $this->assertFalse($cfEntry['is_reference_only']);
-        $this->assertTrue($cfEntry['affects_debt_balance']);
-        $this->assertEquals(-1000000.0, (float)$cfEntry['balance_effect']);
+        $this->assertNull($tthdEntry);
+        $this->assertNull($cfEntry);
+        $this->assertNotNull($depositEntry);
+        $this->assertFalse($depositEntry['is_reference_only']);
+        $this->assertTrue($depositEntry['affects_debt_balance']);
+        $this->assertEquals(-1000000.0, (float)$depositEntry['balance_effect']);
     }
 }

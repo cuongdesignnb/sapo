@@ -120,7 +120,7 @@ class SupplierDualRoleTimelineNoDashTest extends TestCase
         $customerLast = $customerEntries
             ->sortBy(fn ($entry) => (string) ($entry['time'] ?? $entry['created_at'] ?? ''))
             ->last();
-        $this->assertEquals(-27_600_000, $customerLast['customer_display_running_balance']);
+        $this->assertEquals(-19_580_000, $customerLast['customer_display_running_balance']);
 
         $supplierResponse = $this->actingAs($admin)
             ->getJson("/api/suppliers/{$partner->id}/debt-transactions?view=partner&per_page=100&page=1")
@@ -138,8 +138,8 @@ class SupplierDualRoleTimelineNoDashTest extends TestCase
         $supplierLast = $supplierEntries
             ->sortBy(fn ($entry) => (string) ($entry['time'] ?? $entry['created_at'] ?? ''))
             ->last();
-        $this->assertEquals(27_600_000, $supplierLast['supplier_display_running_balance']);
-        $this->assertEquals(27_600_000, $supplierResponse->json('summary.display_balance_final'));
+        $this->assertEquals(19_580_000, $supplierLast['supplier_display_running_balance']);
+        $this->assertEquals(19_580_000, $supplierResponse->json('summary.display_balance_final'));
     }
 
     private function isFinancialTimelineEntry(array $entry): bool

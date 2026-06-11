@@ -62,16 +62,16 @@ class SupplierDualRoleTimelineFinancialDisplayTest extends TestCase
 
         $this->assertEquals(75_000_000, $customerEntries['HD008170']['customer_display_effect']);
         $this->assertEquals(75_000_000, $customerEntries['HD008170']['display_effect']);
-        $this->assertEquals(0, $customerEntries['HD008170']['customer_balance_effect']);
-        $this->assertEquals(0, $customerEntries['HD008170']['customer_effect']);
-        $this->assertFalse($customerEntries['HD008170']['affects_debt_balance']);
-        $this->assertEquals('Phải thu KH', $customerEntries['HD008170']['badge_label']);
+        $this->assertEquals(75_000_000, $customerEntries['HD008170']['customer_balance_effect']);
+        $this->assertEquals(75_000_000, $customerEntries['HD008170']['customer_effect']);
+        $this->assertTrue($customerEntries['HD008170']['affects_debt_balance']);
+        $this->assertEquals('Hóa đơn', $customerEntries['HD008170']['badge_label']);
 
         $this->assertEquals(-20_000_000, $customerEntries['TTHD008170']['customer_display_effect']);
         $this->assertEquals(-20_000_000, $customerEntries['TTHD008170']['display_effect']);
-        $this->assertEquals(0, $customerEntries['TTHD008170']['customer_balance_effect']);
-        $this->assertEquals(0, $customerEntries['TTHD008170']['customer_effect']);
-        $this->assertFalse($customerEntries['TTHD008170']['affects_debt_balance']);
+        $this->assertEquals(-20_000_000, $customerEntries['TTHD008170']['customer_balance_effect']);
+        $this->assertEquals(-20_000_000, $customerEntries['TTHD008170']['customer_effect']);
+        $this->assertTrue($customerEntries['TTHD008170']['affects_debt_balance']);
         $this->assertEquals('Thanh toán', $customerEntries['TTHD008170']['badge_label']);
 
         $supplierResponse = $this->actingAs($admin)
@@ -85,19 +85,20 @@ class SupplierDualRoleTimelineFinancialDisplayTest extends TestCase
 
         $this->assertEquals(-75_000_000, $supplierEntries['HD008170']['supplier_display_effect']);
         $this->assertEquals(-75_000_000, $supplierEntries['HD008170']['supplier_partner_effect']);
-        $this->assertEquals(0, $supplierEntries['HD008170']['supplier_balance_effect']);
+        $this->assertEquals(-75_000_000, $supplierEntries['HD008170']['supplier_balance_effect']);
         $this->assertNotNull($supplierEntries['HD008170']['supplier_display_running_balance']);
         $this->assertNotNull($supplierEntries['HD008170']['supplier_partner_running_balance']);
         $this->assertEquals('Phải thu KH', $supplierEntries['HD008170']['badge_label']);
 
         $this->assertEquals(20_000_000, $supplierEntries['TTHD008170']['supplier_display_effect']);
         $this->assertEquals(20_000_000, $supplierEntries['TTHD008170']['supplier_partner_effect']);
-        $this->assertEquals(0, $supplierEntries['TTHD008170']['supplier_balance_effect']);
+        $this->assertEquals(20_000_000, $supplierEntries['TTHD008170']['supplier_balance_effect']);
         $this->assertNotNull($supplierEntries['TTHD008170']['supplier_display_running_balance']);
         $this->assertNotNull($supplierEntries['TTHD008170']['supplier_partner_running_balance']);
         $this->assertEquals('Phải thu KH', $supplierEntries['TTHD008170']['badge_label']);
 
-        $this->assertTrue($supplierResponse->json('summary.has_virtual_opening_balance'));
-        $this->assertEquals(0, $supplierResponse->json('summary.display_balance_final'));
+        $this->assertFalse($supplierResponse->json('summary.has_virtual_opening_balance'));
+        $this->assertEquals(-55_000_000, $supplierResponse->json('summary.display_balance_final'));
+        $this->assertSame('mismatch', $supplierResponse->json('reconcile.status'));
     }
 }

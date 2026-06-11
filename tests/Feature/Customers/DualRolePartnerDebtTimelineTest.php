@@ -296,10 +296,10 @@ class DualRolePartnerDebtTimelineTest extends TestCase
         $cb = $cbEntries->first();
         $this->assertSame('supplier_ledger_mirror', $cb['source'],
             'CB reaches the customer-net view via the supplier mirror');
-        $this->assertEquals(+5_000_000, $cb['customer_effect'],
-            'Mirror inverts supplier_effect (-5M) → customer_effect (+5M) matching KiotViet sign');
-        $this->assertEquals(-5_000_000, $cb['supplier_effect']);
-        $this->assertTrue($cb['affects_debt_balance']);
+        $this->assertEquals(0, $cb['customer_effect']);
+        $this->assertEquals(0, $cb['supplier_effect']);
+        $this->assertFalse($cb['affects_debt_balance']);
+        $this->assertTrue($cb['is_reference_only']);
     }
 
     /**

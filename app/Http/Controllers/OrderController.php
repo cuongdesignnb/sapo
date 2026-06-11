@@ -22,7 +22,10 @@ use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
+use App\Support\Status\BusinessStatus;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class OrderController extends Controller
 {
@@ -52,9 +55,10 @@ class OrderController extends Controller
         $query = Order::with(['customer', 'branch', 'items.product'])
             ->when($request->filled('has_debt'), function ($q) use ($request) {
                 $hasDebt = (string) $request->input('has_debt') === '1';
-                $invoicePaidSubquery = \App\Models\Invoice::selectRaw('COALESCE(SUM(customer_paid - order_deposit_applied_amount), 0)')
-                    ->whereColumn('order_id', 'orders.id')
-                    ->where('status', '!=', 'cancelled');
+                $invoicePaidSubquery = Invoice::selectRaw(
+                    'COALESCE(SUM(' . $this->nonNegativeSql('customer_paid - order_deposit_applied_amount') . '), 0)'
+                )->whereColumn('order_id', 'orders.id');
+                $this->scopeActiveInvoices($invoicePaidSubquery);
 
                 if ($hasDebt) {
                     $q->whereRaw("total_payment > amount_paid + ({$invoicePaidSubquery->toSql()})", $invoicePaidSubquery->getBindings());
@@ -634,7 +638,7 @@ class OrderController extends Controller
             // Prior deposit & progressive deposit application
             $initialDeposit = (float) ($order->amount_paid ?? 0);
             $alreadyAppliedDeposit = Invoice::where('order_id', $order->id)
-                ->where('status', '!=', 'Đã hủy')
+                ->tap(fn (Builder $query) => $this->scopeActiveInvoices($query))
                 ->sum('order_deposit_applied_amount');
 
             $depositRemaining = max(0.0, $initialDeposit - $alreadyAppliedDeposit);
@@ -1163,7 +1167,9 @@ class OrderController extends Controller
         });
 
         $initialDeposit = (float) ($order->amount_paid ?? 0);
-        $depositApplied = (float) Invoice::where('order_id', $order->id)->where('status', '!=', 'Đã hủy')->sum('order_deposit_applied_amount');
+        $depositAppliedQuery = Invoice::where('order_id', $order->id);
+        $this->scopeActiveInvoices($depositAppliedQuery);
+        $depositApplied = (float) $depositAppliedQuery->sum('order_deposit_applied_amount');
         $depositRemaining = max(0.0, $initialDeposit - $depositApplied);
 
         return response()->json([
@@ -1223,6 +1229,23 @@ class OrderController extends Controller
                 'note' => $order->note,
             ]
         ]);
+    }
+
+    private function scopeActiveInvoices(Builder $query): Builder
+    {
+        $cancelled = BusinessStatus::cancelledDatabaseValues();
+
+        return $query->where(function (Builder $statusQuery) use ($cancelled) {
+            $statusQuery->whereNull('status')
+                ->orWhereNotIn(DB::raw('LOWER(TRIM(status))'), $cancelled);
+        });
+    }
+
+    private function nonNegativeSql(string $expression): string
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? "MAX({$expression}, 0)"
+            : "GREATEST({$expression}, 0)";
     }
 
     private function recordOrderDepositCashFlow(Order $order, $paymentMethod = 'cash', $bankInfo = null): void

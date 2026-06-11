@@ -128,12 +128,10 @@ class HOTFIXFollowUpDebtOffsetMirrorTest extends TestCase
         $this->assertCount(1, $cbRows,
             'CB must appear exactly once on customer-net view (no double count from customer-side emission)');
         $cb = $cbRows->first();
-        $this->assertEquals(+10_000_000.0, (float) $cb['customer_effect'],
-            'Mirror: customer_effect = -1 * supplier_effect = +10M');
-        $this->assertEquals(-6_845_000.0, (float) $cb['ledger_running_balance'],
-            'Ledger running balance after CB = -16,845,000 + 10,000,000');
-        $this->assertEquals(0.0, (float) $cb['balance'],
-            'Display running balance includes read-only opening so final timeline matches current net debt');
+        $this->assertEquals(0.0, (float) $cb['customer_effect']);
+        $this->assertFalse($cb['affects_debt_balance']);
+        $this->assertTrue($cb['is_reference_only']);
+        $this->assertEquals(-16_845_000.0, (float) $cb['balance']);
         $this->assertSame('supplier_ledger_mirror', $cb['source']);
     }
 

@@ -749,6 +749,7 @@ class SupplierController extends Controller
 
         $response = [
             'entries' => $pagedEntries,
+            'ledger_entries' => collect($ledger['ledger_entries'] ?? [])->values(),
             'summary' => [
                 'current_debt'                => $usePartnerTimeline ? $supplierOrientedBalance : $supplierDebt,
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)

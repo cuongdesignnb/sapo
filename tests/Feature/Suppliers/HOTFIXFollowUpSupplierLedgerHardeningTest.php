@@ -97,9 +97,9 @@ class HOTFIXFollowUpSupplierLedgerHardeningTest extends TestCase
         $payments = collect($ledger['entries'])->where('type', 'payment')->values();
 
         $this->assertCount(1, $payments, 'Exactly one payment must be surfaced — the real cashflow, not also a virtual TTNH duplicate');
-        $this->assertSame('PCPNNC001', $payments[0]['code']);
-        $this->assertNotEquals('TTNHNC001', $payments[0]['code'],
-            'No virtual TTNH may be synthesised when a real CashFlow exists, regardless of its non-cancelled status');
+        $this->assertSame('TTNHNC001', $payments[0]['code']);
+        $this->assertNotEquals('PCPNNC001', $payments[0]['code'],
+            'Pending cashflow is not an accounting document and must not suppress the paid_amount fallback.');
 
         // Closing balance must reflect only one debit (purchase 1M) and one
         // credit (payment 500k); not two credits.
