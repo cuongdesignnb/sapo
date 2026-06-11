@@ -193,6 +193,7 @@ class ReportController extends Controller
         // Other income (type = 'receipt', not from sales)
         $otherIncome = (float) CashFlow::active()->where('type', 'receipt')
             ->where('category', '!=', 'Bán hàng')
+            ->whereNotIn('reference_type', ['Invoice', 'Order', 'DebtPayment'])
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->sum('amount');
 

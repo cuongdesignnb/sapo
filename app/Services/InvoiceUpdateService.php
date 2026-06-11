@@ -396,10 +396,12 @@ class InvoiceUpdateService
                 // New customer
                 $newCustomer = Customer::find($newCustomerId);
                 if ($newCustomer) {
-                    if ($newDebt > 0) {
-                        app(CustomerDebtService::class)->recordSale(
-                            $newCustomer->id, $newDebt, $invoice,
-                            "Ghi nợ do nhận hóa đơn {$invoice->code} từ khách khác"
+                    if (abs($newDebt) >= 0.01) {
+                        app(CustomerDebtService::class)->recordAdjustment(
+                            $newCustomer->id,
+                            $newDebt,
+                            "Ghi công nợ do nhận hóa đơn {$invoice->code} từ khách khác",
+                            ['ref_code' => $invoice->code, 'type' => 'sale']
                         );
                     }
                     $newCustomer->increment('total_spent', $newTotal);

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Customer;
 use App\Models\CustomerDebt;
+use App\Models\CustomerPaymentAllocation;
 use App\Models\CustomerPaymentDiscount;
 use App\Models\Invoice;
 use App\Models\Order;
@@ -439,6 +440,7 @@ class PartnerDebtLedgerService
             'ledger_entries' => $supplierLedgerEntries,
             'closing_balance' => $balance,
             'reconcile' => $reconcile,
+            'reconciliation' => $reconcile,
             'summary' => [
                 'display_timeline_mode' => true,
                 'has_virtual_opening_balance' => $hasVirtualOpening,
@@ -468,6 +470,50 @@ class PartnerDebtLedgerService
             $customer,
             $customerDebts
         );
+        $mergeMarkers = $customerDebts
+            ->where('type', 'merge_marker')
+            ->map(function (CustomerDebt $marker) {
+                $businessTime = $this->normalizeDisplayTime($marker->recorded_at, $marker->created_at);
+
+                return $this->documentEntry([
+                    'id' => 'merge-marker-' . $marker->id,
+                    'code' => $marker->ref_code,
+                    'display_type' => 'Gộp công nợ',
+                    'event_kind' => 'merge_marker',
+                    'domain' => 'customer',
+                    'document_type' => 'PartnerMerge',
+                    'document_id' => $marker->id,
+                    'document_amount' => 0.0,
+                    'amount' => 0.0,
+                    'display_effect' => 0.0,
+                    'financial_effect' => 0.0,
+                    'balance_effect' => 0.0,
+                    'customer_display_effect' => 0.0,
+                    'customer_display_balance_effect' => 0.0,
+                    'customer_balance_effect' => 0.0,
+                    'customer_effect' => 0.0,
+                    'business_time' => $businessTime,
+                    'time' => $businessTime,
+                    'created_at' => $marker->created_at,
+                    'reference_type' => 'PartnerMerge',
+                    'reference_id' => $marker->id,
+                    'reference_code' => $marker->ref_code,
+                    'badge_label' => 'Gộp công nợ',
+                    'detail_available' => true,
+                    'source_layer' => 'reference',
+                    'source' => 'partner_merge_marker',
+                    'affects_debt_balance' => false,
+                    'is_reference_only' => true,
+                    'sequence' => 999,
+                    'note' => $marker->note,
+                ], 'customer');
+            })
+            ->values();
+        $matchedLedgerIds = array_values(array_unique(array_merge(
+            $matchedLedgerIds,
+            $customerDebts->where('type', 'merge_marker')->pluck('id')->map(fn ($id) => (int) $id)->all()
+        )));
+        $documentEntries = $documentEntries->concat($mergeMarkers)->values();
 
         $legacyEntries = $ledgerDisplayEntries
             ->reject(fn (array $entry) => in_array((int) ($entry['reference_id'] ?? 0), $matchedLedgerIds, true))
@@ -562,6 +608,17 @@ class PartnerDebtLedgerService
         $matchedLedgerIds = [];
         $paymentWarnings = [];
         $allocatedCashFlowIds = [];
+        $structuredAllocations = CustomerPaymentAllocation::query()
+            ->where('customer_id', $customer->id)
+            ->get();
+        $allocatedByInvoice = $structuredAllocations
+            ->groupBy('invoice_id')
+            ->map(fn (Collection $rows) => (float) $rows->sum('amount'));
+        $structuredCashFlowIds = $structuredAllocations
+            ->pluck('cash_flow_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->all();
 
         $invoices = Invoice::query()
             ->where('customer_id', $customer->id)
@@ -677,10 +734,15 @@ class PartnerDebtLedgerService
                 ], 'customer'));
             }
 
-            $remainingPayment = max(0.0, $requiredPayment - $depositApplied);
+            $structuredDebtPayment = min(
+                max(0.0, $requiredPayment - $depositApplied),
+                (float) ($allocatedByInvoice[$invoice->id] ?? 0)
+            );
+            $remainingPayment = max(0.0, $requiredPayment - $depositApplied - $structuredDebtPayment);
             $orderCode = $invoice->order_id ? (string) ($orderCodes[$invoice->order_id] ?? '') : '';
             $matchedCashFlows = $cashFlows
                 ->reject(fn (CashFlow $cashFlow) => in_array($cashFlow->id, $allocatedCashFlowIds, true))
+                ->reject(fn (CashFlow $cashFlow) => in_array($cashFlow->id, $structuredCashFlowIds, true))
                 ->filter(fn (CashFlow $cashFlow) => $this->cashFlowMatchesInvoice(
                     $cashFlow,
                     $invoice,
@@ -780,7 +842,14 @@ class PartnerDebtLedgerService
         $standaloneCashFlows = $cashFlows
             ->reject(fn (CashFlow $cashFlow) => in_array($cashFlow->id, $allocatedCashFlowIds, true))
             ->reject(fn (CashFlow $cashFlow) => $this->isOrderDepositCashFlow($cashFlow))
-            ->map(function (CashFlow $cashFlow) {
+            ->map(function (CashFlow $cashFlow) use ($customerDebts, &$matchedLedgerIds) {
+                $matchedLedgerIds = array_merge(
+                    $matchedLedgerIds,
+                    $customerDebts
+                        ->filter(fn (CustomerDebt $debt) => (string) $debt->ref_code === (string) $cashFlow->code)
+                        ->pluck('id')
+                        ->all()
+                );
                 $businessTime = $this->normalizeDisplayTime($cashFlow->time, $cashFlow->created_at);
                 $amount = max(0.0, (float) $cashFlow->amount);
 
@@ -1066,6 +1135,7 @@ class PartnerDebtLedgerService
             'entries' => $this->sortForDisplay($computedEntries),
             'ledger_entries' => $ledgerEntries->values(),
             'reconcile' => $reconcile,
+            'reconciliation' => $reconcile,
             'summary' => [
                 // Canonical receivable/payable/net keys (HOTFIX FOLLOW-UP)
                 'customer_receivable_balance' => $customerDebt,
@@ -1227,6 +1297,7 @@ class PartnerDebtLedgerService
             'closing_balance' => $supplierOrientedBalance,
             'summary' => $summary,
             'reconcile' => $reconcile,
+            'reconciliation' => $reconcile,
         ];
     }
 
@@ -2127,20 +2198,20 @@ class PartnerDebtLedgerService
 
     private function injectCustomerVirtualOpeningBalance(Collection $entries, Customer $customer, float $targetBalance): Collection
     {
-        if ($entries->isNotEmpty()) {
-            return $entries->values();
-        }
-
-        $displayTotal = (float) $entries->sum(fn ($entry) => $this->customerDisplayEffect(is_array($entry) ? $entry : (array) $entry));
-        $openingBalance = $targetBalance - $displayTotal;
-        $hasReferenceOnlyFinancialEntry = $entries->contains(function ($entry) {
+        $financialEntries = $entries->reject(function ($entry) {
             $entry = is_array($entry) ? $entry : (array) $entry;
 
             return (bool) ($entry['is_reference_only'] ?? false)
-                && abs($this->customerDisplayEffect($entry)) >= 0.01;
+                || ($entry['source_layer'] ?? null) === 'reference';
         });
 
-        if ($entries->isNotEmpty() && abs($targetBalance) < 0.01 && !$hasReferenceOnlyFinancialEntry) {
+        if ($financialEntries->isNotEmpty()) {
+            return $entries->values();
+        }
+
+        $displayTotal = (float) $financialEntries->sum(fn ($entry) => $this->customerDisplayEffect(is_array($entry) ? $entry : (array) $entry));
+        $openingBalance = $targetBalance - $displayTotal;
+        if (abs($targetBalance) < 0.01) {
             return $entries->values();
         }
 
@@ -2192,14 +2263,21 @@ class PartnerDebtLedgerService
         float $targetBalance,
         bool $isPartnerTimeline = false
     ): Collection {
-        if ($entries->isNotEmpty()) {
+        $financialEntries = $entries->reject(function ($entry) {
+            $entry = is_array($entry) ? $entry : (array) $entry;
+
+            return (bool) ($entry['is_reference_only'] ?? false)
+                || ($entry['source_layer'] ?? null) === 'reference';
+        });
+
+        if ($financialEntries->isNotEmpty()) {
             return $entries->values();
         }
 
-        $displayTotal = (float) $entries->sum(fn ($entry) => $this->supplierDisplayEffect(is_array($entry) ? $entry : (array) $entry));
+        $displayTotal = (float) $financialEntries->sum(fn ($entry) => $this->supplierDisplayEffect(is_array($entry) ? $entry : (array) $entry));
         $openingBalance = $targetBalance - $displayTotal;
 
-        if (!$isPartnerTimeline && $entries->isNotEmpty() && abs($targetBalance) < 0.01) {
+        if (abs($targetBalance) < 0.01) {
             return $entries->values();
         }
 

@@ -789,6 +789,7 @@ class SupplierController extends Controller
         ];
         if (!empty($ledger['reconcile'])) {
             $response['reconcile'] = $ledger['reconcile'];
+            $response['reconciliation'] = $ledger['reconciliation'] ?? $ledger['reconcile'];
         }
         if ($pagination !== null) {
             $response['pagination'] = $pagination;

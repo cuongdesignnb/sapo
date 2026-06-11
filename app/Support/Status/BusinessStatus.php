@@ -2,6 +2,9 @@
 
 namespace App\Support\Status;
 
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
+
 final class BusinessStatus
 {
     public static function normalize(?string $status): ?string
@@ -59,6 +62,26 @@ final class BusinessStatus
             'void',
             'deleted',
         ];
+    }
+
+    public static function scopeNotCancelled(Builder $query, string $column = 'status'): Builder
+    {
+        return $query->where(function (Builder $statusQuery) use ($column) {
+            $statusQuery->whereNull($column)
+                ->orWhereNotIn(
+                    DB::raw("LOWER(TRIM({$column}))"),
+                    self::cancelledDatabaseValues()
+                );
+        });
+    }
+
+    public static function notCancelledSql(string $column): string
+    {
+        $values = collect(self::cancelledDatabaseValues())
+            ->map(fn (string $value) => "'" . str_replace("'", "''", mb_strtolower(trim($value))) . "'")
+            ->implode(', ');
+
+        return "({$column} IS NULL OR LOWER(TRIM({$column})) NOT IN ({$values}))";
     }
 
     public static function isBalanced(?string $status): bool

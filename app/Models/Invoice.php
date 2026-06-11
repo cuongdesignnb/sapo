@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Invoice extends Model
 {
     protected $guarded = ['id'];
+    protected $appends = ['invoice_overpaid_amount'];
 
     protected $casts = [
         'transaction_date' => 'datetime',
@@ -63,5 +64,10 @@ class Invoice extends Model
     public function activeWaybill()
     {
         return $this->hasOne(Waybill::class)->where('is_active', true);
+    }
+
+    public function getInvoiceOverpaidAmountAttribute(): float
+    {
+        return max(0.0, (float) ($this->customer_paid ?? 0) - (float) ($this->total ?? 0));
     }
 }

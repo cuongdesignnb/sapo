@@ -85,6 +85,7 @@ Route::post('/customers', [CustomerController::class, 'store'])->name('customers
 Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update')->middleware('permission:customers.edit');
 Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->name('customers.destroy')->middleware('permission:customers.delete');
 Route::post('/customers/{customer}/merge', [CustomerController::class, 'merge'])->middleware('permission:customers.edit');
+Route::get('/customers/{customer}/merge-preview', [CustomerController::class, 'mergePreview'])->middleware('permission:customers.view');
 Route::post('/customers/{customer}/debt-offset', [CustomerController::class, 'debtOffset'])->middleware('permission:customers.edit');
 Route::post('/customers/{customer}/cancel-debt-offset/{debtOffset}', [CustomerController::class, 'cancelDebtOffset'])->middleware('permission:customers.edit');
 Route::get('/customers/{customer}/debt-offset-history', [CustomerController::class, 'debtOffsetHistory'])->middleware('permission:customers.view');
@@ -217,16 +218,17 @@ Route::middleware('permission:orders.view')->group(function () {
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
     Route::get('/orders/export', [OrderController::class, 'export'])->name('orders.export');
     Route::get('/orders/{order}/print', [OrderController::class, 'print'])->name('orders.print');
-    Route::get('/orders/{orderKey}/pos-payload', [OrderController::class, 'posPayload'])->name('orders.pos-payload');
 });
 
 Route::middleware('permission:orders.edit')->group(function () {
     Route::post('/orders/merge', [OrderController::class, 'merge'])->name('orders.merge');
     Route::put('/orders/{order}', [OrderController::class, 'update'])->name('orders.update');
-    Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])->name('orders.process');
     Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');
     Route::post('/orders/{order}/end', [OrderController::class, 'endOrder'])->name('orders.end');
 });
+Route::post('/orders/{order}/process', [OrderController::class, 'processOrder'])
+    ->name('orders.process')
+    ->middleware('permission.any:pos.use,orders.edit');
 
 Route::middleware('permission:orders.create')->group(function () {
     Route::get('/orders/create', [OrderController::class, 'create'])->name('orders.create');
@@ -244,6 +246,7 @@ Route::post('/cash-flows/subject', [App\Http\Controllers\CashFlowController::cla
 // ===== POS =====
 Route::middleware('permission:pos.use')->group(function () {
     Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
+    Route::get('/orders/{orderKey}/pos-payload', [OrderController::class, 'posPayload'])->name('orders.pos-payload');
     Route::get('/api/pos/products', [PosController::class, 'searchProducts']);
     Route::post('/api/pos/checkout', [PosController::class, 'checkout']);
     Route::post('/api/pos/return-exchange', [PosController::class, 'returnExchange'])

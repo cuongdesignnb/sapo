@@ -20,6 +20,7 @@ use App\Support\Filters\FilterableIndex;
 use App\Services\CustomerDebtService;
 use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
+use App\Services\OrderPaymentSummaryService;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use App\Support\Status\BusinessStatus;
@@ -38,7 +39,7 @@ class OrderController extends Controller
             'customer'      => ['name', 'code', 'phone'],
             'items.product' => ['name', 'code', 'barcode'],
         ];
-        $this->sortable = ['code', 'created_at', 'total_payment', 'amount_paid', 'status'];
+        $this->sortable = ['code', 'created_at', 'total_payment', 'order_paid_total', 'order_remaining_debt', 'order_credit_total', 'status'];
         $this->dateColumn = 'created_at';
         $this->creatorColumn = 'created_by';
         $this->scalarFilters = [
@@ -51,21 +52,19 @@ class OrderController extends Controller
     public function index(Request $request)
     {
         $this->configureOrderFilters();
+        $paymentSummary = app(OrderPaymentSummaryService::class);
 
-        $query = Order::with(['customer', 'branch', 'items.product'])
+        $query = Order::query()
+            ->select('orders.*')
+            ->with(['customer', 'branch', 'items.product'])
             ->when($request->filled('has_debt'), function ($q) use ($request) {
-                $hasDebt = (string) $request->input('has_debt') === '1';
-                $invoicePaidSubquery = Invoice::selectRaw(
-                    'COALESCE(SUM(' . $this->nonNegativeSql('customer_paid - order_deposit_applied_amount') . '), 0)'
-                )->whereColumn('order_id', 'orders.id');
-                $this->scopeActiveInvoices($invoicePaidSubquery);
-
-                if ($hasDebt) {
-                    $q->whereRaw("total_payment > amount_paid + ({$invoicePaidSubquery->toSql()})", $invoicePaidSubquery->getBindings());
-                } else {
-                    $q->whereRaw("total_payment <= amount_paid + ({$invoicePaidSubquery->toSql()})", $invoicePaidSubquery->getBindings());
-                }
+                app(OrderPaymentSummaryService::class)->applyHasDebtFilter(
+                    $q,
+                    (string) $request->input('has_debt') === '1'
+                );
             });
+        $paymentSummary->addSummarySelects($query);
+        $paymentSummary->applyPaymentStatusFilter($query, $request->input('payment_status'));
 
         $this->applyFilters($query, $request);
 
@@ -104,6 +103,7 @@ class OrderController extends Controller
 
         $filters = $this->currentFilters($request);
         $filters['has_debt'] = $request->input('has_debt', '');
+        $filters['payment_status'] = $request->input('payment_status', '');
 
         return Inertia::render('Orders/Index', [
             'orders' => $orders,
@@ -126,6 +126,12 @@ class OrderController extends Controller
                 'debtOptions' => [
                     ['value' => '1', 'label' => 'Còn nợ'],
                     ['value' => '0', 'label' => 'Đã trả đủ'],
+                ],
+                'paymentStatusOptions' => [
+                    ['value' => 'unpaid', 'label' => 'Chưa trả'],
+                    ['value' => 'partial', 'label' => 'Còn nợ'],
+                    ['value' => 'paid', 'label' => 'Đã trả đủ'],
+                    ['value' => 'overpaid', 'label' => 'Trả dư'],
                 ],
             ],
         ]);
@@ -497,14 +503,32 @@ class OrderController extends Controller
     public function export(Request $request)
     {
         $this->configureOrderFilters();
+        $paymentSummary = app(OrderPaymentSummaryService::class);
 
-        $query = Order::with(['customer', 'branch']);
+        $query = Order::query()->select('orders.*')->with(['customer', 'branch']);
+        $paymentSummary->addSummarySelects($query);
+        $paymentSummary->applyPaymentStatusFilter($query, $request->input('payment_status'));
+        if ($request->filled('has_debt')) {
+            $paymentSummary->applyHasDebtFilter($query, (string) $request->input('has_debt') === '1');
+        }
         $this->applyFilters($query, $request);
         $orders = $query->get();
 
         return \App\Services\CsvService::export(
-            ['Mã đơn hàng', 'Thời gian', 'Khách hàng', 'Chi nhánh', 'Tổng cộng', 'Khách đã trả', 'Còn nợ', 'Trạng thái', 'Ghi chú'],
-            $orders->map(fn($o) => [$o->code, $o->created_at?->format('d/m/Y H:i'), $o->customer?->name, $o->branch?->name, $o->total_payment, $o->amount_paid, $o->total_payment - ($o->amount_paid ?? 0), $o->status, $o->note]),
+            ['Mã đơn hàng', 'Thời gian', 'Khách hàng', 'Chi nhánh', 'Khách cần trả', 'Khách đã trả', 'Còn nợ', 'Tiền trả dư', 'Trạng thái thanh toán', 'Trạng thái', 'Ghi chú'],
+            $orders->map(fn($o) => [
+                $o->code,
+                $o->created_at?->format('d/m/Y H:i'),
+                $o->customer?->name,
+                $o->branch?->name,
+                $o->order_total,
+                $o->order_paid_total,
+                $o->order_remaining_debt,
+                $o->order_credit_total,
+                $o->payment_status,
+                $o->status,
+                $o->note,
+            ]),
             'don_hang.csv'
         );
     }
@@ -638,7 +662,7 @@ class OrderController extends Controller
             // Prior deposit & progressive deposit application
             $initialDeposit = (float) ($order->amount_paid ?? 0);
             $alreadyAppliedDeposit = Invoice::where('order_id', $order->id)
-                ->tap(fn (Builder $query) => $this->scopeActiveInvoices($query))
+                ->tap(fn (Builder $query) => BusinessStatus::scopeNotCancelled($query, 'status'))
                 ->sum('order_deposit_applied_amount');
 
             $depositRemaining = max(0.0, $initialDeposit - $alreadyAppliedDeposit);
@@ -646,7 +670,7 @@ class OrderController extends Controller
 
             $newPayment = $validated['amount_paid']; // Additional money customer pays right now
             $totalPaidForInvoice = $depositAppliedThisInvoice + $newPayment;
-            $debtAmount = max(0.0, $invoiceTotal - $totalPaidForInvoice);
+            $debtAmount = $invoiceTotal - $totalPaidForInvoice;
 
             // 2) Create Invoice
             $invoiceData = [
@@ -794,13 +818,16 @@ class OrderController extends Controller
 
             // 4) Customer debt tracking
             if ($customer) {
-                if ($debtAmount > 0) {
-                    app(CustomerDebtService::class)->recordSale(
+                if (abs($debtAmount) >= 0.01) {
+                    app(CustomerDebtService::class)->recordAdjustment(
                         $customer->id,
                         (float) $debtAmount,
-                        $invoice,
                         "Ghi nợ khi xử lý một phần đơn hàng {$order->code} sang hóa đơn {$invoice->code}",
-                        ['order_id' => $order->id]
+                        [
+                            'order_id' => $order->id,
+                            'ref_code' => $invoice->code,
+                            'type' => 'sale',
+                        ]
                     );
                 }
                 $customer->increment('total_spent', $invoiceTotal);
@@ -1146,19 +1173,27 @@ class OrderController extends Controller
             }
             $fulfilledQty = (int) ($item->fulfilled_quantity ?? 0);
             $remainingQty = max(0, (int) $item->qty - $fulfilledQty);
+            $lineTotal = (float) ($item->qty * $item->price - ($item->discount ?? 0));
             return [
                 'order_item_id' => $item->id,
                 'product_id' => $item->product_id,
+                'product' => $item->product ? [
+                    'id' => $item->product->id,
+                    'sku' => $item->product->sku,
+                    'name' => $item->product->name,
+                ] : null,
                 'sku' => $item->product?->sku,
                 'code' => $item->product?->sku,
                 'barcode' => $item->product?->barcode,
                 'name' => $item->product?->name,
                 'qty' => (int) $item->qty,
+                'quantity' => (int) $item->qty,
                 'fulfilled_quantity' => $fulfilledQty,
                 'remaining_quantity' => $remainingQty,
                 'price' => (float) $item->price,
                 'discount' => (float) ($item->discount ?? 0),
-                'subtotal' => (float) ($item->qty * $item->price - ($item->discount ?? 0)),
+                'subtotal' => $lineTotal,
+                'total' => $lineTotal,
                 'has_serial' => (bool) $item->product?->has_serial,
                 'stock_quantity' => (float) ($item->product?->stock_quantity ?? 0),
                 'serial_ids' => $item->serial_ids ?? [],
@@ -1166,11 +1201,9 @@ class OrderController extends Controller
             ];
         });
 
-        $initialDeposit = (float) ($order->amount_paid ?? 0);
-        $depositAppliedQuery = Invoice::where('order_id', $order->id);
-        $this->scopeActiveInvoices($depositAppliedQuery);
-        $depositApplied = (float) $depositAppliedQuery->sum('order_deposit_applied_amount');
-        $depositRemaining = max(0.0, $initialDeposit - $depositApplied);
+        $paymentSummary = app(OrderPaymentSummaryService::class)->summary($order);
+        $customerReceivableBefore = (float) ($order->customer?->debt_amount ?? 0);
+        $suggestedPayment = $paymentSummary['order_remaining_debt'];
 
         return response()->json([
             'success' => true,
@@ -1191,6 +1224,7 @@ class OrderController extends Controller
                     'phone' => $order->customer->phone,
                     'address' => $order->customer->address,
                     'debt_amount' => (float) ($order->customer->debt_amount ?? 0),
+                    'supplier_debt_amount' => (float) ($order->customer->supplier_debt_amount ?? 0),
                 ] : null,
                 'branch' => $order->branch ? [
                     'id' => $order->branch->id,
@@ -1205,10 +1239,16 @@ class OrderController extends Controller
                     'other_fees' => (float) $order->other_fees,
                     'total_payment' => (float) $order->total_payment,
                     'amount_paid' => (float) ($order->amount_paid ?? 0),
-                    'remaining' => (float) ($order->total_payment - ($order->amount_paid ?? 0)),
-                    'deposit_total' => $initialDeposit,
-                    'deposit_applied' => $depositApplied,
-                    'deposit_remaining' => $depositRemaining,
+                    'remaining' => $paymentSummary['order_remaining_debt'],
+                    'order_deposit_original' => $paymentSummary['original_deposit'],
+                    'total_paid_for_order' => $paymentSummary['order_paid_total'],
+                    'deposit_total' => $paymentSummary['original_deposit'],
+                    ...$paymentSummary,
+                    'amount_to_collect_before_this_time' => $paymentSummary['order_remaining_debt'],
+                    'customer_receivable_before' => $customerReceivableBefore,
+                    'suggested_customer_pay_now' => $suggestedPayment,
+                    'remaining_after_suggested_payment' => max(0.0, $paymentSummary['order_remaining_debt'] - $suggestedPayment),
+                    'customer_receivable_after_preview' => $customerReceivableBefore,
                 ],
                 'delivery' => [
                     'is_delivery' => (bool) $order->is_delivery,
@@ -1229,23 +1269,6 @@ class OrderController extends Controller
                 'note' => $order->note,
             ]
         ]);
-    }
-
-    private function scopeActiveInvoices(Builder $query): Builder
-    {
-        $cancelled = BusinessStatus::cancelledDatabaseValues();
-
-        return $query->where(function (Builder $statusQuery) use ($cancelled) {
-            $statusQuery->whereNull('status')
-                ->orWhereNotIn(DB::raw('LOWER(TRIM(status))'), $cancelled);
-        });
-    }
-
-    private function nonNegativeSql(string $expression): string
-    {
-        return DB::connection()->getDriverName() === 'sqlite'
-            ? "MAX({$expression}, 0)"
-            : "GREATEST({$expression}, 0)";
     }
 
     private function recordOrderDepositCashFlow(Order $order, $paymentMethod = 'cash', $bankInfo = null): void

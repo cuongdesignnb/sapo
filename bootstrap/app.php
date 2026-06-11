@@ -24,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'attendance.agent' => \App\Http\Middleware\VerifyAttendanceAgentSignature::class,
             'permission'       => \App\Http\Middleware\CheckPermission::class,
+            'permission.any'   => \App\Http\Middleware\CheckAnyPermission::class,
             'role'             => \App\Http\Middleware\CheckRole::class,
         ]);
     })

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ActivityLog;
 use App\Models\CashFlow;
+use App\Services\CustomerPaymentService;
 use App\Models\BankAccount;
 use App\Services\LockPeriodService;
 use Illuminate\Http\Request;
@@ -164,6 +165,10 @@ class CashFlowController extends Controller
 
     public function update(Request $request, CashFlow $cashFlow)
     {
+        if (app(CustomerPaymentService::class)->isFinanciallyLinked($cashFlow)) {
+            return back()->with('error', 'Phiếu liên kết chứng từ tài chính không được sửa trực tiếp. Hãy hủy và tạo lại.');
+        }
+
         $request->validate([
             'time' => 'nullable|date',
             'category' => 'nullable|string|max:255',
@@ -210,8 +215,7 @@ class CashFlowController extends Controller
         app(LockPeriodService::class)->assertNotLocked($cashFlow->time, 'cashflow_cancel');
 
         ActivityLog::log('cashflow_cancel', "Hủy phiếu {$cashFlow->code}, số tiền: " . number_format($cashFlow->amount), $cashFlow);
-        $cashFlow->update(['status' => 'cancelled']);
-        $cashFlow->delete(); // soft-delete
+        app(CustomerPaymentService::class)->cancel($cashFlow);
         return redirect()->back()->with('success', 'Huỷ phiếu thành công');
     }
 

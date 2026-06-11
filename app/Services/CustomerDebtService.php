@@ -73,7 +73,14 @@ class CustomerDebtService
      */
     public function recordAdjustment(int $customerId, float $signedAmount, ?string $note = null, array $meta = []): ?CustomerDebt
     {
-        return $this->record($customerId, $signedAmount, 'adjustment', null, $note, $meta);
+        return $this->record(
+            $customerId,
+            $signedAmount,
+            $meta['type'] ?? 'adjustment',
+            null,
+            $note,
+            $meta
+        );
     }
 
     /**
