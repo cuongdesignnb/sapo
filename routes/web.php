@@ -294,6 +294,7 @@ Route::middleware('permission:customers.debt_adjust')->group(function () {
 
 // Print & show routes
 Route::get('/invoices/{invoice}/print', [InvoiceController::class, 'print'])->name('invoices.print')->middleware('permission:invoices.print');
+Route::get('/invoices/{invoice}/print-a4', [InvoiceController::class, 'printA4'])->name('invoices.print-a4')->middleware('permission:invoices.print');
 Route::get('/invoices/{invoice}/show', [InvoiceController::class, 'show'])->name('invoices.show')->middleware('permission:invoices.view');
 Route::get('/invoices/{invoice}/payment-history', [InvoiceController::class, 'paymentHistory'])->name('invoices.payment-history')->middleware('permission:invoices.view');
 Route::get('/returns/{return}/print', [\App\Http\Controllers\OrderReturnController::class, 'print'])->name('returns.print')->middleware('permission:returns.print');

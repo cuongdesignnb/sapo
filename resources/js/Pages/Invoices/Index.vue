@@ -221,6 +221,10 @@ const printInvoice = (invoice) => {
     );
 };
 
+const printInvoiceA4 = (invoice) => {
+    window.open(`/invoices/${invoice.id}/print-a4`, "_blank");
+};
+
 // HOTFIX 24.30 — Change seller for an invoice
 const sellerUpdating = reactive({});
 const invoiceSellerOptions = computed(() => props.filterOptions?.invoiceSellerOptions || []);
@@ -1050,7 +1054,27 @@ const changeSeller = async (invoice, newSellerKey) => {
                                                                     d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
                                                                 ></path>
                                                             </svg>
-                                                            In
+                                                            In bill
+                                                        </button>
+                                                        <button
+                                                            v-if="invoice.order_id"
+                                                            @click.stop="printInvoiceA4(invoice)"
+                                                            class="bg-white border border-gray-300 px-3 py-1.5 rounded text-gray-700 hover:bg-gray-50 flex items-center gap-1.5 font-medium"
+                                                        >
+                                                            <svg
+                                                                class="w-4 h-4 text-gray-500"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <path
+                                                                    stroke-linecap="round"
+                                                                    stroke-linejoin="round"
+                                                                    stroke-width="2"
+                                                                    d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
+                                                                ></path>
+                                                            </svg>
+                                                            In đơn A4
                                                         </button>
                                                     </div>
                                                 </div>

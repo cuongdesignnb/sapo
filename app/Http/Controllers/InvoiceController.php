@@ -17,6 +17,7 @@ use App\Services\DebtOffsetService;
 use App\Services\InvoiceSaleService;
 use App\Services\InvoiceUpdateService;
 use App\Services\PartnerTransactionGuard;
+use App\Services\PrintableOrderService;
 use App\Services\StockMovementService;
 use App\Support\Filters\FilterableIndex;
 use App\Support\Reports\SellerResolver;
@@ -497,6 +498,13 @@ class InvoiceController extends Controller
         return view('prints.invoice', compact('invoice', 'previousDebt'));
     }
 
+    public function printA4(Invoice $invoice, PrintableOrderService $printableOrder)
+    {
+        return view('prints.simple_order_a4', [
+            'printable' => $printableOrder->forInvoice($invoice),
+        ]);
+    }
+
     public function paymentHistory(Invoice $invoice)
     {
         $payments = \App\Models\CashFlow::withTrashed()
@@ -572,6 +580,7 @@ class InvoiceController extends Controller
             'invoice' => [
                 'id' => $invoice->id,
                 'code' => $invoice->code,
+                'order_id' => $invoice->order_id,
                 'status' => $invoice->status,
                 'created_at' => $invoice->created_at?->format('d/m/Y H:i'),
                 'created_by_name' => $invoice->created_by_name ?? 'Admin',

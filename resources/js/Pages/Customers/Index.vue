@@ -4068,7 +4068,10 @@ const createdDateRange = computed({
                     <div class="px-6 py-3 border-t flex items-center justify-between">
                         <div v-if="invoiceDetail.data.note" class="text-sm text-gray-500"><span class="font-medium">Ghi chú:</span> {{ invoiceDetail.data.note }}</div>
                         <div v-else></div>
-                        <a :href="`/invoices/${invoiceDetail.data.id}/print`" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">In hóa đơn</a>
+                        <div class="flex items-center gap-2">
+                            <a :href="`/invoices/${invoiceDetail.data.id}/print`" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">In bill</a>
+                            <a v-if="invoiceDetail.data.order_id" :href="`/invoices/${invoiceDetail.data.id}/print-a4`" target="_blank" class="px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded text-sm font-medium hover:bg-blue-50">In đơn A4</a>
+                        </div>
                     </div>
                 </template>
                 <div v-else class="p-12 text-center text-gray-400">Không tìm thấy thông tin hóa đơn</div>

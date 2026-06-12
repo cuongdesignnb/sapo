@@ -1218,6 +1218,7 @@ class CustomerController extends Controller
             $data = [
                 'id' => $invoice->id,
                 'code' => $invoice->code,
+                'order_id' => $invoice->order_id,
                 'status' => $invoice->status,
                 'created_at' => $invoice->created_at ? $invoice->created_at->format('d/m/Y H:i') : '',
                 'created_by_name' => $invoice->created_by_name ?? 'Admin',

@@ -32,7 +32,10 @@ const statusColors = {
                         {{ statusLabels[invoice.status] || invoice.status }}
                     </span>
                     <a :href="`/invoices/${invoice.id}/print`" target="_blank" class="bg-white border border-gray-300 rounded px-3 py-1.5 text-sm font-semibold hover:bg-gray-50">
-                        🖨 In
+                        In bill
+                    </a>
+                    <a v-if="invoice.order_id" :href="`/invoices/${invoice.id}/print-a4`" target="_blank" class="bg-white border border-gray-300 rounded px-3 py-1.5 text-sm font-semibold hover:bg-gray-50">
+                        In đơn A4
                     </a>
                 </div>
             </div>

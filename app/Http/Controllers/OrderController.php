@@ -22,6 +22,7 @@ use App\Services\LockPeriodService;
 use App\Services\MovingAvgCostingService;
 use App\Services\OrderPaymentSummaryService;
 use App\Services\PartnerTransactionGuard;
+use App\Services\PrintableOrderService;
 use App\Services\SerialAvailabilityService;
 use App\Services\StockMovementService;
 use App\Support\Status\BusinessStatus;
@@ -504,10 +505,11 @@ class OrderController extends Controller
         return null;
     }
 
-    public function print(Order $order)
+    public function print(Order $order, PrintableOrderService $printableOrder)
     {
-        $order->load(['items.product', 'customer', 'branch']);
-        return view('prints.order', compact('order'));
+        return view('prints.simple_order_a4', [
+            'printable' => $printableOrder->forOrder($order),
+        ]);
     }
 
     public function export(Request $request)
@@ -893,6 +895,7 @@ class OrderController extends Controller
                 return response()->json([
                     'success' => true,
                     'message' => "Xử lý thành công! Hóa đơn {$invoice->code} đã được tạo.",
+                    'invoice_id' => $invoice->id,
                     'invoice_code' => $invoice->code,
                 ]);
             }

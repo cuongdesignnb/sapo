@@ -689,6 +689,7 @@ const changeDue = computed(() => {
 
 const isCheckingOut = ref(false);
 const toastMsg = ref('');
+const printA4InvoiceId = ref(null);
 
 // Helper to submit the order processing API
 const submitProcessOrderAPI = async (keepRemaining) => {
@@ -736,6 +737,7 @@ const submitProcessOrderAPI = async (keepRemaining) => {
         const response = await axios.post(`/orders/${activeTab.value.source_order_id}/process`, processPayload);
         if (response.data.success) {
             toastMsg.value = response.data.message;
+            printA4InvoiceId.value = response.data.invoice_id || null;
             setTimeout(() => toastMsg.value = '', 4000);
             resetAfterCheckout();
             showPartialModeModal.value = false;
@@ -843,6 +845,7 @@ const processCheckout = async () => {
             const response = await axios.post('/api/pos/quick-order', orderPayload);
             if (response.data.success) {
                 toastMsg.value = response.data.message;
+                printA4InvoiceId.value = null;
                 setTimeout(() => toastMsg.value = '', 4000);
                 resetAfterCheckout();
             } else {
@@ -877,6 +880,7 @@ const processCheckout = async () => {
         
         if (response.data.success) {
             toastMsg.value = `${response.data.message} - Phiếu ${response.data.invoice_code}`;
+            printA4InvoiceId.value = null;
             setTimeout(() => toastMsg.value = '', 4000);
             resetAfterCheckout();
         } else {
@@ -2173,7 +2177,15 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown));
                     >
                         <div v-if="toastMsg" class="absolute bottom-20 right-4 left-4 bg-green-500 text-white p-3 rounded shadow-lg text-sm font-semibold flex items-center gap-2 z-50">
                             <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                            {{ toastMsg }}
+                            <span class="flex-1">{{ toastMsg }}</span>
+                            <button
+                                v-if="printA4InvoiceId"
+                                type="button"
+                                class="px-3 py-1.5 rounded bg-white text-green-700 hover:bg-green-50 font-bold whitespace-nowrap"
+                                @click="window.open(`/invoices/${printA4InvoiceId}/print-a4`, '_blank')"
+                            >
+                                In đơn A4
+                            </button>
                         </div>
                     </transition>
                 </div>
