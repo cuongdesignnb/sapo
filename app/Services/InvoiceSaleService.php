@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\SerialImei;
 use App\Models\Setting;
+use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -128,6 +129,12 @@ class InvoiceSaleService
             'delivery_fee'     => $context['delivery_fee'] ?? 0,
             'payment_method'   => $payload['payment_method'] ?? 'cash',
         ];
+
+        $attrs = CustomerGroupSnapshot::applyToAttributes(
+            $attrs,
+            isset($payload['customer_id']) ? (int) $payload['customer_id'] : null,
+            'invoices'
+        );
 
         // Optional fields chỉ set khi có giá trị (không ghi đè default schema)
         if (isset($context['sales_channel'])) {

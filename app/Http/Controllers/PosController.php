@@ -15,6 +15,7 @@ use App\Services\PartnerTransactionGuard;
 use App\Services\PosReturnExchangeService;
 use App\Services\ProductSearchService;
 use App\Services\SerialAvailabilityService;
+use App\Support\Customers\CustomerGroupSnapshot;
 use App\Support\Reports\SellerResolver;
 
 class PosController extends Controller
@@ -469,6 +470,8 @@ class PosController extends Controller
                 'delivery_note' => $deliveryData['delivery_note'] ?? null,
             ];
 
+            $orderData = CustomerGroupSnapshot::applyToAttributes($orderData, $customer?->id, 'orders');
+
             $order = \App\Models\Order::create($orderData);
 
             if (!empty($validated['sale_time'])) {
@@ -553,7 +556,7 @@ class PosController extends Controller
             })
             ->orderBy('name')
             ->limit(10)
-            ->get(['id', 'code', 'name', 'phone', 'debt_amount']);
+            ->get(['id', 'code', 'name', 'phone', 'debt_amount', 'customer_group']);
 
         return response()->json($customers);
     }

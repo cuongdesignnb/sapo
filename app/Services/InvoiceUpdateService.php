@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\SerialImei;
 use App\Models\Setting;
 use App\Models\Warranty;
+use App\Support\Customers\CustomerGroupSnapshot;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -318,6 +319,11 @@ class InvoiceUpdateService
                 'payment_method' => $payload['payment_method'] ?? 'Tiền mặt',
                 'price_book_name' => $payload['price_book_name'] ?? $invoice->price_book_name,
             ];
+            $updateData = CustomerGroupSnapshot::applyToAttributes(
+                $updateData,
+                isset($updateData['customer_id']) ? (int) $updateData['customer_id'] : null,
+                'invoices'
+            );
             if ($changePlan['date_changed'] && Schema::hasColumn('invoices', 'transaction_date')) {
                 $updateData['transaction_date'] = $newTxDate;
             }
